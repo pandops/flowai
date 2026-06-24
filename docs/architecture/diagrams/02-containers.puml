@@ -1,0 +1,43 @@
+@startuml 02-containers
+
+!pragma layout smetana lefttoright
+
+title FlowAI Platform - Task flow (runtime slice)
+
+package "Automation layer" {
+    [Webhook Handler] as wh
+    [Jira Poller] as jira
+    [GitLab Handler] as gl
+}
+
+package "Core" {
+    [Control Plane API] as api
+    database "State Store" as pg
+    queue "Source Queues" as qsrc
+    queue "Executor Queues" as qexec
+    database "Secret Service" as sec
+}
+
+package "Executor fleet (multi-cluster)" {
+    [Executor A (k8s-A)] as exA
+    [Executor B (k8s-B)] as exB
+    [Executor local (Docker)] as exL
+}
+
+wh --> qsrc : publishes normalized event
+jira --> qsrc : publishes new task
+gl --> qsrc : publishes issue / comment
+qsrc --> api : consumes source events
+api --> pg : persists, reads routing rules
+api --> qexec : enqueues per routing rule
+qexec --> exA : pulls q:exec-A
+qexec --> exB : pulls q:exec-B
+qexec --> exL : pulls q:exec-local
+exA --> sec : get-by-scope
+exB --> sec : get-by-scope
+exL --> sec : get-by-scope
+exA --> api : publishes task events
+exB --> api : publishes task events
+exL --> api : publishes task events
+
+@enduml

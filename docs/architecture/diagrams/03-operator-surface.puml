@@ -1,0 +1,26 @@
+@startuml 03-operator-surface
+!include stdlib/C4_Container.puml
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+
+title FlowAI Platform - Operator surface (user-facing slice)
+
+Person(operator, "Operator", "Wires the system: automations, executors, routing rules. Observes and intervenes.")
+
+System_Boundary(b1, "FlowAI Platform") {
+    Container(ui, "Web UI", "Single frontend. Automations, executors, routing rules, secret CRUD, observation, intervention")
+    Container(api, "Control Plane API", "Serves UI: automations / executors / routing CRUD, secret CRUD proxy, task state, WS fan-out, scope assembly, event routing")
+    ContainerDb(pg, "State Store", "Automations, executors, routing rules, tasks, projects, audit log")
+    ContainerDb(queue, "Task pub/sub", "Live event stream for observed tasks, control bus for executors")
+    ContainerDb(sec, "Secret Service", "CRUD: create / read / update / delete secrets")
+}
+
+Rel(operator, ui, "Manages automations, executors, routing, secrets, observes, intervenes", "HTTPS / WS")
+Rel(ui, api, "All operator actions (automations, executors, routing, CRUD, observation, intervention)", "HTTPS / WS")
+Rel(ui, sec, "CRUD on secrets", "HTTPS")
+Rel(api, pg, "Reads / writes automations, executors, routing rules, tasks, audit", "SQL")
+Rel(api, queue, "Subscribes to task events for live UI; publishes control", "RESP pub/sub")
+Rel(api, sec, "Proxies secret CRUD for the UI", "HTTPS")
+
+@enduml

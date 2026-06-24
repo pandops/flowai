@@ -1,0 +1,23 @@
+@startuml 01-context
+!include stdlib/C4_Context.puml
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+
+title FlowAI Platform - System Context
+
+Person(operator, "Operator / Developer", "Observes, debugs, intervenes in running tasks")
+Person_Ext(automation, "Automation", "CI, scheduler, webhook: submits tasks via API")
+System(platform, "FlowAI Platform", "Runs agentic AI tasks in containers, locally or in Kubernetes")
+System_Ext(llm, "LLM Providers", "Anthropic, OpenAI, OSS via vLLM")
+System_Ext(registry, "Container Registry", "OCI registry with pre-built agent images")
+System_Ext(idp, "Identity Provider", "Future: OAuth / SSO for multi-tenant")
+
+Rel(automation, platform, "Submits tasks", "HTTPS / REST")
+Rel(operator, platform, "Observes, intervenes", "HTTPS / WS")
+Rel(platform, llm, "Prompts and tool calls", "HTTPS")
+Rel(platform, registry, "Pulls agent images", "OCI / HTTPS")
+Rel_R(operator, idp, "Authenticates", "OAuth")
+Rel_R(platform, idp, "Validates tokens", "OIDC")
+
+@enduml

@@ -1,0 +1,32 @@
+%%{init: {'theme': 'neutral', 'useMaxWidth': false, 'themeVariables': {'fontSize': '16px'}}}%%
+stateDiagram-v2
+    direction LR
+
+    [*] --> Queued : POST /tasks
+
+    Queued --> Preparing : scheduler picks
+    Queued --> Cancelled : user cancel
+
+    Preparing --> Running : container started
+    Preparing --> Failed : pull / start error
+
+    Running --> Running : tool_use / llm_response
+    Running --> Succeeded : agent returns final
+    Running --> Failed : unhandled error / max_steps
+    Running --> Cancelled : user cancel (graceful)
+    Running --> Timeout : wall_clock > limit
+
+    Succeeded --> [*]
+    Failed --> [*]
+    Cancelled --> [*]
+    Timeout --> [*]
+
+    classDef terminal fill:#d4edda,stroke:#28a745,color:#155724
+    classDef failed fill:#f8d7da,stroke:#dc3545,color:#721c24
+    classDef running fill:#cce5ff,stroke:#007bff,color:#004085
+    classDef pending fill:#fff3cd,stroke:#ffc107,color:#856404
+
+    class Succeeded terminal
+    class Failed,Cancelled,Timeout failed
+    class Running running
+    class Queued,Preparing pending

@@ -1,0 +1,52 @@
+%%{init: {'theme': 'neutral', 'useMaxWidth': false, 'sequence': {'wrap': true, 'wrapPadding': 10, 'width': 200}, 'themeVariables': {'fontSize': '18px'}}}%%
+sequenceDiagram
+    autonumber
+    participant Auto as Automation
+    participant U as Operator (UI)
+    participant API as Control Plane
+    participant queue as Task Queue
+    participant SCH as Scheduler
+    participant EX as Executor
+    participant AG as Agent Container
+    participant LLM as LLM Provider
+
+    Note over Auto,U: Automation submits. Operator observes and can intervene. Executor and Control Plane communicate only through the queue.
+
+    Auto->>API: POST /tasks (prompt, tools, secret_ids)
+    API->>API: Build scope (HMAC: project, task, secret_ids, TTL)
+    API->>API: Persist task
+    API->>queue: enqueue task
+    API-->>Auto: 202 task_id
+
+    U->>API: WS connect (subscribe to task events)
+    SCH->>queue: pick task
+    SCH->>EX: Submit(task_spec + scope_token) (one-shot handoff)
+    EX->>EX: Pull image
+    EX->>AG: Start container, inject secrets as env / tmpfs
+    Note over AG,EX: Agent is a black box. Runs initial instructions. No platform API.
+
+    AG->>LLM: Prompt + history
+    LLM-->>AG: Completion or tool_use
+
+    loop agent loop
+        AG-->>EX: stdout (event stream)
+        EX->>queue: publish events (task_id, kind, payload)
+        queue->>API: fan-out events
+        API-->>U: WS push (live)
+        opt Operator intervenes
+            U->>API: inject message / cancel / rerun
+            API->>queue: publish control event (cancel / intervene)
+            queue->>EX: control event
+            EX-->>AG: forward (or stop)
+        end
+        AG->>LLM: Next prompt
+        LLM-->>AG: Next completion
+    end
+
+    AG-->>EX: final result (stdout / exit code)
+    EX->>queue: publish final event (status)
+    queue->>API: fan-out final
+    API->>API: UPDATE state to terminal
+    API-->>Auto: webhook / status (if configured)
+    API-->>U: WS final
+    Note over AG,EX: Container terminated. Scope token expires.
