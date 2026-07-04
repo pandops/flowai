@@ -7,23 +7,23 @@ LAYOUT_WITH_LEGEND()
 title FlowAI Platform - Operator surface (user-facing slice)
 
 Person(operator, "Operator", "Wires the system: automations, executors, routing rules. Observes and intervenes.")
+Person_Ext(automation, "Automation", "CI, scheduler, webhook. Authenticates with the API Gateway, then submits tasks via REST to the Event Router.")
 
 System_Boundary(b1, "FlowAI Platform") {
-    Container(ui, "Web UI", "Single frontend. Automations, executors, routing rules, secret CRUD, observation, intervention")
-    Container(gw, "API Gateway", "Backend for the UI: automations / executors / routing CRUD, secret CRUD proxy, task state queries, WS fanout, scope assembly")
-    Container(er, "Event Router", "Queue take-and-put service. Consumes source / event queues, fans out to executor queues and to the API Gateway for WS subscribers")
-    ContainerDb(pg, "State Store", "Automations, executors, routing rules, tasks, projects, audit log")
-    ContainerDb(queue, "Task pub/sub", "Source queue, per-executor queues, event fanout queue")
-    ContainerDb(sec, "Secret Service", "CRUD: create / read / update / delete secrets")
+    Container(ui, "Web UI", "Single frontend. Observes running tasks, intervenes, configures (automations, executors, routing), registers secrets (write-only). Talks only to the API Gateway.")
+    Container(gw, "API Gateway", "Auth-aware reverse proxy. ONLY logic: validate auth, route to a backend service, return the backend's response. Holds WS connections to the UI and proxies live events from the Event Router. NO business logic. NO state of its own. NO writes.")
+    Container(er, "Event Router", "Backend service. Central message broker + state holder. Owns its own database (tasks, events, routing rules, audit). Receives task submissions from automation and proxied UI requests (via GW). Dispatches tasks to executors via REST. Receives live events from executors via REST. Pushes live events to subscribers (GW). Sends REST queries to the Secret Service (open env). Does NOT modify message content.")
+    ContainerDb(erdb, "Event Router DB", "Tasks, events, routing rules, audit. Sole writer: Event Router.")
+    ContainerDb(sec, "Secret Service", "Backend service. Two surfaces: store (write, called by API Gateway proxying UI) and open env (read, called by Event Router and Executors).")
 }
 
-Rel(operator, ui, "Manages automations, executors, routing, secrets, observes, intervenes", "HTTPS / WS")
-Rel(ui, gw, "All operator actions (automations, executors, routing, CRUD, observation, intervention)", "HTTPS / WS")
-Rel(ui, sec, "CRUD on secrets", "HTTPS")
-Rel(gw, pg, "Reads / writes automations, executors, routing rules, tasks, audit", "SQL")
-Rel(gw, queue, "Subscribes to event fanout for live UI; publishes tasks", "RESP pub/sub")
-Rel(gw, sec, "Proxies secret CRUD for the UI", "HTTPS")
-Rel(er, queue, "Consumes source / event queues; writes to per-executor queues and fanout queue", "RESP pub/sub")
-Rel_R(er, pg, "Reads routing rules", "SQL")
+Rel(operator, ui, "Observes, intervenes, configures, registers secrets (write-only)", "HTTPS / WS")
+Rel(ui, gw, "All operator actions: state queries, observation, intervention, configuration, secret writes. UI talks to NO other service.", "HTTPS / WS")
+Rel(automation, gw, "Authenticates (login, token refresh)", "HTTPS")
+Rel(automation, er, "Submits tasks with bearer token. Receives completion callbacks.", "REST")
+Rel(gw, er, "Proxies UI requests to ER (state, tasks, control, subscribe). Relays ER -> UI live event push.", "REST / WS")
+Rel(er, erdb, "Read/write tasks, events, routing rules, audit (sole owner).", "SQL")
+Rel(gw, sec, "Proxies UI requests (POST /secrets).", "HTTPS")
+Rel(er, sec, "open env (read) - validate secret_ids at submit, fetch env at dispatch.", "HTTPS")
 
 @enduml
