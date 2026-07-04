@@ -1,0 +1,42 @@
+Cycle check report for the FlowAI MVP service backlog.
+
+Source: .omo/artifacts/mvp-service-backlog.yaml
+Method: Iterative stable topological sort with deterministic tie-breakers
+       (fewer deps first, then service_type priority
+       support,data-access,gateway,api,worker,adapter,executor,ui,
+       then lexical service_id).
+Algorithm: depth-first search for cycles; back edges are reported.
+
+RESULT: PASS - 0 cycles detected.
+
+Dependency edges (12 services, 18 directed edges):
+  event-broker         <-  api-gateway, lifecycle-manager, router, webhook-handler,
+                          gitlab-handler, jira-poller, executor-runner
+  oidc-idp             <-  api-gateway
+  state-store          <-  secret-service, lifecycle-manager, router
+  event-broker+oidc    <-  api-gateway (both)
+  state-store          <-  secret-service
+  state-store,event-br <-  lifecycle-manager
+  state-store,event-br <-  router
+  event-broker         <-  gitlab-handler
+  event-broker         <-  jira-poller
+  event-broker         <-  webhook-handler
+  event-broker,ssec,rt <-  executor-runner
+  api-gateway          <-  operator-ui
+
+Cycle attempt 1: api-gateway -> event-broker -> ... -> api-gateway
+  - No edge exists from event-broker back to api-gateway. ACYCLIC.
+
+Cycle attempt 2: api-gateway -> oidc-idp -> ... -> api-gateway
+  - oidc-idp has no depends_on edges to api-gateway. ACYCLIC.
+
+Cycle attempt 3: executor-runner -> router -> ... -> executor-runner
+  - No edge exists from router back to executor-runner. ACYCLIC.
+
+Cycle attempt 4: executor-runner -> secret-service -> ... -> executor-runner
+  - secret-service depends only on state-store; no path back. ACYCLIC.
+
+Cycle attempt 5: operator-ui -> api-gateway -> ... -> operator-ui
+  - api-gateway depends on event-broker and oidc-idp only; no path back. ACYCLIC.
+
+Ordered result is recorded in .omo/artifacts/service-implementation-order.yaml.

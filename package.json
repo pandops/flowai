@@ -1,0 +1,47 @@
+{
+  "name": "flowai-v2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FlowAI v2 platform - event-driven AI agent orchestration (TypeScript monorepo + Go backend services per ADR 0002).",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
+    "format:fix": "prettier --write \"**/*.{ts,tsx,js,json,md,yaml,yml}\"",
+    "lint": "eslint \"{apps,packages}/**/*.{ts,tsx}\" --max-warnings=0",
+    "typecheck": "tsc -b --pretty",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:contract": "vitest run --config vitest.contract.config.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts --passWithNoTests",
+    "build": "tsc -b && pnpm -r --filter \"@flowai/types\" --filter \"@flowai/events\" run build",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist packages/*/dist apps/*/coverage packages/*/coverage .turbo",
+    "ci:check": "node ./scripts/ci-check.mjs",
+    "go:vet": "bash ./scripts/go-vet.sh",
+    "go:test": "bash ./scripts/go-test.sh",
+    "helm:lint": "bash ./scripts/helm-lint.sh",
+    "k3d:smoke": "bash ./scripts/k3d-smoke.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@flowai/types": "workspace:*",
+    "@flowai/events": "workspace:*"
+  }
+}

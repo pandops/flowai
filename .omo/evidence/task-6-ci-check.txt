@@ -1,0 +1,51 @@
+[ci-check] using manifest hint: /home/ioleksiv/Workspace/flowai_v2/.omo/artifacts/command-manifest.yaml
+[ci-check] -> format_check (npm run --silent format:check)
+Checking formatting...
+All matched files use Prettier code style!
+[ci-check] OK format_check
+[ci-check] -> lint (npm run --silent lint)
+[ci-check] OK lint
+[ci-check] -> typecheck (npm run --silent typecheck)
+[ci-check] OK typecheck
+[ci-check] -> unit_test (npm run --silent test)
+
+ RUN  v1.6.1 /home/ioleksiv/Workspace/flowai_v2
+
+ ✓ packages/types/test/index.test.ts  (2 tests) 1ms
+ ✓ packages/events/test/index.test.ts  (1 test) 2ms
+ ✓ apps/api-gateway/test/healthz.test.ts  (1 test) 14ms
+ ✓ packages/ui/test/index.test.tsx  (1 test) 10ms
+
+ Test Files  4 passed (4)
+      Tests  5 passed (5)
+   Start at  10:54:56
+   Duration  539ms (transform 67ms, setup 0ms, collect 127ms, tests 27ms, environment 230ms, prepare 177ms)
+
+[ci-check] OK unit_test
+[ci-check] -> go_vet (npm run --silent go:vet)
+[go-vet] -> apps/lifecycle-manager
+[go-vet] -> apps/router
+[go-vet] -> apps/secret-service
+[ci-check] OK go_vet
+[ci-check] -> go_test (npm run --silent go:test)
+[go-test] -> apps/lifecycle-manager
+?   	github.com/flowai/apps/lifecycle-manager/cmd/lifecycle-manager	[no test files]
+ok  	github.com/flowai/apps/lifecycle-manager/internal/health	(cached)
+[go-test] -> apps/router
+?   	github.com/flowai/apps/router/cmd/router	[no test files]
+ok  	github.com/flowai/apps/router/internal/health	(cached)
+[go-test] -> apps/secret-service
+?   	github.com/flowai/apps/secret-service/cmd/secret-service	[no test files]
+ok  	github.com/flowai/apps/secret-service/internal/health	(cached)
+[ci-check] OK go_test
+[ci-check] -> helm_lint (npm run --silent helm:lint)
+[helm-lint] no Helm charts yet (deferred to infra task)
+[ci-check] OK helm_lint
+[ci-check] -> k3d_smoke (npm run --silent k3d:smoke)
+[k3d-smoke] listing existing clusters
+NAME   SERVERS   AGENTS   LOADBALANCER
+[k3d-smoke] selecting active cluster flowai-test (may be absent on this runner)
+[k3d-smoke] no flowai-test cluster present on this runner (skipped)
+[ci-check] OK k3d_smoke
+[ci-check] all checks passed in 3.17s
+EXIT=0

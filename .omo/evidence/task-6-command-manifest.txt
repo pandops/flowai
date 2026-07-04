@@ -1,0 +1,3 @@
+=== Scenario: Local CI command manifest is complete ===
+all 10 keys present in .omo/artifacts/command-manifest.yaml
+EXIT=0

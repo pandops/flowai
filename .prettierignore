@@ -1,0 +1,25 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Plan/ADR/architecture content is hand-written, not pipeline-owned.
+.omo/plans/
+.omo/drafts/
+.omo/notepads/
+.omo/run-continuation/
+.omo/artifacts/decision-matrices/
+.omo/artifacts/mvp-*.yaml
+.omo/artifacts/adr-*.yaml
+.omo/artifacts/architecture-*.yaml
+.omo/artifacts/api-contracts/
+.omo/artifacts/event-contracts/
+.omo/artifacts/service-implementation-order.yaml
+.omo/boulder.json
+docs/adr/
+docs/architecture/
+.gitlab-ci.yml

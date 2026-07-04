@@ -1,0 +1,256 @@
+# ----------------------------------------------------------------------------
+# FlowAI v2 GitLab CI pipeline
+# Source of truth: docs/adr/0009-ci-test-strategy.md
+# Commands:        .omo/artifacts/command-manifest.yaml (root of this repo)
+#
+# CI topology note (per Task 6 acceptance criteria)
+# ----------------------------------------------------
+# This is the ONLY CI definition for FlowAI v2.
+#
+# The repository origin of record is Gitea (developer push surface). Every push
+# to the Gitea remote is auto-proxied / mirrored to the GitLab project where
+# GitLab CI runs. We do NOT maintain a separate Gitea Actions config
+# (no `.gitea/workflows/`). If a developer needs to trigger work locally they
+# invoke the same commands declared in `.omo/artifacts/command-manifest.yaml`
+# via `pnpm run ci:check` or the named scripts.
+#
+# Update rules:
+#   - lint, typecheck, unit, contract, integration, helm_lint, build:
+#     always run on MRs and on `main`.
+#   - k3d_smoke / e2e: gate on label `k3d-runner` or schedule/manual.
+# ----------------------------------------------------------------------------
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+  - e2e
+
+variables:
+  # Default image - per-job overrides below where useful.
+  DEFAULT_IMAGE: "node:20-alpine"
+  PNPM_VERSION: "9.12.0"
+  GO_VERSION: "1.21"
+  HELM_VERSION: "3.14.4"
+  DOCKER_REGISTRY: "registry.gitlab.com"
+  K3D_CLUSTER: "flowai-test"
+  # Path that mirrors the local manifest - CI jobs read the same manifest.
+  COMMAND_MANIFEST: ".omo/artifacts/command-manifest.yaml"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ----------------------------------------------------------------------------
+# Lint stage - matches command-manifest.yaml: format_check, lint, typecheck
+# ----------------------------------------------------------------------------
+
+format_check:
+  stage: lint
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm run format:check
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+  needs: []
+
+lint:
+  stage: lint
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm run lint
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+
+typecheck:
+  stage: lint
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm run typecheck
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+
+go-vet:
+  stage: lint
+  image: "golang:${GO_VERSION}-alpine"
+  script:
+    - bash ./scripts/go-vet.sh
+
+# ----------------------------------------------------------------------------
+# Test stage - matches command-manifest.yaml: unit_test, integration_test,
+# contract_test, go_test, helm_lint
+# ----------------------------------------------------------------------------
+
+unit_test:
+  stage: test
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm run test
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+    expire_in: 7 days
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+
+go_test:
+  stage: test
+  image: "golang:${GO_VERSION}-alpine"
+  script:
+    - bash ./scripts/go-test.sh
+
+contract_test:
+  stage: test
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm exec vitest run --config vitest.contract.config.ts
+  allow_failure: false
+
+integration_test:
+  stage: test
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm exec vitest run --config vitest.integration.config.ts
+  allow_failure: true
+  artifacts:
+    when: always
+    reports:
+      junit: junit-integration.xml
+    expire_in: 7 days
+
+helm_lint:
+  stage: test
+  image: "alpine/helm:${HELM_VERSION}"
+  script:
+    - bash ./scripts/helm-lint.sh
+
+# ----------------------------------------------------------------------------
+# Build stage - TypeScript and (future) Docker builds
+# ----------------------------------------------------------------------------
+
+build:
+  stage: build
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm run build
+  artifacts:
+    when: always
+    paths:
+      - apps/*/dist
+      - packages/*/dist
+    expire_in: 7 days
+
+# ----------------------------------------------------------------------------
+# Deploy stage - k3d cluster provisioning + Helm install (only when k3d
+# runner is available - has skip-code-78 behavior)
+# ----------------------------------------------------------------------------
+
+k3d_smoke:
+  stage: deploy
+  image: "${DEFAULT_IMAGE}"
+  tags:
+    - k3d-runner
+  script:
+    - bash ./scripts/k3d-smoke.sh
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+
+# ----------------------------------------------------------------------------
+# e2e stage - deferred until apps have endpoints; runs documented subset
+# ----------------------------------------------------------------------------
+
+e2e_test:
+  stage: e2e
+  image: "${DEFAULT_IMAGE}"
+  tags:
+    - k3d-runner
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm exec vitest run --config vitest.e2e.config.ts
+  allow_failure: true
+  artifacts:
+    when: always
+    reports:
+      junit: junit-e2e.xml
+    expire_in: 14 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+
+# ----------------------------------------------------------------------------
+# ci_check - the umbrella job wired to .omo/artifacts/command-manifest.yaml's
+# `ci_check` key. Aggregates the local-ci commands used during development;
+# mirrors the local `pnpm run ci:check` exactly so "exit 0 locally" == green.
+# ----------------------------------------------------------------------------
+
+ci_check:
+  stage: lint
+  image: "${DEFAULT_IMAGE}"
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@${PNPM_VERSION} --activate
+    - pnpm install --frozen-lockfile=false
+  script:
+    - pnpm run ci:check
+  allow_failure: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

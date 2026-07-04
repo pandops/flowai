@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+coverage/
+.turbo/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go binaries (per service)
+apps/*/bin/
+apps/*/vendor/
+
+# Helm / k3d local artifacts
+infra/k3d/.kube/
+infra/k3d/kubeconfig*
+*.kubeconfig
+.kubeconfig.tmp
+
+# Evidence / transient
+.omo/run-continuation/
