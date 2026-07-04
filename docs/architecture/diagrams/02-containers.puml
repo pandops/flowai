@@ -11,10 +11,12 @@ package "Automation layer" {
 }
 
 package "Core" {
-    [Control Plane API] as api
+    [API Gateway] as gw
+    [Event Router``] as er
     database "State Store" as pg
     queue "Source Queues" as qsrc
     queue "Executor Queues" as qexec
+    queue "Event Fanout Queue" as qevt
     database "Secret Service" as sec
 }
 
@@ -27,17 +29,25 @@ package "Executor fleet (multi-cluster)" {
 wh --> qsrc : publishes normalized event
 jira --> qsrc : publishes new task
 gl --> qsrc : publishes issue / comment
-qsrc --> api : consumes source events
-api --> pg : persists, reads routing rules
-api --> qexec : enqueues per routing rule
+
+er --> qsrc : consumes source events
+er --> gw : hands off normalized submission
+gw --> pg : persists, reads routing rules
+gw --> qexec : enqueues per routing rule
+
 qexec --> exA : pulls q:exec-A
 qexec --> exB : pulls q:exec-B
 qexec --> exL : pulls q:exec-local
+
 exA --> sec : get-by-scope
 exB --> sec : get-by-scope
 exL --> sec : get-by-scope
-exA --> api : publishes task events
-exB --> api : publishes task events
-exL --> api : publishes task events
+
+exA --> qevt : publishes task events
+exB --> qevt : publishes task events
+exL --> qevt : publishes task events
+
+er --> qevt : consumes events
+er --> gw : forwards events (UI fanout)
 
 @enduml

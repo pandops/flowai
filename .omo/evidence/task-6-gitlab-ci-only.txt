@@ -1,5 +1,0 @@
-=== Scenario: GitLab CI is the only CI source of truth ===
-ok: .gitlab-ci.yml present
-ok: no .gitea/workflows/ directory
-ok: no .github/workflows/ directory
-EXIT=0

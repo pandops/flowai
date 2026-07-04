@@ -1,5 +1,5 @@
 @startuml 03-operator-surface
-!include stdlib/C4_Container.puml
+!include <c4/C4_Container>
 
 LAYOUT_TOP_DOWN()
 LAYOUT_WITH_LEGEND()
@@ -10,17 +10,20 @@ Person(operator, "Operator", "Wires the system: automations, executors, routing 
 
 System_Boundary(b1, "FlowAI Platform") {
     Container(ui, "Web UI", "Single frontend. Automations, executors, routing rules, secret CRUD, observation, intervention")
-    Container(api, "Control Plane API", "Serves UI: automations / executors / routing CRUD, secret CRUD proxy, task state, WS fan-out, scope assembly, event routing")
+    Container(gw, "API Gateway", "Backend for the UI: automations / executors / routing CRUD, secret CRUD proxy, task state queries, WS fanout, scope assembly")
+    Container(er, "Event Router", "Queue take-and-put service. Consumes source / event queues, fans out to executor queues and to the API Gateway for WS subscribers")
     ContainerDb(pg, "State Store", "Automations, executors, routing rules, tasks, projects, audit log")
-    ContainerDb(queue, "Task pub/sub", "Live event stream for observed tasks, control bus for executors")
+    ContainerDb(queue, "Task pub/sub", "Source queue, per-executor queues, event fanout queue")
     ContainerDb(sec, "Secret Service", "CRUD: create / read / update / delete secrets")
 }
 
 Rel(operator, ui, "Manages automations, executors, routing, secrets, observes, intervenes", "HTTPS / WS")
-Rel(ui, api, "All operator actions (automations, executors, routing, CRUD, observation, intervention)", "HTTPS / WS")
+Rel(ui, gw, "All operator actions (automations, executors, routing, CRUD, observation, intervention)", "HTTPS / WS")
 Rel(ui, sec, "CRUD on secrets", "HTTPS")
-Rel(api, pg, "Reads / writes automations, executors, routing rules, tasks, audit", "SQL")
-Rel(api, queue, "Subscribes to task events for live UI; publishes control", "RESP pub/sub")
-Rel(api, sec, "Proxies secret CRUD for the UI", "HTTPS")
+Rel(gw, pg, "Reads / writes automations, executors, routing rules, tasks, audit", "SQL")
+Rel(gw, queue, "Subscribes to event fanout for live UI; publishes tasks", "RESP pub/sub")
+Rel(gw, sec, "Proxies secret CRUD for the UI", "HTTPS")
+Rel(er, queue, "Consumes source / event queues; writes to per-executor queues and fanout queue", "RESP pub/sub")
+Rel_R(er, pg, "Reads routing rules", "SQL")
 
 @enduml

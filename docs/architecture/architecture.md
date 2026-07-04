@@ -2,7 +2,9 @@
 
 > **Status:** Planning phase. No code written yet.
 >
-> **One-paragraph summary:** FlowAI is a platform that runs **agentic AI tasks** (LLM + tools, multi-turn) inside containers. A control plane schedules work; an executor daemon starts containers locally or in Kubernetes behind a single interface; a web UI provides a dashboard with live observation and intervention. Containers run pre-built images of external agent frameworks (OpenHands, Claude Agent SDK, LangGraph, ...) over a defined contract. A state store holds tasks, projects, and audit log; a task queue handles pub/sub and rate limits; a separate Secrets Registry service holds encrypted secrets per user / per project and issues short-lived grant tokens to running containers. OpenTelemetry traces every hop. Deployment is K8s-native via Helm; dev/test runs on k3d.
+> **One-paragraph summary:** FlowAI is a platform that runs **agentic AI tasks** (LLM + tools, multi-turn) inside containers. Two core services own the data plane: an **API Gateway** (the sole backend for the Web UI — CRUD, WS observation, intervention) and an **Event Router** (a pure queue take-and-put service — picks from the source/event queues, puts onto per-executor queues and the UI fanout queue, no business logic, no DB). An executor daemon starts containers locally or in Kubernetes behind a single interface. Containers run pre-built images of external agent frameworks (OpenHands, Claude Agent SDK, LangGraph, ...) over a defined contract. A state store holds tasks, projects, and audit log; a task queue handles pub/sub and rate limits; a separate Secrets Registry service holds encrypted secrets per user / per project and issues short-lived grant tokens to running containers. OpenTelemetry traces every hop. Deployment is K8s-native via Helm; dev/test runs on k3d.
+>
+> **Source of truth:** After bootstrap, the source of truth for architecture is [`openspec/specs/`](../../openspec/specs/) (per-capability specs: `task-submission`, `task-routing-execution`, `task-state-transitions`, `task-observation-intervention`, `operator-configuration`, `secret-management-injection`, `event-source-ingestion`). This `architecture.md` is kept as **legacy navigation and rendered-view documentation** — for browsing the prose and embedded diagrams. Edit the OpenSpec specs first; mirror changes here only when the rendered view needs updating.
 
 ## System context
 
@@ -10,7 +12,7 @@
 
 Source: [`diagrams/01-context.puml`](diagrams/01-context.puml) (PlantUML)
 
-The platform sits between the user and the agentic-loop world. It owns scheduling, isolation, secrets, observability, and cost — and delegates the actual LLM/tool loop to a framework inside a container.
+The platform sits between the user and the agentic-loop world. It owns queuing, isolation, secrets, observability, and cost — and delegates the actual LLM/tool loop to a framework inside a container.
 
 ## Task flow (runtime slice)
 
@@ -18,7 +20,7 @@ The platform sits between the user and the agentic-loop world. It owns schedulin
 
 Source: [`diagrams/02-containers.puml`](diagrams/02-containers.puml) (PlantUML)
 
-Five services that a task touches as it goes from "automation submits" to "task done", plus the per-task agent container. No human in this slice.
+Five services that a task touches as it goes from "automation submits" to "task done": the API Gateway (UI backend), the Event Router (queue take-and-put), executors (start containers), plus queues and the state store. No human in this slice.
 
 ## Operator surface (user-facing slice)
 
@@ -26,120 +28,38 @@ Five services that a task touches as it goes from "automation submits" to "task 
 
 Source: [`diagrams/03-operator-surface.puml`](diagrams/03-operator-surface.puml) (PlantUML)
 
-What a human touches: Web UI as the single frontend, Control Plane API as its backend, Secret Service for CRUD. The UI is the only CRUD client of the Secret Service. The Control Plane is the only backend for the UI. There is no other path for a human to manage secrets, observe a task, or intervene.
+What a human touches: Web UI as the single frontend, API Gateway as its backend, Secret Service for CRUD. The UI is the only CRUD client of the Secret Service. The API Gateway is the only backend for the UI. There is no other path for a human to manage secrets, observe a task, or intervene.
 
-Five things live inside the platform: UI, control plane API, scheduler, executor, and the data tier (Postgres + Redis). The agent container is per-task and ephemeral.
+Four things live inside the platform: UI, API Gateway, Event Router, and executors — plus the data tier (Postgres + Redis queues). The agent container is per-task and ephemeral.
+
+**API Gateway vs Event Router — separation of concerns:**
+
+- **API Gateway** = stateful backend for the UI. Owns HTTP/WS endpoints, validates input, persists to Postgres, assembles scope tokens, subscribes to the event fanout queue and pushes live events to WS clients. The UI never talks to anyone else.
+- **Event Router** = stateless queue take-and-put. Consumes from the source queue (tasks) and the event fanout queue (live events from executors), writes onto per-executor queues (dispatch) and the fanout queue (for the API Gateway to subscribe). It does **not** touch the database and does **not** know about scope tokens or routing rules beyond a small in-memory cache. This means it can be horizontally scaled, restarted, and replaced without losing task state.
 
 ## Task lifecycle
 
-```mermaid
-%% 04 — Task lifecycle sequence
-sequenceDiagram
-    autonumber
-    participant U as User (UI/API)
-    participant API as Control Plane API
-    participant DB as Postgres
-    participant Q as Redis Queue
-    participant SCH as Scheduler
-    participant EX as Executor Daemon
-    participant CR as Container Runtime
-    participant AG as Agent Container
-    participant LLM as LLM Provider
+![Task lifecycle sequence](diagrams/04-sequence-task-lifecycle.svg)
 
-    U->>API: POST /tasks { definition, hints }
-    API->>API: Validate, resolve secrets refs
-    API->>DB: INSERT task (status=queued)
-    API->>Q: LPUSH task_id
-    API-->>U: 202 task_id, run_id
+Source: [`diagrams/04-sequence-task-lifecycle.puml`](diagrams/04-sequence-task-lifecycle.puml) (PlantUML)
 
-    SCH->>Q: BLPOP task_id
-    SCH->>DB: UPDATE status=running
-    SCH->>EX: Submit(task_spec)
-    EX->>CR: Pull image, start container
-    EX->>AG: Inject env (secrets, tool defs)
-    EX-->>SCH: run_handle
+Submit -> validate -> enqueue -> event-router dispatch -> start -> agent loop (LLM + tools) -> finalize -> cleanup. Every hop is traced.
 
-    loop agent loop
-        AG->>LLM: POST prompt + history
-        LLM-->>AG: completion (text or tool_use)
-        AG-->>EX: event stream
-        EX-->>API: stream events
-        API->>DB: persist events
-        API-->>U: WS push (live)
-    end
-
-    AG->>EX: final result
-    EX->>API: task finished (status)
-    API->>DB: UPDATE status=succeeded, save artifacts
-    API-->>U: WS final
-    Note over AG,CR: Container terminated. Artifacts in storage.
-```
-
-Source: [`diagrams/04-sequence-task-lifecycle.mmd`](diagrams/04-sequence-task-lifecycle.mmd)
-
-Submit -> validate -> enqueue -> pick -> start -> agent loop (LLM + tools) -> finalize -> cleanup. Every hop is traced.
+The Event Router sits between the API Gateway and the executors. The API Gateway writes tasks to the source queue and reads from the event fanout queue. The Event Router bridges: source queue -> per-executor queue (dispatch), and executor event stream -> fanout queue (observation). No business logic in the router — pure take-and-put.
 
 ## Secret injection
 
-```mermaid
-%% 05 — Secret injection sequence
-sequenceDiagram
-    autonumber
-    participant U as User
-    participant API as Control Plane API
-    participant V as Encrypted Vault
-    participant EX as Executor Daemon
-    participant AG as Agent Container
+![Secret injection sequence](diagrams/05-sequence-secrets.svg)
 
-    Note over U,AG: Submit-time secret binding (never stored in cleartext in container env)
-
-    U->>API: POST /tasks { tools: [github], secret_refs: [github_token] }
-    API->>V: Fetch encrypted github_token
-    V-->>API: ciphertext blob
-    API->>API: Decrypt in-memory, build ephemeral side-channel plan
-
-    API->>EX: Submit(task_spec) with encrypted_payload_ref
-    EX->>EX: Pull pre-built agent image
-    EX->>AG: Mount tmpfs with decrypted secret, mode 0400
-    EX->>AG: ENV SECRET_REFS=github_token:/run/secrets/github_token
-    AG->>AG: SDK reads at /run/secrets/github_token
-    AG->>AG: Tool (github) reads file, makes API call
-
-    Note over AG: After task ends. Container destroyed, tmpfs unmounted, decrypted bytes vanish.
-
-    Note over API,V: At rest. ciphertext only. Decryption key from KMS or platform root key (out of band).
-```
-
-Source: [`diagrams/05-sequence-secrets.mmd`](diagrams/05-sequence-secrets.mmd)
+Source: [`diagrams/05-sequence-secrets.puml`](diagrams/05-sequence-secrets.puml) (PlantUML)
 
 Secrets are ciphertext in Postgres, plaintext only inside a tmpfs mounted into the running container, and gone the moment the container stops.
 
 ## Task state machine
 
-```mermaid
-%% 06 — Task state machine
-stateDiagram-v2
-    [*] --> Queued: POST /tasks
-    Queued --> Scheduled: scheduler picks
-    Queued --> Cancelled: user cancel
-    Scheduled --> Pulling: executor.Submit
-    Pulling --> Starting: image ready
-    Pulling --> Failed: pull error
-    Starting --> Running: agent loop begins
-    Starting --> Failed: start error
-    Running --> Running: tool_use / llm_response / file_change
-    Running --> Succeeded: agent returns final
-    Running --> Failed: unhandled error / max_steps
-    Running --> Cancelled: user cancel (graceful)
-    Running --> Timeout: wall_clock > limit
-    Failed --> [*]
-    Succeeded --> [*]
-    Cancelled --> [*]
-    Timeout --> [*]
-    note right of Running: events streamed to UI. persisted to DB
-```
+![Task state machine](diagrams/06-state-task.svg)
 
-Source: [`diagrams/06-state-task.mmd`](diagrams/06-state-task.mmd)
+Source: [`diagrams/06-state-task.puml`](diagrams/06-state-task.puml) (PlantUML)
 
 Every task moves through this state graph. Terminal states are persisted with the full event log so a task can be replayed in the UI.
 
@@ -159,5 +79,5 @@ Open questions, deferred until implementation:
 
 1. Skim the system context (diagram 01) and the containers (diagram 02). That's the shape.
 2. Read the lifecycle (diagram 04) — that is the happy path.
-3. To change something, edit the relevant diagram source (`.puml` / `.mmd`) and re-render.
+3. To change something, edit the relevant diagram source (`.puml`) and re-render.
 4. The `diagrams` skill (in `.opencode/skills/diagrams`) explains how to render and verify.

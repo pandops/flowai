@@ -1,0 +1,84 @@
+@startuml 04-sequence-task-lifecycle
+title FlowAI Platform - Task Lifecycle (sequence)
+
+autonumber
+
+participant "Automation" as Auto
+participant "Operator (UI)" as U
+participant "API Gateway" as GW
+participant "Source Queue" as qsrc
+participant "Event Router" as ER
+participant "Executor Queue" as qexec
+participant "Executor" as EX
+participant "Agent Container" as AG
+participant "Event Fanout Queue" as qevt
+participant "LLM Provider" as LLM
+
+note over Auto, U
+  Automation submits via API Gateway. Operator observes via WS and can intervene.
+  Event Router is a pure queue take-and-put service: no business logic, no DB.
+end note
+
+== Submit ==
+
+Auto -> GW : POST /tasks (prompt, tools, secret_ids)
+GW -> GW : Build scope (HMAC: project, task, secret_ids, TTL)
+GW -> GW : Persist task
+GW -> qsrc : enqueue task (LPUSH)
+GW --> Auto : 202 task_id
+
+U -> GW : WS connect (subscribe to task events)
+
+== Dispatch (event-router take-and-put) ==
+
+ER -> qsrc : pull next task (BLPOP / SUBSCRIBE)
+ER -> ER : resolve target executor via routing rules
+ER -> qexec : put on per-executor queue
+ER --> EX : poll q:exec-X -> deliver task_spec + scope_token (one-shot handoff)
+EX -> EX : Pull image
+EX -> AG : Start container, inject secrets as env / tmpfs
+
+note over AG, EX
+  Agent is a black box. Runs initial instructions. No platform API.
+end note
+
+AG -> LLM : Prompt + history
+LLM --> AG : Completion or tool_use
+
+== Agent loop (event fanout) ==
+
+loop agent loop
+  AG --> EX : stdout (event stream)
+  EX -> qevt : publish events (task_id, kind, payload)
+  ER -> qevt : consume events
+  ER -> qevt : put on fanout queue (per task subscription)
+  GW -> qevt : subscribe, forward to WS clients
+  GW --> U : WS push (live)
+
+  opt Operator intervenes
+    U -> GW : inject message / cancel / rerun
+    GW -> ER : forward control event
+    ER -> qexec : put control event on executor queue
+    EX -> qexec : poll -> receive control event
+    EX --> AG : forward (or stop)
+  end
+
+  AG -> LLM : Next prompt
+  LLM --> AG : Next completion
+end
+
+== Finalize ==
+
+AG --> EX : final result (stdout / exit code)
+EX -> qevt : publish final event (status)
+ER -> qevt : consume final
+ER -> GW : forward final
+GW -> GW : UPDATE state to terminal
+GW --> Auto : webhook / status (if configured)
+GW --> U : WS final
+
+note over AG, EX
+  Container terminated. Scope token expires.
+end note
+
+@enduml
