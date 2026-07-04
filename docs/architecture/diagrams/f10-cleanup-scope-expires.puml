@@ -1,0 +1,54 @@
+@startuml f10-cleanup-scope-expires
+title F10 — Container cleanup and scope expiry
+
+|EX|
+start
+:Terminal event received
+ (any of: F8 final, F7 cancel,
+ F9 cancel, F6 timeout);
+
+:Stop container process
+ (SIGTERM, then SIGKILL after grace);
+
+:Mount tmpfs cleanup
+ (/run/secrets/* unmounted);
+
+note right
+  Plaintext bytes gone the moment
+  the unmount completes.
+end note
+
+:Notify EX of container exit;
+:Update internal task state;
+:Release executor slot;
+
+|Secret Service|
+:Scope_token still valid until TTL;
+:No action on SS side at cleanup time;
+:Plaintext already gone from container;
+:TTL countdown continues;
+:When TTL = 0, signature invalidated;
+:Future get-by-scope with this scope
+ fails closed;
+
+note right
+  SS does NOT need to know about cleanup.
+  It just enforces TTL on every request.
+end note
+
+|PG|
+:Audit log already persisted
+ (during F8 or F9);
+:State store keeps:
+ ciphertext, status, event log;
+:Plaintext NEVER enters PG;
+
+stop
+
+note right
+  Container terminated -> tmpfs unmount ->
+  plaintext gone -> scope expires ->
+  PG keeps ciphertext + audit only.
+end note
+
+@enduml
