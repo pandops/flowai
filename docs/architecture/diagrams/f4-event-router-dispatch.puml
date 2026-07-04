@@ -1,0 +1,48 @@
+@startuml f4-event-router-dispatch
+title F4 — Event Router dispatches a queued task (REST to executor)
+
+|ER|
+start
+:Query ER DB
+ (next pending task for the
+  next available executor);
+
+|ER|
+:Open ER DB read;
+:SELECT task
+ -> task_spec
+ + scope_token
+ + routing_target;
+:Close ER DB read;
+
+|ER|
+:UPDATE task SET status=preparing;
+
+|ER|
+:REST POST /dispatch
+ to Executor X
+ { task_spec + scope_token };
+
+|EX (executor X)|
+:Receive REST POST /dispatch;
+:Pull pre-built agent image (OCI);
+:Prepare container runtime;
+
+|AG|
+:Container about to start;
+:Read secrets via open env (see F5);
+:Start agent loop (see F6);
+
+stop
+
+note right
+  No queues. ER queries its own DB,
+  pushes the task to the executor
+  via REST.
+  Executor receives full
+  task_spec + scope_token
+  in the REST payload.
+  GW is not on this path.
+end note
+
+@enduml
