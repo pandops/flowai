@@ -1,0 +1,57 @@
+@startuml f6-agent-loop-fanout
+title F6 — Agent loop + live event fanout (via Event Router)
+
+|AG|
+start
+while (more steps?) is (yes)
+  :Build prompt
+   (history + tools + env);
+  :POST prompt;
+
+  |LLM|
+  :Reason;
+  :Return completion OR tool_use;
+
+  |AG|
+  :Receive response;
+
+  if (Final result?) then (yes)
+    :Emit final event;
+    -->[handoff] "See F8 (finalize)";
+    stop
+  else (no, continue)
+    :Execute tool (github, file, etc.);
+    :Emit tool_use event
+     (kind=tool_use, payload=tool, args);
+  endif
+
+  |EX|
+  :Capture stdout event stream;
+:REST POST /events
+   to Event Router
+   { task_id, kind, payload };
+
+  |ER|
+  :Persist event in ER DB;
+  :Push to subscribers (GW);
+
+  |API Gateway|
+  :Proxy event frame
+   to UI over WS
+   (per F3 subscription);
+
+  |Operator|
+  :Receive WS push (live);
+endwhile (no)
+
+note right
+  No queues. Every event from every executor
+  flows through ER.
+  ER pushes to GW, GW proxies to UI WS.
+  Zero platform touch inside AG <-> LLM.
+  GW has no logic - just proxy.
+end note
+
+stop
+
+@enduml

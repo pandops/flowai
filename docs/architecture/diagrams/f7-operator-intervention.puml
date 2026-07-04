@@ -1,0 +1,69 @@
+@startuml f7-operator-intervention
+title F7 — Operator intervenes mid-loop
+
+|Operator|
+start
+:Open task in UI
+ (already connected via F3);
+:Choose intervention:
+ inject message / cancel / rerun;
+
+|UI|
+:Send WS message
+ { bearer_token,
+   type: control,
+   action: <X>,
+   payload };
+
+|API Gateway|
+:Validate bearer_token;
+note right
+  GW's only logic.
+  Auth + route.
+end note
+:REST POST /control
+ to Event Router
+ { bearer_token, task_id, action, payload };
+
+|ER|
+:Validate bearer_token;
+:Persist control event in ER DB;
+:Push to executor subscribers;
+:REST POST /control
+ to Executor X
+ { task_id, action, payload };
+
+|EX|
+:Receive REST POST /control;
+
+if (Action?) then (cancel)
+  :Send SIGTERM to AG;
+  -->[graceful] "See F8 (finalize)"
+elseif (inject message) then
+  :Write message to AG stdin;
+elseif (rerun) then
+  :Restart AG with same scope_token;
+  -->[restart] "See F4 again"
+else (unknown)
+  :Log warning;
+  :Drop frame;
+  stop
+endif
+
+|AG|
+:Receive signal / message;
+
+if (Action?) then (cancel)
+  :Clean shutdown;
+  -->[done] "Exit loop, emit final event";
+  stop
+elseif (inject)
+  :Treat message as next user turn;
+  -->[continue] "Resume agent loop (see F6)";
+  stop
+elseif (rerun)
+  -->[restart] "See F4 (event-router dispatch)";
+  stop
+endif
+
+@enduml

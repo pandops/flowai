@@ -1,0 +1,51 @@
+@startuml f8-task-finalization
+title F8 — Task finalization (no queues)
+
+|AG|
+start
+:Agent loop complete;
+:Emit final result
+ (stdout / exit code);
+
+|EX|
+:Capture final stdout + exit code;
+:REST POST /events
+ to Event Router
+ { status=terminal, payload=result };
+
+|ER|
+:Persist final event in ER DB;
+:UPDATE task SET status=terminal in ER DB;
+:Push to subscribers (GW);
+:Send webhook to Auto (if configured);
+
+fork
+  |API Gateway|
+  :Receive final event from ER;
+  :Proxy to UI over WS (per F3);
+  -->[ws] "Operator sees terminal status"
+
+  |Operator|
+  :Receive WS final frame;
+
+  |EX|
+  :Stop container
+   (SIGTERM, then SIGKILL after grace);
+  :Unmount tmpfs (plaintext gone);
+
+fork again
+  |ER|
+  :Invalidate scope_token cache entry
+   in ER DB;
+end fork
+
+stop
+
+note right
+  Three concurrent cleanup paths
+  fan out from a single final event
+  pushed by ER.
+  GW just proxies the WS frame.
+end note
+
+@enduml
