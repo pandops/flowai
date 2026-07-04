@@ -6,37 +6,48 @@ autonumber
 participant "Automation" as Auto
 participant "Operator (UI)" as U
 participant "API Gateway" as GW
-participant "Source Queue" as qsrc
 participant "Event Router" as ER
-participant "Executor Queue" as qexec
+participant "Secret Service" as SS
 participant "Executor" as EX
 participant "Agent Container" as AG
-participant "Event Fanout Queue" as qevt
 participant "LLM Provider" as LLM
 
 note over Auto, U
-  Automation submits via API Gateway. Operator observes via WS and can intervene.
-  Event Router is a pure queue take-and-put service: no business logic, no DB.
+  GW is an auth-aware reverse proxy. Its only logic is:
+  (1) validate auth, (2) route to a backend service,
+  (3) return the backend's response.
+  No business logic. No state. No writes.
+  Automation bypasses GW and calls ER directly with a token.
+  All writes and process logic happen in backend services (ER, SS, EX).
 end note
 
-== Submit ==
+== Submit (automation -> ER direct) ==
 
-Auto -> GW : POST /tasks (prompt, tools, secret_ids)
-GW -> GW : Build scope (HMAC: project, task, secret_ids, TTL)
-GW -> GW : Persist task
-GW -> qsrc : enqueue task (LPUSH)
-GW --> Auto : 202 task_id
+Auto -> GW : POST /auth/login
+GW --> Auto : 200 { bearer_token }
+Auto -> ER : REST POST /tasks (bearer_token, prompt, tools, secret_ids)
+ER -> SS : REST open env (validate secret_ids exist)
+SS --> ER : ok
+ER -> ER : Build scope (HMAC: project, task, secret_ids, TTL)
+ER -> ER : Persist task (status=queued, scope_token, routing_target) in ER DB
+ER --> Auto : 202 task_id
 
-U -> GW : WS connect (subscribe to task events)
+== Subscribe (UI -> GW -> ER) ==
 
-== Dispatch (event-router take-and-put) ==
+U -> GW : WS connect (bearer_token)
+GW -> GW : Validate bearer_token
+GW -> ER : REST subscribe to task_id events (bearer_token)
+ER -> GW : subscription ack
+GW -> U : WS upgrade ack
 
-ER -> qsrc : pull next task (BLPOP / SUBSCRIBE)
-ER -> ER : resolve target executor via routing rules
-ER -> qexec : put on per-executor queue
-ER --> EX : poll q:exec-X -> deliver task_spec + scope_token (one-shot handoff)
+== Dispatch (ER dispatches via REST) ==
+
+ER -> ER : Pick next pending task from ER DB
+ER -> EX : REST POST /dispatch { task_spec + scope_token }
+EX -> SS : REST open env { scope_token }
+SS --> EX : env-style keys
 EX -> EX : Pull image
-EX -> AG : Start container, inject secrets as env / tmpfs
+EX -> AG : Start container, mount secrets as env / tmpfs
 
 note over AG, EX
   Agent is a black box. Runs initial instructions. No platform API.
@@ -45,21 +56,20 @@ end note
 AG -> LLM : Prompt + history
 LLM --> AG : Completion or tool_use
 
-== Agent loop (event fanout) ==
+== Agent loop (event fanout via REST) ==
 
 loop agent loop
   AG --> EX : stdout (event stream)
-  EX -> qevt : publish events (task_id, kind, payload)
-  ER -> qevt : consume events
-  ER -> qevt : put on fanout queue (per task subscription)
-  GW -> qevt : subscribe, forward to WS clients
-  GW --> U : WS push (live)
+  EX -> ER : REST POST /events { task_id, kind, payload }
+  ER -> ER : Persist event in ER DB
+  ER -> GW : REST push (event to subscribers)
+  GW -> U : WS push (live)
 
   opt Operator intervenes
-    U -> GW : inject message / cancel / rerun
-    GW -> ER : forward control event
-    ER -> qexec : put control event on executor queue
-    EX -> qexec : poll -> receive control event
+    U -> GW : inject message / cancel / rerun (WS frame, bearer_token)
+    GW -> GW : Validate bearer_token
+    GW -> ER : REST POST /control { task_id, action }
+    ER -> EX : REST POST /control { task_id, action }
     EX --> AG : forward (or stop)
   end
 
@@ -70,12 +80,11 @@ end
 == Finalize ==
 
 AG --> EX : final result (stdout / exit code)
-EX -> qevt : publish final event (status)
-ER -> qevt : consume final
-ER -> GW : forward final
-GW -> GW : UPDATE state to terminal
-GW --> Auto : webhook / status (if configured)
-GW --> U : WS final
+EX -> ER : REST POST /events { status=terminal, result }
+ER -> ER : UPDATE task status to terminal in ER DB
+ER -> GW : REST push (final event)
+GW -> U : WS final
+ER --> Auto : callback (if configured)
 
 note over AG, EX
   Container terminated. Scope token expires.
