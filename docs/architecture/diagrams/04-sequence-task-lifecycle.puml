@@ -3,7 +3,7 @@ title FlowAI Platform - Task Lifecycle (sequence)
 
 autonumber
 
-participant "Automation" as Auto
+participant "Source" as Src
 participant "Operator (UI)" as U
 participant "API Gateway" as GW
 participant "Event Router" as ER
@@ -12,39 +12,69 @@ participant "Executor" as EX
 participant "Agent Container" as AG
 participant "LLM Provider" as LLM
 
-note over Auto, U
-  GW is an auth-aware reverse proxy. Its only logic is:
-  (1) validate auth, (2) route to a backend service,
-  (3) return the backend's response.
-  No business logic. No state. No writes.
-  Automation bypasses GW and calls ER directly with a token.
-  All writes and process logic happen in backend services (ER, SS, EX).
+note over Src, U
+  Tasks are created by sources directly to the Event Router.
+  No API Gateway on the create path. The API Gateway is an
+  auth-aware reverse proxy for everything else (state queries,
+  observation, intervention, secret registration).
+  The Event Router maintains an executor pool: executors register
+  on startup and signal availability. ER matches pending tasks to
+  available executors and dispatches.
 end note
 
-== Submit (automation -> ER direct) ==
+== Executor registration (on startup) ==
 
-Auto -> GW : POST /auth/login
-GW --> Auto : 200 { bearer_token }
-Auto -> ER : REST POST /tasks (bearer_token, prompt, tools, secret_ids)
+EX -> ER : REST POST /executors with routing_target, capacity N, metadata
+ER -> ER : Register executor in pool with capacity N
+ER -> ER : Initialize slots_in_use = 0
+ER --> EX : 201 with executor_id
+
+note over EX, ER
+  capacity N is **configurable per executor**.
+  capacity = number of **concurrent containers**
+  the executor can host. Up to N tasks run in parallel
+  on the same executor (one container per task).
+  ER tracks slots_in_use and matches pending tasks
+  to executors only when slots_in_use is less than capacity.
+end note
+
+== Executor first ready signal ==
+
+EX -> ER : REST POST /executors/:id/ready
+ER -> ER : Mark executor as having N free slots
+
+== Submit (source -> ER direct) ==
+
+Src -> ER : REST POST /tasks (bearer_token, prompt, tools, secret_ids)
 ER -> SS : REST open env (validate secret_ids exist)
 SS --> ER : ok
 ER -> ER : Build scope (HMAC: project, task, secret_ids, TTL)
-ER -> ER : Persist task (status=queued, scope_token, routing_target) in ER DB
-ER --> Auto : 202 task_id
+ER -> ER : Persist task with status=queued, scope_token, routing_target
+ER --> Src : 202 task_id
 
 == Subscribe (UI -> GW -> ER) ==
 
 U -> GW : WS connect (bearer_token)
 GW -> GW : Validate bearer_token
-GW -> ER : REST subscribe to task_id events (bearer_token)
+GW -> ER : REST subscribe to task_id events
 ER -> GW : subscription ack
 GW -> U : WS upgrade ack
 
-== Dispatch (ER dispatches via REST) ==
+== Dispatch (ER waits for available slot) ==
 
-ER -> ER : Pick next pending task from ER DB
-ER -> EX : REST POST /dispatch { task_spec + scope_token }
-EX -> SS : REST open env { scope_token }
+note over ER
+  ER has a pending task and an executor
+  whose routing_target matches AND
+  whose slots_in_use is less than capacity
+  (i.e., the executor has at least one free slot
+  for a new parallel task).
+end note
+
+ER -> ER : Match pending task to executor X with routing_target matches, slots_in_use less than capacity
+ER -> ER : UPDATE task status=dispatched, executor_id=X
+ER -> ER : slots_in_use = slots_in_use plus 1
+ER -> EX : REST POST /dispatch with task_spec and scope_token
+EX -> SS : REST open env with scope_token
 SS --> EX : env-style keys
 EX -> EX : Pull image
 EX -> AG : Start container, mount secrets as env / tmpfs
@@ -80,11 +110,27 @@ end
 == Finalize ==
 
 AG --> EX : final result (stdout / exit code)
-EX -> ER : REST POST /events { status=terminal, result }
+EX -> ER : REST POST /events with status=terminal, result
 ER -> ER : UPDATE task status to terminal in ER DB
+ER -> ER : slots_in_use = slots_in_use minus 1
 ER -> GW : REST push (final event)
 GW -> U : WS final
-ER --> Auto : callback (if configured)
+ER --> Src : callback (if configured)
+
+== Executor returns to pool ==
+
+EX -> ER : REST POST /executors/:id/ready signal available for next task
+ER -> ER : Mark executor as having at least one free slot
+note over ER
+  ER is back to waiting.
+  If slots_in_use is less than capacity,
+  the next pending task (if any) can be
+  matched to this executor immediately.
+  If slots_in_use equals capacity minus one
+  (i.e., this completion was the last running task),
+  the EX is now fully idle and ready to take
+  capacity new tasks.
+end note
 
 note over AG, EX
   Container terminated. Scope token expires.

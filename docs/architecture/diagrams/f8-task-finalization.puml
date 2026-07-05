@@ -1,23 +1,41 @@
 @startuml f8-task-finalization
-title F8 — Task finalization (no queues)
+title F8 — Task finalization (no queues) + EX frees one slot
 
 |AG|
 start
 :Agent loop complete;
 :Emit final result
- (stdout / exit code);
+ with stdout and exit code;
 
 |EX|
-:Capture final stdout + exit code;
+:Capture final stdout and exit code;
 :REST POST /events
  to Event Router
- { status=terminal, payload=result };
+ with status=terminal, payload=result;
 
 |ER|
 :Persist final event in ER DB;
-:UPDATE task SET status=terminal in ER DB;
-:Push to subscribers (GW);
-:Send webhook to Auto (if configured);
+:UPDATE task status to terminal in ER DB;
+:Push to subscribers (API Gateway);
+:Send webhook to Automation (if configured);
+:slots_in_use = slots_in_use minus 1;
+
+note right
+  Each completed task destroys ONE
+  container and frees ONE slot on the EX,
+  not the entire capacity. If the EX had
+  capacity N and was running N containers,
+  all N must complete before slots_in_use
+  returns to 0. This single completion event
+  frees exactly one slot.
+end note
+
+if (slots_in_use less than capacity?) then (yes, EX still has free slots)
+  :EX is still busy with other tasks,
+   but has at least one free slot;
+else (no, EX is fully idle)
+  :EX has no running tasks;
+endif
 
 fork
   |API Gateway|
@@ -30,8 +48,19 @@ fork
 
   |EX|
   :Stop container
-   (SIGTERM, then SIGKILL after grace);
+   with SIGTERM, then SIGKILL after grace;
   :Unmount tmpfs (plaintext gone);
+
+fork again
+  |EX|
+  :REST POST /executors/:id/ready
+   signal available for next task;
+
+  |ER|
+  :Receive ready signal;
+  :ER can now match a new pending task
+   to this EX if slots_in_use is less than capacity
+   (see F4);
 
 fork again
   |ER|
@@ -40,12 +69,5 @@ fork again
 end fork
 
 stop
-
-note right
-  Three concurrent cleanup paths
-  fan out from a single final event
-  pushed by ER.
-  GW just proxies the WS frame.
-end note
 
 @enduml

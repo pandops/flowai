@@ -1,48 +1,67 @@
 @startuml f4-event-router-dispatch
-title F4 — Event Router dispatches a queued task (REST to executor)
+title F4 — Event Router dispatches via executor pool (ER waits for available slot)
 
-|ER|
+|EX (executor X)|
 start
-:Query ER DB
- (next pending task for the
-  next available executor);
+:On startup, REST POST /executors with routing_target, capacity, metadata;
 
 |ER|
-:Open ER DB read;
-:SELECT task
- -> task_spec
- + scope_token
- + routing_target;
-:Close ER DB read;
+:Register executor X
+ with routing_target, capacity N,
+ in executor pool;
+:Initialize slots_in_use = 0;
+:Mark executor X as registered;
+
+|EX (executor X)|
+:REST POST /executors/:id/ready
+ signal available for work;
 
 |ER|
-:UPDATE task SET status=preparing;
+:Receive ready signal;
+note right
+  ER now treats this EX as having
+  N free slots. ER can match up to N
+  pending tasks to it.
+end note
 
 |ER|
+:Match pending task to available executor
+ with slots_in_use less than capacity;
+:UPDATE task
+ SET status=dispatched,
+     executor_id=X;
+:slots_in_use = slots_in_use plus 1;
 :REST POST /dispatch
  to Executor X
- { task_spec + scope_token };
+ with task_spec and scope_token;
 
 |EX (executor X)|
 :Receive REST POST /dispatch;
-:Pull pre-built agent image (OCI);
-:Prepare container runtime;
+note right
+  EX can receive up to N dispatches
+  in parallel. capacity is the number
+  of concurrent containers: each task
+  runs in its own container, and up to
+  capacity containers can be live on
+  the same executor at once.
+end note
+:Pull pre-built agent image (OCI) if not cached;
+:Prepare a new container runtime for the task;
 
 |AG|
 :Container about to start;
 :Read secrets via open env (see F5);
 :Start agent loop (see F6);
 
-stop
-
 note right
-  No queues. ER queries its own DB,
-  pushes the task to the executor
-  via REST.
-  Executor receives full
-  task_spec + scope_token
-  in the REST payload.
-  GW is not on this path.
+  EX now runs the task in one of its
+  N slots. If slots_in_use reaches
+  capacity, ER stops matching to this EX
+  until a task completes and frees a slot.
+  On completion (see F8) the EX reports
+  the result and signals ready again.
 end note
+
+stop
 
 @enduml
