@@ -2,7 +2,7 @@
 
 > **Status:** Planning phase. No code written yet.
 >
-> **One-paragraph summary:** FlowAI is a platform that runs **agentic AI tasks** (LLM + tools, multi-turn) inside containers. The system has two layers: a thin **API Gateway** that is an **auth-aware reverse proxy** (its only logic is to validate auth, route to a backend service, and return the backend's response — no business logic, no state, no writes) and a set of **backend services** that own all writes and process logic: an **Event Router** (central message broker + state holder, owns its own database, receives task submissions and live events via REST, dispatches tasks to executors via REST, pushes live events to subscribers, sends REST queries to the Secret Service, does NOT modify message content), a **Secret Service** with two surfaces — `store` (write-only, called by the API Gateway on behalf of the UI) and `open env` (read, called by the Event Router and the Executors), and **Executors** that start containers locally or in Kubernetes behind a single interface. Containers run pre-built images of external agent frameworks (OpenHands, Claude Agent SDK, LangGraph, ...) over a defined contract. There are **no queues** — every task, event, and piece of state lives in the Event Router's database. OpenTelemetry traces every hop. Deployment is K8s-native via Helm; dev/test runs on k3d.
+> **One-paragraph summary:** FlowAI is a platform that runs **agentic AI tasks** (LLM + tools, multi-turn) inside containers. The system has two layers: a thin **API Gateway** that is an **auth-aware reverse proxy** (its only logic is to validate auth, route to a backend service, and return the backend's response — no business logic, no state, no writes) and a set of **backend services** that own all writes and process logic: an **Event Router** (central message broker + state holder, owns its own database, receives task submissions and live events via REST, maintains an executor pool (executors register and signal availability; ER matches pending tasks to available executors and dispatches), pushes live events to subscribers, sends REST queries to the Secret Service, does NOT modify message content), a **Secret Service** with two surfaces — `store` (write-only, called by the API Gateway on behalf of the UI) and `open env` (read, called by the Event Router and the Executors), and **Executors** that register with the Event Router on startup, signal availability, start containers locally or in Kubernetes behind a single interface. Containers run pre-built images of external agent frameworks (OpenHands, Claude Agent SDK, LangGraph, ...) over a defined contract. There are **no queues** — every task, event, and piece of state lives in the Event Router's database. OpenTelemetry traces every hop. Deployment is K8s-native via Helm; dev/test runs on k3d.
 >
 > **Hard rule #1 — UI talks to the API Gateway only.** No other service.
 >
@@ -11,6 +11,10 @@
 > **Hard rule #3 — There are no queues.** Every task and event lives in the Event Router's database. Producers REST-POST to the Event Router. Consumers REST-poll (or REST-subscribe) the Event Router.
 >
 > **Hard rule #4 — All write operations and process logic live in backend services** (Event Router, Secret Service, Executors). The API Gateway never writes anything except the audit log of auth events (which itself can be a backend call).
+>
+> **Hard rule #5 — Tasks are created without the API Gateway.** Sources (automation, CI, webhooks, future direct UI submission) REST-POST directly to the Event Router. The Event Router is the single entry point for task creation. The API Gateway is not on the create path.
+>
+> **Hard rule #6 — The Event Router owns the executor pool and waits for available executors.** Executors register with the Event Router on startup, signal availability, and accept dispatched tasks. The Event Router matches pending tasks to available executors and dispatches. Dispatch is push from the Event Router to the matched executor, but only when the executor is available.
 >
 > **Diagrams are `.puml` only.** No `.svg` / `.png` / `.html` is checked in. See `README.md` for the rationale and how to render locally.
 
@@ -53,17 +57,16 @@ The data plane. All writes and process logic happen here.
 
 #### Event Router (and its database)
 
-- **Sole owner** of its own database. Tasks, events, routing rules, audit — all live here.
+- **Sole owner** of its own database. Tasks, events, routing rules, audit, **and the executor pool** (executor registry + availability) — all live here.
 - **Replaces queues** entirely. The "source queue", "per-executor queues", and "event fanout queue" are not separate infrastructure; they are tables in the Event Router's database.
-- **Receives** task submissions from automation via REST (`POST /tasks`).
-- **Receives** task submissions proxied from the UI (via GW) on rare paths (e.g., UI-originated cancel/intervention).
+- **Single entry point for task creation.** Sources REST-POST directly to the Event Router (`POST /tasks`). The API Gateway is NOT on the create path. Any source (automation, CI, webhooks, future direct UI submission) goes straight to ER.
+- **Owns the executor pool.** Executors register on startup (`POST /executors`) and signal availability (`POST /executors/:id/ready`). ER tracks each executor's `routing_target`, configurable `capacity N`, and `slots_in_use` counter.
+- **Waits for an available slot, then dispatches.** ER matches a pending task to an executor whose `routing_target` matches AND whose `slots_in_use` is less than `capacity` (i.e., the executor has at least one free slot for a new parallel task). ER then dispatches (`POST /dispatch`) to the matched executor and increments `slots_in_use`. Each executor can run up to `N` tasks in parallel — `N` is configurable per executor at registration time.
 - **Receives** live events from executors via REST (`POST /events`).
 - **Receives** control events from the API Gateway (on behalf of operator intervention) via REST (`POST /control`).
-- **Dispatches** tasks to executors via REST (`POST /dispatch`).
 - **Pushes** live events to subscribers (the API Gateway) via REST/WS.
 - **Sends REST queries** to the Secret Service: `open env` to validate `secret_ids` at submit time, and to fetch env-style values for the executor at dispatch.
-- **Does NOT modify message content.** Events are stored and forwarded as-is. The only fields the Event Router owns are its own internal columns (routing decisions, status, timestamps).
-- The Event Router is the **single entry point for task creation**. Automation calls it directly (with a bearer token from the API Gateway).
+- **Does NOT modify message content.** Events are stored and forwarded as-is. The only fields the Event Router owns are its own internal columns (routing decisions, status, timestamps, executor registry).
 
 #### Secret Service
 
@@ -75,9 +78,13 @@ The data plane. All writes and process logic happen here.
 
 #### Executor
 
-- Receives dispatched tasks from the Event Router via REST. Pulls the image, starts the container.
-- Calls the Secret Service directly via `open env` at task start to mount secrets into the container.
-- Streams live events back to the Event Router via REST as the agent runs.
+- **Registers** with the Event Router on startup (`POST /executors { routing_target, capacity, metadata }`). The `capacity` is configurable per executor (typical values: 1 for small hosts, N for large GPU pools). ER assigns an `executor_id`.
+- **May run up to `capacity` tasks in parallel.** `capacity` is the number of **concurrent containers** the executor can host. Each task runs in its own container; up to `capacity` containers can be live on the executor at once. The executor is responsible for resource isolation (container runtimes, cgroups, namespaces).
+- **Signals availability** to the Event Router (`POST /executors/:id/ready`) when ready for more work — on startup, and after each task completes. The ready signal does not free the entire capacity, only one slot per task completion (one task completing frees one slot).
+- **Receives** dispatched tasks from the Event Router via REST (`POST /dispatch`). Pulls the image, starts the container. Up to `capacity` containers can be live on the executor at once.
+- **Calls** the Secret Service directly via `open env` at task start to mount secrets into the container.
+- **Streams** live events back to the Event Router via REST as the agent runs.
+- **Reports** completion to the Event Router (`POST /events { status=terminal, result }`) and signals availability again. ER decrements `slots_in_use` on its side.
 
 ### Web UI
 
@@ -89,14 +96,20 @@ The data plane. All writes and process logic happen here.
 ### Automation
 
 - Authenticates with the API Gateway to obtain a bearer token.
-- Submits tasks directly to the Event Router via REST with the bearer token.
+- Submits tasks **directly** to the Event Router via REST with the bearer token (no GW on the create path).
 - Receives completion callbacks directly from the Event Router.
 
 ## Task lifecycle
 
 Source: [`diagrams/04-sequence-task-lifecycle.puml`](diagrams/04-sequence-task-lifecycle.puml) — Sequence (PlantUML)
 
-Submit (Auto -> GW for token -> ER for create) -> validate (ER -> SS open env) -> persist (ER writes to its DB) -> dispatch (ER -> EX via REST) -> start (EX pulls image, calls SS open env) -> agent loop (AG <-> LLM; EX streams events to ER; ER pushes to GW; GW proxies to UI) -> finalize (EX -> ER; ER updates DB; ER pushes final; GW proxies to UI). Every hop is traced. The API Gateway appears in two places: (1) the auth dance at the start (Auto -> GW for token), and (2) the live event relay (ER -> GW -> UI).
+**Executor side (steady state):** Executor registers on startup, signals ready, then waits for dispatch. Receives `POST /dispatch`, runs the task, reports completion, signals ready again. Loops.
+
+**Task side (one task):** Source -> ER direct (no GW) to create. ER validates via SS open env, builds scope, persists. ER matches the pending task to a ready executor and dispatches. EX runs the agent loop. EX streams events to ER; ER pushes to GW; GW proxies to UI. On completion, EX reports terminal; ER updates DB and pushes final; GW proxies to UI. EX signals ready again.
+
+**Steady state:** The Event Router is always **waiting for an available slot on an executor**. When a slot frees (a task completes, ER decrements `slots_in_use`), ER checks if any pending task matches that executor's `routing_target`. If so, ER matches and dispatches. With `capacity N` per executor, the EX can hold up to N concurrent dispatches. The match-and-dispatch loop continues as long as there are pending tasks and available slots.
+
+The API Gateway appears in two places: (1) UI-originated auth+route proxying (e.g., secret registration, intervention, state queries), and (2) live event relay (ER -> GW -> UI over WS). It is **not** on the task create path.
 
 ## Secret injection
 
@@ -129,8 +142,9 @@ Ten activity diagrams, one per flow, walk through every interaction in the syste
 
 Flow relationships:
 
+- **F4** (executor registers + ER dispatches) is the **steady state** — it shows the lifecycle of an executor in the pool and the matching/dispatch logic. It is also where the "ER waits for avail executor" rule is implemented.
 - **F1** stands alone — secret registration, pre-task.
-- **F2 -> F4 -> F5 -> F6 -> F8 -> F10** is the happy path for a submitted task.
+- **F2 -> F4 -> F5 -> F6 -> F8 -> F10** is the happy path for a submitted task. (F2 creates; F4 shows the matching/dispatch; F5 is secret resolve at start; F6 is the agent loop; F8 is finalization and EX-signal-ready; F10 is cleanup.)
 - **F3** can fire in parallel with F2 (operator opens UI before/during automation).
 - **F7** interrupts F6 from outside.
 - **F9** is a cancel that may branch through F7 (Running) or run directly (Queued / Preparing), then terminates into F10.
