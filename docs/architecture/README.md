@@ -4,7 +4,7 @@
 >
 > **Scope:** AI platform that runs **agentic-loop** AI tasks (LLM + tools, multi-turn) inside containers — locally (Docker) or in Kubernetes.
 >
-> **Source of truth:** After bootstrap, the source of truth for architecture is [`openspec/specs/`](../../openspec/specs/) (per-capability specs: `task-submission`, `task-routing-execution`, `task-state-transitions`, `task-observation-intervention`, `operator-configuration`, `secret-management-injection`, `event-source-ingestion`). This README and `architecture.md` are kept as **legacy navigation and reference documentation** for browsing the diagram sources and prose. Edit the OpenSpec specs first; mirror changes here only when the source files need updating.
+> **Source of truth:** The source of truth for architecture is [`openspec/specs/`](../../openspec/specs/) (per-service specs: `web-ui`, `api-gateway`, `event-router`, `state-store`, `secret-service`, `executor`). This README and `architecture.md` are kept as **legacy navigation and reference documentation** for browsing the diagram sources and prose. Edit the OpenSpec specs first; mirror changes here only when the source files need updating.
 
 This directory holds the architecture plan for `flowai_v2`. It is a living document.
 
