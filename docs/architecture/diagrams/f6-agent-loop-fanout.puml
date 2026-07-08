@@ -1,11 +1,10 @@
 @startuml f6-agent-loop-fanout
-title F6 — Agent loop + live event fanout (via Event Router)
+title F6 - Agent loop: events go to State Registry (historical), status updates go to Router
 
 |AG|
 start
 while (more steps?) is (yes)
-  :Build prompt
-   (history + tools + env);
+  :Build prompt with history, tools, env;
   :POST prompt;
 
   |LLM|
@@ -20,36 +19,49 @@ while (more steps?) is (yes)
     -->[handoff] "See F8 (finalize)";
     stop
   else (no, continue)
-    :Execute tool (github, file, etc.);
-    :Emit tool_use event
-     (kind=tool_use, payload=tool, args);
+    :Execute tool;
+    :Emit tool_use event with kind=tool_use, payload=tool, args;
   endif
 
   |EX|
   :Capture stdout event stream;
-:REST POST /events
-   to Event Router
-   { task_id, kind, payload };
 
-  |ER|
-  :Persist event in ER DB;
-  :Push to subscribers (GW);
+  |EX|
+  :REST POST /events to State Registry
+ with task_id, kind, payload;
 
-  |API Gateway|
-  :Proxy event frame
-   to UI over WS
-   (per F3 subscription);
+  |State Registry|
+:Persist event in State Registry DB;
 
-  |Operator|
-  :Receive WS push (live);
+  |EX|
+  :REST POST /tasks/:id/status to Router
+ with status update;
+
+  |Router|
+:Update task status in Router DB;
+
+  if (Operator control request exists in State Registry?) then (yes)
+    |EX|
+    :Read pending control request from State Registry;
+    :Apply control (inject message, cancel, etc.);
+  endif
+
+  |AG|
+  :Perform tool call (if applicable);
+
+  :Send next prompt to LLM;
+
+  |LLM|
+  :Return next completion;
+
+  |AG|
 endwhile (no)
 
 note right
-  No queues. Every event from every executor
-  flows through ER.
-  ER pushes to GW, GW proxies to UI WS.
-  Zero platform touch inside AG <-> LLM.
-  GW has no logic - just proxy.
+  Historical events: EX -> State Registry (canonical record).
+  Live status: EX -> Router (queue assignment update).
+  Operator WS subscribes to State Registry via GW (see F3).
+  No broker in this loop.
 end note
 
 stop

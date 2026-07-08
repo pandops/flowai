@@ -1,57 +1,44 @@
 @startuml f9-user-cancel
-title F9 — User cancels a task
+title F9 - User cancels a task (GW -> State Registry request, EX reports terminal)
 
 |Operator|
 start
 :Click "Cancel" on task in UI;
 
 |UI|
-:POST /tasks/:task_id/cancel
- (bearer_token)
- to API Gateway;
+:Send WS cancel message to API Gateway
+ with bearer_token, task_id;
 
 |API Gateway|
 :Validate bearer_token;
 note right
   GW's only logic.
   Auth + route.
+  No connection to Router.
 end note
-:REST POST /cancel
- to Event Router
- { bearer_token, task_id };
+:REST POST /control-requests to State Registry
+ with bearer_token, task_id;
 
-|ER|
-:Validate bearer_token;
-:Read current task state from ER DB;
+|State Registry|
+:Append cancel control-request record;
+:Append operator audit entry;
+:Expose cancel request to assigned Executor;
 
-if (Current state?) then (Queued)
-  :UPDATE task SET status=cancelled in ER DB;
-  :Persist cancellation event in ER DB;
-  :Push to subscribers (GW);
-  :Return 200 OK to GW;
-  -->[done] "Terminal"
-elseif (Preparing) then
-  :UPDATE task SET status=cancelling in ER DB;
-  :REST POST /control
-   to Executor X
-   { task_id, action=cancel };
-  :EX terminates container;
-  :Wait for terminal event from EX;
-  :UPDATE task SET status=cancelled in ER DB;
-elseif (Running) then
-  -->[handoff] "See F7 (action=cancel)";
-  :REST POST /control
-   to Executor X
-   { task_id, action=cancel };
-  :EX sends SIGTERM;
-  :AG clean shutdown;
-  :EX publishes terminal event;
-  :UPDATE task SET status=cancelled in ER DB;
-else (already terminal)
-  :Return 409 Conflict to GW;
-  :Log "double cancel" audit;
-  stop
+|EX|
+:Read pending cancel request for task_id;
+
+if (Task already running?) then (yes)
+  :Terminate task Pod or Docker container;
+else (not started yet)
+  :Skip starting task runtime;
 endif
+
+:REST POST /tasks/:id/status to Router
+ with status=cancelled;
+
+|Router|
+:Update queue state to cancelled;
+:Free occupied slot if any;
 
 |API Gateway|
 :Return 200 to UI;
@@ -62,10 +49,10 @@ endif
 stop
 
 note right
-  From Queued: cancel is synchronous in ER.
-  From Preparing/Running: cancel goes through
-  ER -> EX -> AG (graceful), then waits for terminal.
-  GW just forwards; ER does all the work.
+  UI-originated cancel is a State Registry
+  control-request record. The Executor applies it
+  for its assigned task and reports terminal status
+  back to Router. Router still owns queue state.
 end note
 
 @enduml

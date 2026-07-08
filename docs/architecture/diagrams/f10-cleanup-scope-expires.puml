@@ -22,9 +22,9 @@ end note
 :Update internal task state;
 :Release executor slot;
 
-|Secret Service|
+|Secret Registry|
 :Scope_token still valid until TTL;
-:No action on SS side at cleanup time;
+:No action on Secret Registry side at cleanup time;
 :Plaintext already gone from container;
 :TTL countdown continues;
 :When TTL = 0, signature invalidated;
@@ -32,23 +32,23 @@ end note
  fails closed;
 
 note right
-  SS does NOT need to know about cleanup.
+  Secret Registry does NOT need to know about cleanup.
   It just enforces TTL on every request.
 end note
 
-|PG|
+|State Registry|
 :Audit log already persisted
  (during F8 or F9);
-:State store keeps:
- ciphertext, status, event log;
-:Plaintext NEVER enters PG;
+:State Registry keeps:
+ status, event log, audit;
+:Plaintext NEVER enters State Registry;
 
 stop
 
 note right
   Container terminated -> tmpfs unmount ->
   plaintext gone -> scope expires ->
-  PG keeps ciphertext + audit only.
+  State Registry keeps audit and task history only.
 end note
 
 @enduml

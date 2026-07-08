@@ -1,50 +1,29 @@
 @startuml f8-task-finalization
-title F8 — Task finalization (no queues) + EX frees one slot
+title F8 - Task finalization (EX -> Router marks done, EX -> StateRegistry writes historical)
 
 |AG|
 start
 :Agent loop complete;
-:Emit final result
- with stdout and exit code;
+:Emit final result with stdout and exit code;
 
 |EX|
 :Capture final stdout and exit code;
-:REST POST /events
- to Event Router
- with status=terminal, payload=result;
 
-|ER|
-:Persist final event in ER DB;
-:UPDATE task status to terminal in ER DB;
-:Push to subscribers (API Gateway);
-:Send webhook to Automation (if configured);
+|EX|
+:REST POST /tasks/:id/status to Router
+ with status=terminal, result;
+
+|Router|
+:Mark task done in Router DB;
 :slots_in_use = slots_in_use minus 1;
 
-note right
-  Each completed task destroys ONE
-  container and frees ONE slot on the EX,
-  not the entire capacity. If the EX had
-  capacity N and was running N containers,
-  all N must complete before slots_in_use
-  returns to 0. This single completion event
-  frees exactly one slot.
-end note
-
-if (slots_in_use less than capacity?) then (yes, EX still has free slots)
-  :EX is still busy with other tasks,
-   but has at least one free slot;
-else (no, EX is fully idle)
-  :EX has no running tasks;
-endif
+|EX|
+:REST POST /events to State Registry
+ with status=terminal, result (historical);
 
 fork
-  |API Gateway|
-  :Receive final event from ER;
-  :Proxy to UI over WS (per F3);
-  -->[ws] "Operator sees terminal status"
-
   |Operator|
-  :Receive WS final frame;
+  :UI WS already shows final (subscribed via F3);
 
   |EX|
   :Stop container
@@ -53,20 +32,24 @@ fork
 
 fork again
   |EX|
-  :REST POST /executors/:id/ready
-   signal available for next task;
+  :REST POST /executors/:id/ready to Router
+ (signal available for next task);
 
-  |ER|
-  :Receive ready signal;
-  :ER can now match a new pending task
-   to this EX if slots_in_use is less than capacity
-   (see F4);
+  |Router|
+:Mark executor as having at least one free slot;
+:Router can now match a new pending task
+ to this EX if slots_in_use is less than capacity;
 
-fork again
-  |ER|
-  :Invalidate scope_token cache entry
-   in ER DB;
 end fork
+
+note right
+  Two concurrent paths from completion:
+  1. EX marks the task done in Router (queue),
+     Router decrements slots_in_use.
+  2. EX writes the historical terminal event
+     to State Registry (canonical record).
+  These are independent writes; no broker.
+end note
 
 stop
 
