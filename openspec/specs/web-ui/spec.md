@@ -20,7 +20,7 @@ The Web UI SHALL send all backend HTTP and WebSocket traffic through the API Gat
 #### Scenario: Operator reads task history
 
 - **WHEN** an operator opens task history in the Web UI
-- **THEN** the Web UI sends the request to the API Gateway instead of the State Store
+- **THEN** the Web UI sends the request to the API Gateway instead of the State Registry
 
 #### Scenario: Operator watches live events
 
