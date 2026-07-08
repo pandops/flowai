@@ -1,5 +1,5 @@
 @startuml 01-context
-!include stdlib/C4_Context.puml
+!include <c4/C4_Context>
 
 LAYOUT_TOP_DOWN()
 LAYOUT_WITH_LEGEND()

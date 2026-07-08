@@ -1,0 +1,18 @@
+schema: spec-driven
+
+context: |
+  FlowAI is a planning-phase platform for running agentic-loop AI tasks inside
+  containers. Architecture source artifacts live under openspec/specs/.
+
+  Service topology rules are hard constraints:
+  - The Web UI talks only to the API Gateway.
+  - The API Gateway talks only to the State Store and the Secret Service.
+  - The Event Router, State Store, and Secret Service do not call each other.
+  - Executors talk to the Event Router, State Store, and Secret Service only.
+  - Automation submits tasks to the Event Router directly.
+
+rules:
+  specs:
+    - Keep service specs aligned with AGENTS.md and docs/architecture/.
+    - Capture responsibilities as SHALL requirements with observable scenarios.
+    - Capture forbidden topology as negative requirements, not implementation notes.

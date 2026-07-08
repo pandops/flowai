@@ -1,0 +1,33 @@
+@startuml 06-state-task
+title FlowAI Platform - Task State Machine
+
+hide empty description
+
+[*] --> Queued : REST POST /tasks (automation -> Event Router)
+
+state Queued #LightYellow
+state Preparing #LightYellow
+state Running #LightBlue
+state Succeeded #LightGreen
+state Failed #LightCoral
+state Cancelled #LightCoral
+state Timeout #LightCoral
+
+Queued --> Preparing : Event Router dispatches via REST to executor
+Queued --> Cancelled : user cancel
+
+Preparing --> Running : container started
+Preparing --> Failed : pull / start error
+
+Running --> Running : tool_use / llm_response
+Running --> Succeeded : agent returns final
+Running --> Failed : unhandled error / max_steps
+Running --> Cancelled : user cancel (graceful)
+Running --> Timeout : wall_clock > limit
+
+Succeeded --> [*]
+Failed --> [*]
+Cancelled --> [*]
+Timeout --> [*]
+
+@enduml

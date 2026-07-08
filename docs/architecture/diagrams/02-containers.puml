@@ -11,10 +11,9 @@ package "Automation layer" {
 }
 
 package "Core" {
-    [Control Plane API] as api
-    database "State Store" as pg
-    queue "Source Queues" as qsrc
-    queue "Executor Queues" as qexec
+    [API Gateway] as gw
+    [Event Router] as er
+    database "Event Router DB" as erdb
     database "Secret Service" as sec
 }
 
@@ -24,20 +23,62 @@ package "Executor fleet (multi-cluster)" {
     [Executor local (Docker)] as exL
 }
 
-wh --> qsrc : publishes normalized event
-jira --> qsrc : publishes new task
-gl --> qsrc : publishes issue / comment
-qsrc --> api : consumes source events
-api --> pg : persists, reads routing rules
-api --> qexec : enqueues per routing rule
-qexec --> exA : pulls q:exec-A
-qexec --> exB : pulls q:exec-B
-qexec --> exL : pulls q:exec-local
-exA --> sec : get-by-scope
-exB --> sec : get-by-scope
-exL --> sec : get-by-scope
-exA --> api : publishes task events
-exB --> api : publishes task events
-exL --> api : publishes task events
+wh --> er : REST POST /tasks (event)
+jira --> er : REST POST /tasks (event)
+gl --> er : REST POST /tasks (event)
+
+' GW is an auth-aware reverse proxy.
+' It only does: (1) validate auth, (2) route to a backend service,
+' (3) return the backend's response. No business logic, no state, no writes.
+gw --> er : REST proxy (UI -> /state, /tasks, /control, /subscribe, ...)
+gw --> sec : REST proxy (UI -> /secrets)
+gw <-- er : REST/WS push (live events, relayed to UI WS)
+
+er --> erdb : read/write tasks + events (sole owner)
+er --> sec : REST open env (validate secret_ids, fetch env at dispatch)
+er --> exA : REST POST task_spec + scope_token (dispatch)
+er --> exB : REST POST task_spec + scope_token (dispatch)
+er --> exL : REST POST task_spec + scope_token (dispatch)
+er <-- exA : REST POST event (live)
+er <-- exB : REST POST event (live)
+er <-- exL : REST POST event (live)
+
+exA --> sec : REST open env (at task start, inject into container)
+exB --> sec : REST open env (at task start)
+exL --> sec : REST open env (at task start)
+
+note right of gw
+  Auth-aware reverse proxy.
+  Only logic: validate auth, route to
+  backend service, return response.
+  NO business logic.
+  NO state of its own.
+  NO writes.
+  Holds WS connections for UI and
+  relays live events from ER.
+end note
+
+note right of er
+  Backend service.
+  Sole owner of ER DB.
+  Replaces queues: tasks and events
+  live in the ER DB.
+  Receives task submissions from automation
+  and proxied requests from UI (via GW).
+  Dispatches tasks to executors via REST.
+  Receives live events from executors.
+  Pushes live events to subscribers (GW).
+  Does NOT modify message content.
+  Sends REST queries to SS (open env).
+end note
+
+note right of sec
+  Backend service.
+  Two surfaces:
+  store (write) - called by GW (proxying UI)
+  open env (read) - called by ER and EX
+  (GW does NOT call open env anymore -
+  it has no business logic)
+end note
 
 @enduml

@@ -1,0 +1,4 @@
+# Local OpenSpec CLI/runtime cache. Persist only openspec/ source artifacts.
+.tools/openspec/
+.idea
+.vscode
