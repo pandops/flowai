@@ -2,3 +2,4 @@
 .tools/openspec/
 .idea
 .vscode
+.omo/run-continuation
