@@ -1,38 +1,30 @@
 @startuml f3-operator-ws-subscribe
-title F3 — Operator opens live observation (WS subscribe)
+title F3 - Operator opens live observation (WS to State Registry via API Gateway)
 
 |Operator|
 start
 :Open task detail view in UI;
 
 |UI|
-:Open WebSocket to GW
- (bearer_token, /ws/tasks/:task_id, upgrade);
+:Open WebSocket to API Gateway
+ with bearer_token, /ws/tasks/:task_id, upgrade;
 
 |API Gateway|
 :Validate bearer_token;
 note right
   GW's only logic on WS upgrade.
   Auth + route.
-  No state lookup, no aggregation.
+  State Registry is the historical state source.
+  No Router involved.
 end note
-:REST subscribe to ER
- (bearer_token, task_id events);
-:Receive subscription ack from ER;
+:Subscribe to State Registry for task_id events;
+:Receive subscription ack from State Registry;
 :Return WS upgrade ack to UI;
-:Proxy WS frames between UI and ER
+:Proxy WS frames between UI and State Registry
  for the duration of the connection;
 
 |Operator|
-:See live task view
- (events stream in as WS frames);
-
-note right
-  No queues. GW subscribes to ER and
-  proxies frames.
-  ER pushes events to subscribed GWs.
-  WS close = cancel subscription.
-end note
+:See live task view (historical events stream in as WS frames);
 
 stop
 

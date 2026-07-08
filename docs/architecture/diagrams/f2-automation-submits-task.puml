@@ -1,66 +1,35 @@
 @startuml f2-automation-submits-task
-title F2 — Automation submits a task (REST -> Event Router)
+title F2 - Automation submits a task (publish to Router queue)
 
 |Auto|
 start
-:POST /auth/login to API Gateway;
-note right
-  Automation authenticates with GW
-  to get a bearer token.
-  This is the only time Auto talks to GW.
-end note
-
-|API Gateway|
-:Validate credentials;
-:Issue bearer_token;
-
-|Auto|
-:Receive bearer_token;
 :Build task payload
- (prompt, tools[], secret_ids[]);
-:REST POST /tasks
- (bearer_token, payload)
- to Event Router;
+ with prompt, tools, secret_ids;
+:REST POST /tasks to Router
+ with bearer_token and payload;
 
-|ER|
-:Validate bearer_token;
-:Validate schema;
-:Validate secret_ids belong to caller's project;
-
-|SS|
-:open env (validate secret_ids exist for project);
 note right
-  Existence + authz check only.
-  No values returned here.
+  Router is the task queue manager.
+  GW is not on the create path.
+  The API Gateway, State Registry, and
+  Secret Registry have no connection to Router.
+  Auto publishes directly to Router.
 end note
 
-|SS|
-:Return ok;
-
-|ER|
-:Build scope = HMAC(project_id, task_id, secret_ids, TTL);
-:Persist task
- (status=queued,
-  scope_token,
-  routing_target,
-  payload,
-  project_id)
- in ER DB;
-:Return 202 { task_id };
+|Router|
+:Receive task;
+:Persist in Router DB
+ with status=incoming;
+:Enqueue in incoming list;
+:Process via subscribed services
+ (validate, build scope_token);
+:Move processed task to executor wait list;
+:Return 202 with task_id;
 
 |Auto|
 :Receive 202;
 :Store task_id for later correlation;
 
 stop
-
-note right
-  Auto authenticates with GW (one call),
-  then bypasses GW for data plane.
-  ER is the single entry point for task creation.
-  ER DB is the only state target on submit.
-  No queues - the pending task is just
-  a row in the ER DB.
-end note
 
 @enduml

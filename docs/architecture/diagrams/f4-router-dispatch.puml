@@ -1,0 +1,65 @@
+@startuml f4-router-dispatch
+title F4 - Executor registers, signals ready, pulls task from Router wait list
+
+note right
+  Router is the task queue manager.
+  Executors pull tasks from Router's wait list.
+  Router holds the executor pool state
+  (registry, capacity, slots_in_use).
+  Executors register once on startup,
+  signal ready when they have free slots,
+  and loop: pull next -> run -> post status -> ready.
+end note
+
+|EX (executor X)|
+start
+:On startup, publish executor.register to Router
+ with routing_target, capacity, metadata;
+
+|Router|
+:Register executor X in pool with capacity N;
+:Initialize slots_in_use = 0;
+
+|EX (executor X)|
+:Publish executor.ready to Router;
+
+|Router|
+:Mark executor as having N free slots;
+
+|EX (executor X)|
+:REST GET /tasks/next to Router (with routing_target);
+
+|Router|
+:Look up pending task
+ where routing_target matches
+ and slots_in_use less than capacity;
+:If match: UPDATE task SET status=running, executor_id=X;
+:slots_in_use = slots_in_use plus 1;
+:Return task_spec and scope_token to EX;
+
+note right
+  EX can pull up to capacity N concurrent tasks.
+  Each task = one container on the EX.
+  capacity is the maximum number of
+  concurrent containers the EX hosts.
+end note
+
+|EX (executor X)|
+:Receive task_spec and scope_token;
+:Pull pre-built agent image (OCI) if not cached;
+:Prepare a new container runtime;
+
+|AG|
+:Container about to start;
+:Read secrets via open env (see F5);
+:Start agent loop (see F6);
+
+note right
+  When task completes (see F8),
+  EX posts status=terminal to Router
+  and signals ready again.
+end note
+
+stop
+
+@enduml
