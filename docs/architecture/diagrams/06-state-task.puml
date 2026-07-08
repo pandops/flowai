@@ -3,7 +3,7 @@ title FlowAI Platform - Task State Machine
 
 hide empty description
 
-[*] --> Queued : REST POST /tasks (automation -> Event Router)
+[*] --> Queued : REST POST /tasks (automation -> Router)
 
 state Queued #LightYellow
 state Preparing #LightYellow
@@ -13,7 +13,7 @@ state Failed #LightCoral
 state Cancelled #LightCoral
 state Timeout #LightCoral
 
-Queued --> Preparing : Event Router dispatches via REST to executor
+Queued --> Preparing : Router dispatches via REST to executor
 Queued --> Cancelled : user cancel
 
 Preparing --> Running : container started
