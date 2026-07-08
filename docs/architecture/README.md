@@ -4,7 +4,7 @@
 >
 > **Scope:** AI platform that runs **agentic-loop** AI tasks (LLM + tools, multi-turn) inside containers — locally (Docker) or in Kubernetes.
 >
-> **Source of truth:** The source of truth for architecture is [`openspec/specs/`](../../openspec/specs/) (per-service specs: `web-ui`, `api-gateway`, `event-router`, `state-store`, `secret-service`, `executor`). This README and `architecture.md` are kept as **legacy navigation and reference documentation** for browsing the diagram sources and prose. Edit the OpenSpec specs first; mirror changes here only when the source files need updating.
+> **Source of truth:** The source of truth for architecture is [`openspec/specs/`](../../openspec/specs/) (per-service specs: `web-ui`, `api-gateway`, `router`, `state-registry`, `secret-registry`, `executor`). This README and `architecture.md` are kept as **legacy navigation and reference documentation** for browsing the diagram sources and prose. Edit the OpenSpec specs first; mirror changes here only when the source files need updating.
 
 This directory holds the architecture plan for `flowai_v2`. It is a living document.
 
@@ -73,7 +73,7 @@ Six architectural diagrams that explain the platform shape, plus ten activity di
 | F1 — Operator creates a secret | [`f1-operator-creates-secret.puml`](diagrams/f1-operator-creates-secret.puml) |
 | F2 — Automation submits a task | [`f2-automation-submits-task.puml`](diagrams/f2-automation-submits-task.puml) |
 | F3 — Operator opens live observation | [`f3-operator-ws-subscribe.puml`](diagrams/f3-operator-ws-subscribe.puml) |
-| F4 — Event Router dispatches a task | [`f4-event-router-dispatch.puml`](diagrams/f4-event-router-dispatch.puml) |
+| F4 — Router dispatches a task | [`f4-router-dispatch.puml`](diagrams/f4-router-dispatch.puml) |
 | F5 — Secret resolve at task start | [`f5-secret-resolve.puml`](diagrams/f5-secret-resolve.puml) |
 | F6 — Agent loop + live event fanout | [`f6-agent-loop-fanout.puml`](diagrams/f6-agent-loop-fanout.puml) |
 | F7 — Operator intervenes mid-loop | [`f7-operator-intervention.puml`](diagrams/f7-operator-intervention.puml) |
