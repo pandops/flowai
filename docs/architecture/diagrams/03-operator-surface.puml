@@ -6,24 +6,25 @@ LAYOUT_WITH_LEGEND()
 
 title FlowAI Platform - Operator surface (user-facing slice)
 
-Person(operator, "Operator", "Wires the system: automations, executors, routing rules. Observes and intervenes.")
-Person_Ext(automation, "Automation", "CI, scheduler, webhook. Authenticates with the API Gateway, then submits tasks via REST to the Event Router.")
+Person(operator, "Operator", "Wires the system: automations, executors, routing rules. Observes and intervenes via the Web UI.")
+Person_Ext(automation, "Automation", "CI, scheduler, webhook. Submits tasks directly to the Router (the queue manager).")
 
 System_Boundary(b1, "FlowAI Platform") {
     Container(ui, "Web UI", "Single frontend. Observes running tasks, intervenes, configures (automations, executors, routing), registers secrets (write-only). Talks only to the API Gateway.")
-    Container(gw, "API Gateway", "Auth-aware reverse proxy. ONLY logic: validate auth, route to a backend service, return the backend's response. Holds WS connections to the UI and proxies live events from the Event Router. NO business logic. NO state of its own. NO writes.")
-    Container(er, "Event Router", "Backend service. Central message broker + state holder. Owns its own database (tasks, events, routing rules, audit). Receives task submissions from automation and proxied UI requests (via GW). Dispatches tasks to executors via REST. Receives live events from executors via REST. Pushes live events to subscribers (GW). Sends REST queries to the Secret Service (open env). Does NOT modify message content.")
-    ContainerDb(erdb, "Event Router DB", "Tasks, events, routing rules, audit. Sole writer: Event Router.")
-    ContainerDb(sec, "Secret Service", "Backend service. Two surfaces: store (write, called by API Gateway proxying UI) and open env (read, called by Event Router and Executors).")
+    Container(gw, "API Gateway", "Auth-aware reverse proxy. ONLY logic: validate auth, route to State Registry or Secret Registry, return response. NO connection to the Router. NO business logic. NO state. NO writes.")
+    ContainerDb(stateRegistry, "State Registry", "Owns historical platform state. Task records, event logs, audit. NO connection to the Router. Receives historical writes from executors and read queries from the API Gateway. Independent of the Secret Registry.")
+    ContainerDb(secretRegistry, "Secret Registry", "Two surfaces: store (write, called via API Gateway) and open env (read, called by executors). NO connection to the Router or the State Registry. Independent of the State Registry.")
 }
 
-Rel(operator, ui, "Observes, intervenes, configures, registers secrets (write-only)", "HTTPS / WS")
-Rel(ui, gw, "All operator actions: state queries, observation, intervention, configuration, secret writes. UI talks to NO other service.", "HTTPS / WS")
-Rel(automation, gw, "Authenticates (login, token refresh)", "HTTPS")
-Rel(automation, er, "Submits tasks with bearer token. Receives completion callbacks.", "REST")
-Rel(gw, er, "Proxies UI requests to ER (state, tasks, control, subscribe). Relays ER -> UI live event push.", "REST / WS")
-Rel(er, erdb, "Read/write tasks, events, routing rules, audit (sole owner).", "SQL")
-Rel(gw, sec, "Proxies UI requests (POST /secrets).", "HTTPS")
-Rel(er, sec, "open env (read) - validate secret_ids at submit, fetch env at dispatch.", "HTTPS")
+System_Boundary(b2, "Data plane (Router is here)") {
+    ContainerDb(router, "Router", "Task queue manager. Main purpose: organize the queue for incoming tasks, route through processing services, accumulate them in a wait list for executors. Owns its own DB for queue state and executor pool. NO connection to the operator-facing graph above (no GW, no State Registry, no Secret Registry connection).")
+}
+
+Rel(operator, ui, "Observes, intervenes, configures, registers secrets", "HTTPS / WS")
+Rel(ui, gw, "All operator actions: state queries, observation, intervention, configuration, secret writes", "HTTPS / WS")
+Rel(automation, router, "Submits tasks (Auto bypasses the API Gateway)", "REST")
+Rel(gw, stateRegistry, "Forwards UI read queries to State Registry and returns historical state.", "REST")
+Rel(gw, secretRegistry, "Proxies UI secret-store calls (POST /secrets).", "REST")
+Rel(router, router, "...", "internal")
 
 @enduml

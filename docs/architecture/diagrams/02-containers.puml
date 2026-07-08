@@ -10,11 +10,16 @@ package "Automation layer" {
     [GitLab Handler] as gl
 }
 
-package "Core" {
+package "Queue + operator graph" {
+    [Router] as router
+    database "Router DB" as routerDb
+}
+
+package "Operator-facing (UI/GW/State Registry/Secret Registry independent)" {
     [API Gateway] as gw
-    [Event Router] as er
-    database "Event Router DB" as erdb
-    database "Secret Service" as sec
+    [State Registry] as stateRegistry
+    database "State Registry DB" as stateRegistryDb
+    database "Secret Registry" as secretRegistry
 }
 
 package "Executor fleet (multi-cluster)" {
@@ -23,62 +28,75 @@ package "Executor fleet (multi-cluster)" {
     [Executor local (Docker)] as exL
 }
 
-wh --> er : REST POST /tasks (event)
-jira --> er : REST POST /tasks (event)
-gl --> er : REST POST /tasks (event)
+' --- Automation -> Router (publish to incoming queue) ---
+wh --> router : REST publish task
+jira --> router : REST publish task
+gl --> router : REST publish task
 
-' GW is an auth-aware reverse proxy.
-' It only does: (1) validate auth, (2) route to a backend service,
-' (3) return the backend's response. No business logic, no state, no writes.
-gw --> er : REST proxy (UI -> /state, /tasks, /control, /subscribe, ...)
-gw --> sec : REST proxy (UI -> /secrets)
-gw <-- er : REST/WS push (live events, relayed to UI WS)
+' --- Router internals ---
+router --> routerDb : persist queue + executor pool state
+note right of router
+  Main purpose: organize task queue.
+  Owns: incoming list, executor wait list,
+  executor pool (registry, capacity, slots_in_use),
+  task assignment state.
+  Receives: Auto submissions, EX registration,
+  EX ready signals, EX status updates, EX pulls.
+end note
 
-er --> erdb : read/write tasks + events (sole owner)
-er --> sec : REST open env (validate secret_ids, fetch env at dispatch)
-er --> exA : REST POST task_spec + scope_token (dispatch)
-er --> exB : REST POST task_spec + scope_token (dispatch)
-er --> exL : REST POST task_spec + scope_token (dispatch)
-er <-- exA : REST POST event (live)
-er <-- exB : REST POST event (live)
-er <-- exL : REST POST event (live)
+' --- EX -> Router (executor fleet talks to queue manager) ---
+exA --> router : REST register, signal ready, pull next, post status
+exB --> router : REST register, signal ready, pull next, post status
+exL --> router : REST register, signal ready, pull next, post status
 
-exA --> sec : REST open env (at task start, inject into container)
-exB --> sec : REST open env (at task start)
-exL --> sec : REST open env (at task start)
+' --- EX -> State Registry (historical event writes) ---
+exA --> stateRegistry : REST POST /events (historical)
+exB --> stateRegistry : REST POST /events (historical)
+exL --> stateRegistry : REST POST /events (historical)
+exA --> stateRegistry : REST GET control requests
+exB --> stateRegistry : REST GET control requests
+exL --> stateRegistry : REST GET control requests
+
+stateRegistry --> stateRegistryDb : read/write historical state
+
+' --- EX -> Secret Registry (open env at task start) ---
+exA --> secretRegistry : REST open env
+exB --> secretRegistry : REST open env
+exL --> secretRegistry : REST open env
+
+' --- Operator graph: UI (not shown here), GW, State Registry, Secret Registry ---
+' GW talks to State Registry and Secret Registry independently. No Router connection in this graph.
 
 note right of gw
   Auth-aware reverse proxy.
-  Only logic: validate auth, route to
-  backend service, return response.
-  NO business logic.
-  NO state of its own.
-  NO writes.
-  Holds WS connections for UI and
-  relays live events from ER.
+  Routes UI requests to State Registry or Secret Registry.
+  NO connection to Router.
 end note
 
-note right of er
-  Backend service.
-  Sole owner of ER DB.
-  Replaces queues: tasks and events
-  live in the ER DB.
-  Receives task submissions from automation
-  and proxied requests from UI (via GW).
-  Dispatches tasks to executors via REST.
-  Receives live events from executors.
-  Pushes live events to subscribers (GW).
-  Does NOT modify message content.
-  Sends REST queries to SS (open env).
+note right of stateRegistry
+  State Registry.
+  NO connection to Router.
+  Receives historical events
+  from executors and
+  queries/control requests from GW.
+  Executors read pending
+  control requests from here.
 end note
 
-note right of sec
-  Backend service.
-  Two surfaces:
-  store (write) - called by GW (proxying UI)
-  open env (read) - called by ER and EX
-  (GW does NOT call open env anymore -
-  it has no business logic)
+note right of secretRegistry
+  Secret Registry.
+  NO connection to Router or State Registry.
+  Receives open env
+  from executors and
+  store calls from GW.
+end note
+
+note right
+  Router is the queue manager between producers, executors, and services.
+  Auto publishes to Router.
+  Services consume from Router.
+  Executors pull from Router wait list.
+  UI does NOT touch Router. UI -> GW -> State Registry (read), GW -> Secret Registry (secret CRUD).
 end note
 
 @enduml
