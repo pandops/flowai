@@ -1,0 +1,12 @@
+@startuml
+title 0004-router - mocked scheduler replacement
+
+participant "Docker Executor before" as Before
+participant "Mocked task server" as Mock
+participant "Docker Executor after" as After
+participant "Router" as Router
+
+Before -> Mock : register, poll, status
+After -> Router : register, ready, pull, status
+
+@enduml
