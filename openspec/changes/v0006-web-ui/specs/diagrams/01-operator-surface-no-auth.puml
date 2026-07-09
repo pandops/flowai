@@ -1,0 +1,19 @@
+@startuml
+title v0006-web-ui - operator surface without auth
+
+actor "Operator" as Operator
+participant "Web UI" as UI
+participant "API Gateway\nno-auth mode" as GW
+participant "State Registry" as State
+participant "Env Registry" as Env
+participant "Router" as Router
+
+Operator -> UI : uses dashboard
+UI -> GW : HTTP / WebSocket only
+GW -> State : state reads, events, controls
+GW -> Env : env/secret writes
+GW -x Router : forbidden
+UI -x State : forbidden direct call
+UI -x Env : forbidden direct call
+
+@enduml

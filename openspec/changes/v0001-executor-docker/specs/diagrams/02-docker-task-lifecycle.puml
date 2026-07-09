@@ -1,0 +1,17 @@
+@startuml
+title v0001-executor-docker - Docker task lifecycle
+
+start
+:Register with mocked task server;
+:Poll task when running_child_count < capacity;
+:Receive task_spec;
+:Pull agent OCI image if needed;
+:Create Docker container;
+:Start Docker container;
+:Observe stdout and exit status;
+:Update running_child_count;
+:Post terminal status to mocked task server;
+:Clean up container;
+stop
+
+@enduml

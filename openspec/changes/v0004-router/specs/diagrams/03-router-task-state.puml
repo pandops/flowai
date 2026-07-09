@@ -1,0 +1,17 @@
+@startuml
+title v0004-router - transient task state flow
+
+start
+:Incoming queue;
+:Processing list;
+:Executor wait list;
+if (Docker Executor capacity available?) then (yes)
+  :Assigned;
+  :Running;
+  :Terminal;
+else (no)
+  :Remain wait-listed;
+endif
+stop
+
+@enduml

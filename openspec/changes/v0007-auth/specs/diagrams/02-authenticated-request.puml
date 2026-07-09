@@ -1,0 +1,14 @@
+@startuml
+title v0007-auth - authenticated REST request
+
+participant "Web UI" as UI
+participant "API Gateway" as GW
+participant "State or Env Registry" as Backend
+
+UI -> GW : request with bearer token
+GW -> GW : validate token
+GW -> Backend : proxy allowed request
+Backend --> GW : response
+GW --> UI : response unchanged
+
+@enduml

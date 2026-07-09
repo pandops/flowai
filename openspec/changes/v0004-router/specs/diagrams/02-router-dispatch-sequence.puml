@@ -1,0 +1,20 @@
+@startuml
+title v0004-router - task dispatch sequence
+
+participant "Automation" as Auto
+participant "Router" as Router
+database "Router DB" as Db
+participant "Docker Executor" as Ex
+
+Auto -> Router : POST /tasks task_spec
+Router -> Db : insert incoming task
+Router -> Db : move task to executor wait list
+Ex -> Router : POST /executors type=docker, capacity, running_child_count
+Router -> Db : upsert executor registry
+Ex -> Router : GET /tasks/next
+Router -> Db : match task and capacity
+Router --> Ex : task_spec
+Ex -> Router : POST /tasks/:id/status terminal
+Router -> Db : mark terminal, free slot
+
+@enduml

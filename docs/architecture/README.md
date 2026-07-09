@@ -4,7 +4,7 @@
 >
 > **Scope:** AI platform that runs **agentic-loop** AI tasks (LLM + tools, multi-turn) inside containers — locally (Docker) or in Kubernetes.
 >
-> **Source of truth:** Accepted real state lives in [`openspec/specs/`](../../openspec/specs/). Planned architecture lives in active numbered changes under [`openspec/changes/`](../../openspec/changes/) (`0001-executor-docker` through `0007-auth`). Proposed diagrams live under `openspec/changes/*/specs/diagrams/`. This directory documents implemented current-state design only.
+> **Source of truth:** Accepted real state lives in [`openspec/specs/`](../../openspec/specs/). Planned architecture lives in active numbered changes under [`openspec/changes/`](../../openspec/changes/) (`v0001-executor-docker` through `v0007-auth`). Proposed diagrams live under `openspec/changes/*/specs/diagrams/`. This directory documents implemented current-state design only.
 
 This directory holds implemented current-state architecture documentation for
 `flowai_v2`. Because no runtime services are implemented yet, the diagram set is

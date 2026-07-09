@@ -38,19 +38,19 @@
 
 Each planned target service has an OpenSpec file inside an active change. Click through for the full purpose / responsibilities / will-not-do.
 
-- [**Docker Executor**](openspec/changes/0001-executor-docker/specs/executor/spec.md) — first local worker type; controls only Docker container lifecycle for agent runtimes.
-- [**State Registry**](openspec/changes/0002-state-registry/specs/state-registry/spec.md) — historical record of the platform; canonical task records, events, audit.
-- [**Env Registry**](openspec/changes/0003-env-registry/specs/env-registry/spec.md) — executor environment store with non-secret env vars and encrypted secrets; two surfaces: `store` (write) and `open env` (read).
-- [**Router**](openspec/changes/0004-router/specs/router/spec.md) — task queue manager; the only broker in the architecture.
-- [**K8s Executor**](openspec/changes/0005-executor-k8s/specs/executor/spec.md) — cluster worker type; controls only Kubernetes Pod lifecycle for agent runtimes.
-- [**Web UI**](openspec/changes/0006-web-ui/specs/web-ui/spec.md) — thin frontend, sole surface for human operators, initially without auth.
-- [**API Gateway**](openspec/changes/0006-web-ui/specs/api-gateway/spec.md) — Web UI's sole backend, initially no-auth; auth is added by [**Auth**](openspec/changes/0007-auth/specs/auth/spec.md).
+- [**Docker Executor**](openspec/changes/v0001-executor-docker/specs/executor/spec.md) — first local worker type; controls only Docker container lifecycle for agent runtimes.
+- [**State Registry**](openspec/changes/v0002-state-registry/specs/state-registry/spec.md) — historical record of the platform; canonical task records, events, audit.
+- [**Env Registry**](openspec/changes/v0003-env-registry/specs/env-registry/spec.md) — executor environment store with non-secret env vars and encrypted secrets; two surfaces: `store` (write) and `open env` (read).
+- [**Router**](openspec/changes/v0004-router/specs/router/spec.md) — task queue manager; the only broker in the architecture.
+- [**K8s Executor**](openspec/changes/v0005-executor-k8s/specs/executor/spec.md) — cluster worker type; controls only Kubernetes Pod lifecycle for agent runtimes.
+- [**Web UI**](openspec/changes/v0006-web-ui/specs/web-ui/spec.md) — thin frontend, sole surface for human operators, initially without auth.
+- [**API Gateway**](openspec/changes/v0006-web-ui/specs/api-gateway/spec.md) — Web UI's sole backend, initially no-auth; auth is added by [**Auth**](openspec/changes/v0007-auth/specs/auth/spec.md).
 
 ## Planned final connection matrix (who calls whom)
 
 This matrix describes the target after the numbered Executor, registry, Router,
-Web UI, and Auth changes land. `0001-executor-docker` uses a mocked task server
-for Docker Executor registration, polling, and status until `0004-router` exists.
+Web UI, and Auth changes land. `v0001-executor-docker` uses a mocked task server
+for Docker Executor registration, polling, and status until `v0004-router` exists.
 
 | Caller ↓ / Callee → | Web UI | API Gateway | Router | State Registry | Env Registry | Executor | Automation |
 |---|---|---|---|---|---|---|---|

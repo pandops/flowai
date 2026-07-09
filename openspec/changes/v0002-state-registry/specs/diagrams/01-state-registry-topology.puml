@@ -1,0 +1,15 @@
+@startuml
+title v0002-state-registry - historical record topology
+
+participant "Caller" as Caller
+participant "State Registry" as State
+database "State Registry DB" as Db
+participant "Scheduler" as Scheduler
+participant "Env Registry" as Env
+
+Caller -> State : write events / controls, read history
+State -> Db : persist task records, events, audit, controls
+State -x Scheduler : forbidden scheduling call
+State -x Env : forbidden env/secret call
+
+@enduml
