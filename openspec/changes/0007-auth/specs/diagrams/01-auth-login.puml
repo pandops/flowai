@@ -1,0 +1,11 @@
+@startuml
+title 0007-auth - login and token issue
+
+participant "Web UI" as UI
+participant "API Gateway" as GW
+
+UI -> GW : login credentials
+GW -> GW : validate credentials
+GW --> UI : bearer token
+
+@enduml
