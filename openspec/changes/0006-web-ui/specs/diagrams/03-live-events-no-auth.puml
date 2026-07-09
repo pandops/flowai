@@ -1,0 +1,13 @@
+@startuml
+title 0006-web-ui - live events without auth
+
+participant "Web UI" as UI
+participant "API Gateway" as GW
+participant "State Registry" as State
+
+UI -> GW : WebSocket upgrade
+GW -> State : subscribe to task events
+State --> GW : task event stream
+GW --> UI : task event stream unchanged
+
+@enduml
