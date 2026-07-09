@@ -1,0 +1,20 @@
+@startuml
+title 0003-env-registry - store and open-env flow
+
+participant "Setup caller" as Setup
+participant "Env Registry" as Env
+database "Env Registry DB" as Db
+participant "Executor" as Ex
+
+Setup -> Env : write env vars and secret values
+Env -> Env : validate input and encrypt secret values
+Env -> Db : persist metadata and ciphertext
+Env --> Setup : env ids and secret ids
+
+Ex -> Env : open-env with signed scope token
+Env -> Env : validate signature, expiry, project binding
+Env -> Db : load authorized env and ciphertext
+Env -> Env : decrypt for response only
+Env --> Ex : KEY=value values
+
+@enduml

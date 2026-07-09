@@ -1,0 +1,17 @@
+@startuml
+title 0003-env-registry - environment store topology
+
+participant "Setup caller" as Setup
+participant "Executor" as Ex
+participant "Env Registry" as Env
+database "Env Registry DB" as Db
+participant "State Registry" as State
+participant "Scheduler" as Scheduler
+
+Setup -> Env : store env vars and secret values
+Ex -> Env : open-env with scope token
+Env -> Db : persist env metadata, ciphertext, audit
+Env -x State : forbidden historical-state call
+Env -x Scheduler : forbidden scheduling call
+
+@enduml
