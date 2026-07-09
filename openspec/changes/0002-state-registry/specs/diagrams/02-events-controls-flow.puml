@@ -1,0 +1,16 @@
+@startuml
+title 0002-state-registry - events and controls
+
+participant "Executor or direct caller" as Caller
+participant "State Registry" as State
+database "State Registry DB" as Db
+
+Caller -> State : POST /events runtime event
+State -> Db : append event verbatim
+Caller -> State : POST control request
+State -> Db : append control request and audit entry
+Caller -> State : GET task history / pending controls
+State -> Db : read records
+State --> Caller : records
+
+@enduml
