@@ -1,5 +1,42 @@
+# OpenSpec contract artifacts are tracked.
+!openspec/
+!openspec/config.yaml
+!openspec/project.md
+!openspec/AGENTS.md
+!openspec/specs/
+!openspec/specs/**
+!openspec/changes/
+!openspec/changes/**
+
+# OpenSpec workflow surface generated for OpenCode is shared by this repo.
+!.opencode/
+!.opencode/commands/
+!.opencode/commands/**
+!.opencode/skills/
+!.opencode/skills/**
+
+# Local agent skill symlinks; canonical skills live outside this repo.
+.agents/skills/
+
 # Local OpenSpec CLI/runtime cache. Persist only openspec/ source artifacts.
 .tools/openspec/
+openspec/.cache/
+openspec/tmp/
+openspec/temp/
+
+# Local environment and secret files. Commit examples/templates instead.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Package-manager/runtime artifacts that may appear while using npx/npm.
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/cache/
+
+# Local editor and automation state.
 .idea
 .vscode
 .omo/run-continuation
