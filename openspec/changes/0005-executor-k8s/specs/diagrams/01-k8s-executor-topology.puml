@@ -1,0 +1,17 @@
+@startuml
+title 0005-executor-k8s - K8s Executor topology
+
+participant "Router" as Router
+participant "K8s Executor" as Ex
+participant "Kubernetes API" as K8s
+participant "Agent Pod" as Pod
+
+Ex -> Router : register executor_type=k8s, capacity, running_child_count
+Ex -> Router : pull next task
+Router --> Ex : task_spec
+Ex -> K8s : create Pod from agent image
+K8s -> Pod : run agent runtime
+Ex -> K8s : watch Pod status
+Ex -> Router : post status and running_child_count
+
+@enduml

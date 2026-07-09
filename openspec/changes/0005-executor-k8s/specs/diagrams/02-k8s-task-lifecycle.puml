@@ -1,0 +1,15 @@
+@startuml
+title 0005-executor-k8s - Kubernetes task lifecycle
+
+start
+:Register with Router as k8s;
+:Pull task when running_child_count < capacity;
+:Create Kubernetes Pod;
+:Watch Pod phase and logs;
+:Observe terminal Pod status;
+:Update running_child_count;
+:Post terminal status to Router;
+:Delete or clean up Pod;
+stop
+
+@enduml
