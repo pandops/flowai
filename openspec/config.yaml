@@ -2,17 +2,28 @@ schema: spec-driven
 
 context: |
   FlowAI is a planning-phase platform for running agentic-loop AI tasks inside
-  containers. Architecture source artifacts live under openspec/specs/.
+  containers. No runtime services are assumed to exist yet. Artifacts under
+  openspec/specs/ describe only current accepted real state. Planned
+  architecture and future implementation work live under openspec/changes/*.
 
   Service topology rules are hard constraints:
   - The Web UI talks only to the API Gateway.
-  - The API Gateway talks only to the State Registry and the Secret Registry.
-  - The Router, State Registry, and Secret Registry do not call each other.
-  - Executors talk to the Router, State Registry, and Secret Registry only.
+  - The API Gateway talks only to the State Registry and the Env Registry.
+  - The Router, State Registry, and Env Registry do not call each other.
+  - Executors talk to the Router, State Registry, and Env Registry only.
   - Automation submits tasks to the Router directly.
 
 rules:
   specs:
-    - Keep service specs aligned with AGENTS.md and docs/architecture/.
+    - Keep baseline specs limited to accepted real state.
     - Capture responsibilities as SHALL requirements with observable scenarios.
     - Capture forbidden topology as negative requirements, not implementation notes.
+  changes:
+    - Start behavior, topology, API, state ownership, diagram, and implementation changes under openspec/changes/.
+    - Keep planned service specs under openspec/changes/<change-id>/specs/ until accepted.
+    - Keep planned puml diagrams under openspec/changes/<change-id>/specs/diagrams/.
+    - Include concrete verification tasks before implementation starts.
+    - Validate the change before editing implementation code or derived diagrams.
+  docs:
+    - Keep docs/adr/ for accepted ADRs explaining why current decisions exist.
+    - Keep docs/architecture/diagrams/ for implemented current-state system design diagrams only.
