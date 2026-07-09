@@ -8,12 +8,10 @@
 !openspec/changes/
 !openspec/changes/**
 
-# OpenSpec workflow surface generated for OpenCode is shared by this repo.
-!.opencode/
-!.opencode/commands/
-!.opencode/commands/**
-!.opencode/skills/
-!.opencode/skills/**
+# OpenCode surface (skills, commands, package) is environment-local.
+# The canonical openspec skill is symlinked from ~/config/ai/skills/openspec/
+# via .opencode/skills/openspec and resolves to the single source of truth.
+.opencode/
 
 # Local agent skill symlinks; canonical skills live outside this repo.
 .agents/skills/
