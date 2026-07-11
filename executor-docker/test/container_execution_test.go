@@ -50,12 +50,12 @@ func TestPullImageCalledWithConfiguredImage(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if env.docker.PullCallCount >= 1 {
+		if env.docker.PullCount() >= 1 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if got := env.docker.PullCallCount; got < 1 {
+	if got := env.docker.PullCount(); got < 1 {
 		t.Fatalf("expected PullImage to be called, got %d calls", got)
 	}
 }
@@ -76,15 +76,16 @@ func TestContainerStartCarriesRequiredLabels(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(env.docker.StartedRefs) >= 1 {
+		if len(env.docker.StartedRefsSnapshot()) >= 1 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(env.docker.StartedRefs) == 0 {
+	refs := env.docker.StartedRefsSnapshot()
+	if len(refs) == 0 {
 		t.Fatalf("expected container to be started, got 0 StartedRefs")
 	}
-	ref := env.docker.StartedRefs[0]
+	ref := refs[0]
 	for _, key := range []string{
 		dockerclient.LabelExecutorID,
 		dockerclient.LabelRuntime,
@@ -123,15 +124,16 @@ func TestContainerStartsWithConfiguredOpenHandsImage(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(env.docker.StartedRefs) >= 1 {
+		if len(env.docker.StartedRefsSnapshot()) >= 1 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(env.docker.StartedRefs) == 0 {
+	refs := env.docker.StartedRefsSnapshot()
+	if len(refs) == 0 {
 		t.Fatalf("expected container started")
 	}
-	if got := env.docker.StartedRefs[0].Image; got != "ghcr.io/myorg/openhands:v1.0" {
+	if got := refs[0].Image; got != "ghcr.io/myorg/openhands:v1.0" {
 		t.Fatalf("container image = %q, want %q", got, "ghcr.io/myorg/openhands:v1.0")
 	}
 }
@@ -160,19 +162,20 @@ func TestContainerPortMapsContainer8000ToDistinctHostPort(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if len(env.docker.StartedRefs) >= 2 {
+		if len(env.docker.StartedRefsSnapshot()) >= 2 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(env.docker.StartedRefs) < 2 {
-		t.Fatalf("expected 2 containers started, got %d", len(env.docker.StartedRefs))
+	refs := env.docker.StartedRefsSnapshot()
+	if len(refs) < 2 {
+		t.Fatalf("expected 2 containers started, got %d", len(refs))
 	}
 	// Distinct fake container IDs implies distinct host ports (the fake
 	// assigns IDs sequentially, but the executor allocated distinct ports
 	// from the range). Verify the StartedRefs IDs are all unique.
 	seen := map[string]bool{}
-	for _, ref := range env.docker.StartedRefs {
+	for _, ref := range refs {
 		if seen[ref.ID] {
 			t.Fatalf("duplicate container ID %q", ref.ID)
 		}
@@ -342,7 +345,7 @@ func TestCapacityExhaustionLeavesExcessTasksQueued(t *testing.T) {
 	if got := env.exec.RunningChildCount(); got != 1 {
 		t.Fatalf("expected exactly 1 container, got %d", got)
 	}
-	if got := len(env.docker.StartedRefs); got != 1 {
+	if got := len(env.docker.StartedRefsSnapshot()); got != 1 {
 		t.Fatalf("expected exactly 1 started container in fake, got %d", got)
 	}
 }

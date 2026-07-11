@@ -39,10 +39,10 @@ type FakeDocker struct {
 	// to talk to the override URL via ContainerURLFor.
 	URLOverrides map[int]string
 
-	// PullCallCount tracks how many times PullImage was called.
-	PullCallCount int
-	// StartedRefs records each successful StartContainer.
-	StartedRefs []dockerclient.ContainerRef
+	// pullCallCount tracks how many times PullImage was called.
+	pullCallCount int
+	// startedRefs records each successful StartContainer.
+	startedRefs []dockerclient.ContainerRef
 }
 
 type fakeContainer struct {
@@ -79,7 +79,7 @@ func (f *FakeDocker) ContainerURLFor(hostPort int) string {
 func (f *FakeDocker) PullImage(ctx context.Context, ref, policy string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.PullCallCount++
+	f.pullCallCount++
 	if f.FailNext.Pull {
 		f.FailNext.Pull = false
 		return fmt.Errorf("fake pull failure")
@@ -118,7 +118,7 @@ func (f *FakeDocker) StartContainer(ctx context.Context, spec dockerclient.Conta
 	c := &fakeContainer{ID: id, Name: spec.Name, Image: spec.Image, Labels: spec.Labels, Running: !f.KillOnStart}
 	f.containers[id] = c
 	started := dockerclient.ContainerRef{ID: id, Name: spec.Name, Image: spec.Image, Labels: spec.Labels}
-	f.StartedRefs = append(f.StartedRefs, started)
+	f.startedRefs = append(f.startedRefs, started)
 	f.mu.Unlock()
 	if f.KillOnStart {
 		// emit a die event so subscribers see the failure path.
@@ -190,6 +190,22 @@ func (f *FakeDocker) ContainerURL(hostPort int) string {
 		return u
 	}
 	return fmt.Sprintf("http://127.0.0.1:%d", hostPort)
+}
+
+// PullCount returns how many times PullImage was called.
+func (f *FakeDocker) PullCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pullCallCount
+}
+
+// StartedRefsSnapshot returns a copy of successfully started containers.
+func (f *FakeDocker) StartedRefsSnapshot() []dockerclient.ContainerRef {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	refs := make([]dockerclient.ContainerRef, len(f.startedRefs))
+	copy(refs, f.startedRefs)
+	return refs
 }
 
 // EmitDie emits a die event for a container name (test helper).
