@@ -8,6 +8,88 @@
 > **Service catalog index.** Per-service planned target descriptions (purpose,
 > responsibilities, will-not-do) live in OpenSpec change artifacts under
 > `openspec/changes/*/specs/` until accepted into real state. This file is the
+
+## Repository layout convention: one directory per service, no shared code
+
+Each runtime service in this repository MUST live under its own top-level
+directory named after the service. The directory is fully self-contained:
+every package, binary, config, migration, and test lives inside it. **No
+shared code between services** — only third-party libraries. Cross-cutting
+concerns (HTTP scaffolding, logging, wire types, persistence) are duplicated
+per service so each service can evolve independently.
+
+```
+mocked-task-server/               # v0001 Mocked Task Server (a separate service)
+├── cmd/mocked-task-server/
+├── configs/mocked-task-server.yaml
+├── internal/
+│   ├── config/                   # YAML loader (this service only)
+│   ├── httpapi/                  # chi scaffolding (this service only)
+│   ├── logging/                  # slog setup (this service only)
+│   ├── platform/                 # wire types (this service's view of the contract)
+│   ├── server/                   # the HTTP server implementation
+│   │   ├── server.go
+│   │   └── server_test.go
+│   └── store/                    # in-memory + pgx-backed State Registry persistence
+├── migrations/                   # goose migrations (this service only)
+└── test/                         # integration tests for this service
+
+executor-docker/                  # v0001 Docker Executor
+├── cmd/docker-executor/
+├── configs/docker-executor.yaml
+├── internal/
+│   ├── config/                   # YAML loader (this service only)
+│   ├── httpapi/                  # chi scaffolding (this service only)
+│   ├── logging/                  # slog setup (this service only)
+│   ├── platform/                 # wire types (this service's view of the contract)
+│   ├── dockerclient/             # Docker REST client (executor-only)
+│   ├── openhands/                # OpenHands REST client (executor-only)
+│   ├── mockedclient/             # Mocked-task-server HTTP client (executor-only)
+│   ├── executor/                 # Core Executor logic + state machine
+│   │   ├── executor.go
+│   │   ├── executor_unit_test.go # Pure unit tests (config validation, etc.)
+│   │   └── ...
+│   └── mocks/                    # Test fakes for executor-only interfaces
+│       ├── docker/
+│       └── openhands/
+└── test/                         # integration tests for this service
+
+autotest/                         # Cross-service Playwright e2e tests (root only)
+└── (placeholder for v0006+; v0001 has no UI yet)
+
+docs/adr/                         # Architectural Decision Records
+```
+
+Rules:
+
+1. **No shared code between services.** Each service duplicates cross-cutting
+   concerns (HTTP scaffolding, logging, wire types, persistence) inside its
+   own `internal/`. Wire types are duplicated per service because each service
+   owns its view of the contract — the OpenAPI specs are the single source of
+   truth and each service defines Go types that match them.
+2. **Per-service boundaries.** Service-specific code (interfaces that the
+   service uses, clients to external systems, test fakes of those clients,
+   database migrations) lives under that service's directory. Go's `internal/`
+   rule means each service's internals can only be imported by packages
+   sharing the same prefix — this is intentional and prevents cross-service
+   coupling.
+3. **Test fakes follow the package they fake.** A test fake for an
+   executor-only interface (e.g. `dockerclient.Client`) goes under
+   `executor-docker/internal/mocks/`. Test fakes for a shared component (e.g.
+   the mocked task server, which is itself a service) live with that service.
+4. **Per-service `test/` directory.** Unit and integration tests for a
+   single service live under `<service>/test/`. These tests use only the
+   service's own packages + stdlib + in-process fakes. They do NOT import
+   packages from other services (Go's `internal/` rule prevents this anyway).
+5. **Cross-service e2e tests live in `autotest/` at the root.** Tests that
+   span more than one service — typically Playwright e2e tests — live at
+   `autotest/` in the repo root, NOT inside any service directory. They
+   drive running services via their public HTTP/CLI surfaces.
+6. **One `go.mod` at the root.** The whole repository is a single Go module
+   (`github.com/flowai/platform`); service directories are organization only.
+7. **Future services follow the same pattern.** When v0004-router,
+   v0005-executor-k8s, etc. land, they each get their own top-level directory
+   (`router/`, `executor-k8s/`). Each is fully self-contained.
 > cross-cutting view: connection matrix, state ownership, cross-cutting rules,
 > and the diagram map.
 >
