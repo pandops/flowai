@@ -40,12 +40,12 @@ import (
 type State string
 
 const (
-	StateStarting   State = "starting"
+	StateStarting    State = "starting"
 	StateRegistering State = "registering"
-	StateReady      State = "ready"
-	StateBusy       State = "busy"
-	StateDraining   State = "draining"
-	StateStopped    State = "stopped"
+	StateReady       State = "ready"
+	StateBusy        State = "busy"
+	StateDraining    State = "draining"
+	StateStopped     State = "stopped"
 )
 
 // Config holds the full Executor configuration. It is built from a YAML file
@@ -170,8 +170,8 @@ type Executor struct {
 	state atomic.Value // State
 
 	// Slot tracking
-	mu      sync.Mutex
-	slots   map[string]*taskSlot // task_id -> slot
+	mu       sync.Mutex
+	slots    map[string]*taskSlot // task_id -> slot
 	nextPort int
 }
 
@@ -184,12 +184,25 @@ type taskSlot struct {
 	startedAt     time.Time
 
 	// OpenHands runtime identifier (conversation/run id) when known.
+	openHandsMu sync.RWMutex
 	openHandsID string
 
 	// Lifecycle channels
 	cancel    context.CancelFunc
 	doneCh    chan struct{}
 	interrupt chan struct{}
+}
+
+func (s *taskSlot) setOpenHandsID(id string) {
+	s.openHandsMu.Lock()
+	defer s.openHandsMu.Unlock()
+	s.openHandsID = id
+}
+
+func (s *taskSlot) getOpenHandsID() string {
+	s.openHandsMu.RLock()
+	defer s.openHandsMu.RUnlock()
+	return s.openHandsID
 }
 
 // New constructs a new Executor.
@@ -256,10 +269,10 @@ func (e *Executor) register(ctx context.Context) error {
 		Capacity:          e.cfg.MaxContainers,
 		RunningChildCount: 0,
 		Metadata: map[string]interface{}{
-			"openhands_image":             e.cfg.OpenHandsImage,
-			"openhands_host_port_start":   e.cfg.OpenHandsPortStart,
-			"openhands_host_port_end":     e.cfg.OpenHandsPortEnd,
-			"version":                     "v0001",
+			"openhands_image":           e.cfg.OpenHandsImage,
+			"openhands_host_port_start": e.cfg.OpenHandsPortStart,
+			"openhands_host_port_end":   e.cfg.OpenHandsPortEnd,
+			"version":                   "v0001",
 		},
 	}
 	if _, err := e.mocked.RegisterExecutor(ctx, rec); err != nil {
@@ -438,7 +451,7 @@ func (e *Executor) runTask(ctx context.Context, slot *taskSlot) {
 		e.forceKillContainer(slot)
 		return
 	}
-	slot.openHandsID = conv.ConversationID
+	slot.setOpenHandsID(conv.ConversationID)
 
 	// Stream events from OpenHands logs (a stand-in for a real WS). The
 	// v0001 contract is "Executor forwards each intermediate message/event
@@ -470,7 +483,7 @@ func (e *Executor) tailOpenHandsLogs(ctx context.Context, slot *taskSlot, _ *ope
 		if n > 0 {
 			chunk := string(buf[:n])
 			e.appendTaskEventBestEffort(ctx, slot.task.TaskID, platform.TaskSourceOpenHands, "openhands.event",
-				map[string]interface{}{"chunk": chunk, "openhands_conversation_id": slot.openHandsID})
+				map[string]interface{}{"chunk": chunk, "openhands_conversation_id": slot.getOpenHandsID()})
 		}
 		if err != nil {
 			return err
@@ -490,7 +503,7 @@ func (e *Executor) handleInterrupt(ctx context.Context, slot *taskSlot) {
 		defer cancel()
 		addr := e.docker.ContainerURL(slot.hostPort)
 		client := openhands.NewClient(addr, e.cfg.OpenHandsAPIKey, nil)
-		convID := slot.openHandsID
+		convID := slot.getOpenHandsID()
 		if convID == "" {
 			convID = "unknown"
 		}
@@ -510,7 +523,7 @@ func (e *Executor) handleInterrupt(ctx context.Context, slot *taskSlot) {
 func (e *Executor) handleAppendMessage(ctx context.Context, slot *taskSlot, content string) {
 	addr := e.docker.ContainerURL(slot.hostPort)
 	client := openhands.NewClient(addr, e.cfg.OpenHandsAPIKey, nil)
-	convID := slot.openHandsID
+	convID := slot.getOpenHandsID()
 	if convID == "" {
 		convID = "unknown"
 	}

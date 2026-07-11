@@ -32,16 +32,16 @@ type FakeOpenHands struct {
 	AppendErr error
 
 	// Captured requests.
-	HealthCalls   int
-	StartCalls    int
-	PauseCalls    int
-	AppendCalls   int
+	HealthCalls    int
+	StartCalls     int
+	PauseCalls     int
+	AppendCalls    int
 	LastAppendBody map[string]any
 
 	// HTTP server.
-	srv     *http.Server
+	srv      *http.Server
 	listener net.Listener
-	stopped chan struct{}
+	stopped  chan struct{}
 }
 
 // Start launches the fake server on a random localhost port.
@@ -86,6 +86,24 @@ func (f *FakeOpenHands) Stop() {
 // URL returns the server's base URL.
 func (f *FakeOpenHands) URL() string {
 	return "http://" + f.listener.Addr().String()
+}
+
+// PauseCallCount returns how many pause requests the fake received.
+func (f *FakeOpenHands) PauseCallCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.PauseCalls
+}
+
+// AppendSnapshot returns the append call count and a copy of the last body.
+func (f *FakeOpenHands) AppendSnapshot() (int, map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	body := make(map[string]any, len(f.LastAppendBody))
+	for key, value := range f.LastAppendBody {
+		body[key] = value
+	}
+	return f.AppendCalls, body
 }
 
 // Port returns the bound TCP port (useful when bound to :0).

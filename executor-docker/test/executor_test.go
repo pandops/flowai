@@ -71,11 +71,11 @@ type stubEvent struct {
 // stubServer is a minimal inline HTTP server that mimics the mocked-task-server
 // wire format. It records every PUT/POST and serves queued tasks on GET.
 type stubServer struct {
-	mu          sync.Mutex
-	tasks       map[string]*stubTask
-	executors   map[string]*stubExecutorRecord
-	execEvents  []stubEvent
-	taskEvents  map[string][]stubEvent
+	mu         sync.Mutex
+	tasks      map[string]*stubTask
+	executors  map[string]*stubExecutorRecord
+	execEvents []stubEvent
+	taskEvents map[string][]stubEvent
 
 	registerHits  atomic.Int32
 	execEventHits atomic.Int32
@@ -439,12 +439,12 @@ func TestInterruptRoutesToOpenHands(t *testing.T) {
 	env.stub.setTask(makeRunningTaskWithInterrupt(taskID, "stop"))
 	deadline = time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if env.oh.PauseCalls > 0 {
+		if env.oh.PauseCallCount() > 0 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if env.oh.PauseCalls == 0 {
+	if env.oh.PauseCallCount() == 0 {
 		t.Fatalf("expected OpenHands pause to be called")
 	}
 }
@@ -477,16 +477,18 @@ func TestAppendTaskMessageRoutesToOpenHands(t *testing.T) {
 	env.stub.setTask(makeRunningTaskWithMessage(taskID, "follow up"))
 	deadline = time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if env.oh.AppendCalls > 0 {
+		appendCalls, _ := env.oh.AppendSnapshot()
+		if appendCalls > 0 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if env.oh.AppendCalls == 0 {
+	appendCalls, lastAppendBody := env.oh.AppendSnapshot()
+	if appendCalls == 0 {
 		t.Fatalf("expected OpenHands append to be called")
 	}
-	if env.oh.LastAppendBody["content"] != "follow up" {
-		t.Fatalf("append body mismatch: %+v", env.oh.LastAppendBody)
+	if lastAppendBody["content"] != "follow up" {
+		t.Fatalf("append body mismatch: %+v", lastAppendBody)
 	}
 }
 
@@ -584,7 +586,7 @@ func TestDockerEventDieDoesNotFailOtherContainers(t *testing.T) {
 
 	var started atomic.Int32
 	var firstName string
-	for _, r := range env.docker.StartedRefs {
+	for _, r := range env.docker.StartedRefsSnapshot() {
 		if firstName == "" {
 			firstName = r.Name
 		}
