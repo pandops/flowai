@@ -1,17 +1,27 @@
 @startuml
-title v0001-executor-docker - Docker task lifecycle
+title v0001-executor-docker - per-task lifecycle (MVP)
 
 start
-:Register with mocked task server;
-:Poll task when running_child_count < capacity;
-:Receive task_spec;
-:Pull agent OCI image if needed;
-:Create Docker container;
-:Start Docker container;
-:Observe stdout and exit status;
-:Update running_child_count;
-:Post terminal status to mocked task server;
-:Clean up container;
+:Executor list: GET /v1/tasks?filter=openhands from mocked Router;
+if (queued matching task and capacity free?) then (yes)
+  :Start per-task OpenHands container;
+  :Submit task to that container's OpenHands REST API;
+  :Append task.started and task.start_message to State Registry;
+  :OpenHands runs agent (LLM, tools, etc.);
+  while (task in flight?) is (yes)
+    :OpenHands emits message/event;
+    :Executor forwards each intermediate message/event to mocked State Registry (POST /v1/tasks/{task_id}/events);
+    :Executor refreshes Router task list;
+    if (pending_actions include interrupt_task or append_task_message?) then (yes)
+      :Executor journals cancel/message action and forwards it to OpenHands;
+    else (no)
+    endif
+  endwhile (terminal status reached)
+  :Executor appends task.finished or task.failed to mocked State Registry;
+else (no task or capacity full)
+  :sleep, return to poll;
+endif
+
 stop
 
 @enduml

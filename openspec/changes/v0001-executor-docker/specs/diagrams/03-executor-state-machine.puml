@@ -1,0 +1,48 @@
+@startuml
+title v0001-executor-docker - Executor process state machine (MVP)
+
+state "starting" as Starting
+state "registering" as Registering
+state "ready\n(polling Router, capacity available)" as Ready
+state "busy\n(one or more task containers running)" as Busy
+state "draining\n(SIGTERM, draining owned containers)" as Draining
+state "stopped" as Stopped
+
+[*] --> Starting : process init
+Starting --> Registering : init complete\n(config read, image pulled)
+Registering --> Ready : State Registry registration 2xx
+Registering --> Stopped : registration/event append or\nstartup retries exhausted
+
+Ready --> Busy : queued task accepted,\ncontainer started
+Busy --> Ready : all task containers terminal
+Busy --> Busy : one task container terminal,\nothers still running
+
+Ready --> Draining : SIGTERM
+Busy --> Draining : SIGTERM
+Draining --> Stopped : drain complete OR\nOPENHANDS_DRAIN_TIMEOUT\nelapsed (force-kill)
+
+Ready --> Stopped : fatal error
+Busy --> Stopped : fatal error
+
+Stopped --> [*]
+
+note right of Registering
+  Before accepting work,
+  Executor removes any leftover containers
+  from previous run via Docker labels.
+end note
+
+note right of Busy
+  Individual container failure marks only
+  that task failed and frees one slot.
+  Other task containers continue.
+end note
+
+note right of Draining
+  Stops polling Router.
+  Tells every owned OpenHands container to drain.
+  Appends terminal State Registry events.
+  Stops and removes all owned containers.
+end note
+
+@enduml

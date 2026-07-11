@@ -1,22 +1,43 @@
 @startuml
-title v0001-executor-docker - local Docker Executor topology
+title v0001-executor-docker - Docker Executor topology (MVP, health-probe REST API)
 
-participant "Mocked task server" as Mock
-participant "Docker Executor" as Ex
+participant "Mocked task server\n(Router / State Registry / Env Registry)" as Mock
+participant "Docker Executor\n(Go process)\nlocalhost:8020 = livez/readyz" as Ex
 participant "Docker daemon" as Docker
-participant "Agent container" as Child
+participant "OpenHands containers\n(up to EXECUTOR_MAX_CONTAINERS)\nREST/WS on :8000 each" as OH
 
-Ex -> Mock : register executor_type=docker, capacity, running_child_count
-Ex -> Mock : poll next task
-Mock --> Ex : task_spec
-Ex -> Docker : create/start container from agent OCI image
-Docker -> Child : run agent runtime
-Ex -> Docker : observe child status
-Ex -> Mock : post running/terminal status and running_child_count
+Ex -> Docker : pull image
+Ex -> Docker : docker run per accepted task\nlabels: executor_id, runtime, task_id\npublish :8000 -> distinct host port
+Docker -> OH : start OpenHands runtimes
+Ex -> OH : GET /health per container (wait until ready)
+Ex -> Mock : PUT /v1/executors/{executor_id} (State Registry record)
+Ex -> Mock : POST /v1/executors/{executor_id}/events (executor.healthy)
+Ex -> Mock : GET /v1/tasks?filter=openhands (list Router workload)
+Mock --> Ex : matching tasks with pending_actions
+Ex -> OH : POST each accepted task via that container's OpenHands REST API
+OH --> Ex : per-task events (LLM calls, tool use, status)
+Ex -> Mock : POST /v1/tasks/{task_id}/events (forward OpenHands events)
+OH --> Ex : terminal status
+Ex -> Mock : POST /v1/tasks/{task_id}/events (task.finished / task.failed)
+
+note over Mock, Ex
+  Router tasks, not Executor REST endpoints, drive controls:
+  - queued task -> Ex starts per-task OpenHands container if capacity free
+  - pending interrupt_task -> Ex POSTs OPENHANDS_INTERRUPT_ENDPOINT
+  - pending append_task_message -> Ex POSTs OPENHANDS_MESSAGE_ENDPOINT
+end note
 
 note over Ex
-  No Router, State Registry, Env Registry,
-  Web UI, auth, or Kubernetes support in this change.
+  Single Executor process = bounded worker pool.
+  Max concurrent containers = EXECUTOR_MAX_CONTAINERS.
+  SIGTERM drains all owned containers before shutdown.
+end note
+
+note over Mock
+  Three surfaces in v0001:
+  - Router (eventually v0004)
+  - State Registry (eventually v0002)
+  - Env Registry (eventually v0003)
 end note
 
 @enduml
