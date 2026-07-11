@@ -1,0 +1,296 @@
+openapi: 3.1.0
+info:
+  title: FlowAI Mocked State Registry Surface API
+  version: v0001-proposed
+  license:
+    name: Internal planning artifact
+    identifier: LicenseRef-Internal-Planning
+  summary: Proposed mocked State Registry endpoints called by the v0001 Docker Executor.
+  description: |
+    This OpenAPI document covers only the mocked State Registry surface used by
+    the v0001 Docker Executor to register the active Executor process instance
+    under the executor_id UID generated at Executor startup and append executor
+    and task lifecycle events. The State Registry owns active Executor records
+    and historical records, including information about every Executor that has
+    existed.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+
+security: []
+
+servers:
+  - url: http://127.0.0.1:8080/v1
+    description: Mocked State Registry surface exposed by the v0001 mocked task server
+
+tags:
+  - name: State Registry Surface
+    description: Mocked State Registry endpoints called by the Executor for historical event writes.
+
+paths:
+  /executors/{executor_id}:
+    put:
+      tags: [State Registry Surface]
+      summary: Register an active Executor instance with the mocked State Registry.
+      description: Called by the Executor after it generates a unique executor_id UID at startup, completes startup cleanup, and before accepting Router workload. State Registry owns active Executor records and historical information about every Executor that has existed.
+      operationId: upsertExecutorRecord
+      parameters:
+        - $ref: '#/components/parameters/ExecutorId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutorRegistrationRequest'
+      responses:
+        '200':
+          description: Existing active Executor record replaced for the same startup-generated executor_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutorRegistrationResponse'
+        '201':
+          description: Active Executor record created for the startup-generated executor_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutorRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/DefaultError'
+
+  /executors/{executor_id}/events:
+    post:
+      tags: [State Registry Surface]
+      summary: Append a historical Executor lifecycle event.
+      description: Called by the Executor to record its own lifecycle and health-relevant state. The State Registry derives known Executor records from these events.
+      operationId: appendExecutorEvent
+      parameters:
+        - $ref: '#/components/parameters/ExecutorId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExecutorEventAppendRequest'
+      responses:
+        '202':
+          description: Executor event accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAppendResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/DefaultError'
+
+  /tasks/{task_id}/events:
+    post:
+      tags: [State Registry Surface]
+      summary: Append a historical task, message, cancellation, or container event.
+      description: Called by the Executor to journal task start messages, intermediate OpenHands messages/events, operator message forwarding, cancellation/interrupt events, terminal task events, and Docker lifecycle events.
+      operationId: appendTaskEvent
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskEventAppendRequest'
+      responses:
+        '202':
+          description: Task event accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAppendResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        default:
+          $ref: '#/components/responses/DefaultError'
+
+components:
+  parameters:
+    ExecutorId:
+      name: executor_id
+      in: path
+      required: true
+      description: Unique Executor process UID generated by the Executor at startup.
+      schema:
+        type: string
+        minLength: 1
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Optional caller-provided request correlation identifier echoed in error responses and logs.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Optional key that lets clients safely retry non-GET requests without creating duplicate side effects.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  responses:
+    BadRequest:
+      description: Request path, query, headers, or body are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Request conflicts with the current resource state.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DefaultError:
+      description: Unexpected error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ExecutorRegistrationRequest:
+      type: object
+      required: [executor_id, executor_type, routing_target, capacity, running_child_count, metadata]
+      properties:
+        executor_id:
+          type: string
+          description: Unique Executor process UID generated by the Executor at startup. Must match the path executor_id.
+        executor_type:
+          const: docker-openhands
+        routing_target:
+          type: string
+          example: openhands
+        capacity:
+          type: integer
+          minimum: 1
+        running_child_count:
+          type: integer
+          minimum: 0
+        metadata:
+          type: object
+          required: [openhands_image, openhands_host_port_start, openhands_host_port_end]
+          properties:
+            openhands_image:
+              type: string
+            openhands_host_port_start:
+              type: integer
+            openhands_host_port_end:
+              type: integer
+            version:
+              type: string
+          additionalProperties: true
+
+    ExecutorRegistrationResponse:
+      type: object
+      required: [executor_id, registered_at]
+      properties:
+        executor_id:
+          type: string
+          description: Unique Executor process UID generated by the Executor at startup.
+        registered_at:
+          type: string
+          format: date-time
+
+    ExecutorEventAppendRequest:
+      type: object
+      required: [event_id, executor_id, type, occurred_at, payload]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        executor_id:
+          type: string
+          description: Unique Executor process UID generated by the Executor at startup.
+        type:
+          type: string
+          enum: [executor.registered, executor.started, executor.healthy, executor.busy, executor.idle, executor.stopping, executor.stopped, executor.failed]
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+
+    TaskEventAppendRequest:
+      type: object
+      required: [event_id, task_id, executor_id, source, type, occurred_at, payload]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+          description: FlowAI platform task identifier. OpenHands conversation/run identifiers, when present, are stored in payload metadata, not used as the canonical task id.
+        executor_id:
+          type: string
+        source:
+          type: string
+          enum: [executor, docker, openhands]
+        type:
+          type: string
+          examples: [task.started, task.start_message, task.message_forwarded, task.message, task.cancel_requested, task.cancelled, task.interrupted, task.finished, task.failed, openhands.event, docker.container.die]
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          type: object
+          additionalProperties: true
+
+    EventAppendResponse:
+      type: object
+      required: [event_id, accepted_at]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        accepted_at:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id:
+          type: string
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true

@@ -1,0 +1,182 @@
+openapi: 3.1.0
+info:
+  title: FlowAI Mocked Router Surface API
+  version: v0001-proposed
+  license:
+    name: Internal planning artifact
+    identifier: LicenseRef-Internal-Planning
+  summary: Proposed mocked Router task-list endpoint called by the v0001 Docker Executor.
+  description: |
+    This OpenAPI document covers only the mocked Router surface used by the
+    v0001 Docker Executor for workload polling. Executor identity and lifecycle
+    registration belong to the State Registry surface.
+
+    Executors read tasks with `GET /tasks?filter=<tag>`, where `filter` is the
+    routing tag. When `filter` is omitted, the Router returns all tasks.
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+
+security: []
+
+servers:
+  - url: http://127.0.0.1:8080/v1
+    description: Mocked Router surface exposed by the v0001 mocked task server
+
+tags:
+  - name: Router Surface
+    description: Mocked Router endpoint called by the Executor for task polling.
+
+paths:
+  /tasks:
+    get:
+      tags: [Router Surface]
+      summary: List Router tasks.
+      description: Returns all known Router tasks when `filter` is omitted, or only tasks matching the routing tag when `filter` is provided. Docker Executor uses its configured routing target as the filter value.
+      operationId: listTasks
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          description: Optional routing tag filter. Omit to return all tasks.
+          schema:
+            type: string
+            minLength: 1
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Task list returned. The list may be empty.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        default:
+          $ref: '#/components/responses/DefaultError'
+
+components:
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: Optional caller-provided request correlation identifier echoed in error responses and logs.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  responses:
+    BadRequest:
+      description: Request path, query, headers, or body are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    DefaultError:
+      description: Unexpected error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    TaskListResponse:
+      type: object
+      required: [tasks]
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouterTask'
+
+    RouterTask:
+      type: object
+      required: [task_id, routing_target, agent_runtime, status, prompt, metadata]
+      properties:
+        task_id:
+          type: string
+          format: uuid
+          description: FlowAI platform task identifier created before the task reaches the Executor; not an OpenHands-created identifier.
+        routing_target:
+          type: string
+          example: openhands
+        agent_runtime:
+          const: openhands
+        status:
+          $ref: '#/components/schemas/RouterTaskStatus'
+        prompt:
+          type: string
+          minLength: 1
+        metadata:
+          type: object
+          additionalProperties: true
+        pending_actions:
+          type: array
+          description: Optional per-task controls for an Executor already running this task.
+          items:
+            oneOf:
+              - $ref: '#/components/schemas/InterruptTaskAction'
+              - $ref: '#/components/schemas/AppendTaskMessageAction'
+            discriminator:
+              propertyName: type
+              mapping:
+                interrupt_task: '#/components/schemas/InterruptTaskAction'
+                append_task_message: '#/components/schemas/AppendTaskMessageAction'
+
+    RouterTaskStatus:
+      type: string
+      enum: [queued, running, interrupt_requested, message_pending, completed, failed]
+
+    InterruptTaskAction:
+      type: object
+      required: [action_id, type, task_id]
+      properties:
+        action_id:
+          type: string
+          format: uuid
+        type:
+          const: interrupt_task
+        task_id:
+          type: string
+          format: uuid
+          description: FlowAI platform task identifier for the task being interrupted.
+        reason:
+          type: string
+          maxLength: 1024
+
+    AppendTaskMessageAction:
+      type: object
+      required: [action_id, type, task_id, content]
+      properties:
+        action_id:
+          type: string
+          format: uuid
+        type:
+          const: append_task_message
+        task_id:
+          type: string
+          format: uuid
+          description: FlowAI platform task identifier for the task receiving the message.
+        content:
+          type: string
+          minLength: 1
+        role:
+          type: string
+          enum: [user]
+          default: user
+
+    ErrorResponse:
+      type: object
+      required: [error, request_id]
+      properties:
+        request_id:
+          type: string
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
