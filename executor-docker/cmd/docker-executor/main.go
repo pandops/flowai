@@ -38,7 +38,7 @@ func main() {
 
 	logger := logging.New(logging.Level(cfg.LogLevel))
 
-	docker, err := dockerclient.NewHTTPClient(cfg.DockerSocketPath)
+	docker, err := dockerclient.NewSDKClient(cfg.DockerSocketPath)
 	if err != nil {
 		logger.Error("docker client init failed", "err", err.Error())
 		os.Exit(1)
@@ -49,9 +49,10 @@ func main() {
 
 	// Local platform health API.
 	mux := httpapi.NewRouter("docker-executor", logger)
-	httpapi.RegisterProbes(mux, "docker-executor", cfg.ExecutorID, httpapi.ReadinessFunc(func() bool {
+	httpapi.RegisterProbes(mux, "docker-executor", cfg.ExecutorID, httpapi.ReadinessFuncWithDeps(func() (bool, bool, bool) {
 		st := exec.State()
-		return st == executor.StateReady || st == executor.StateBusy
+		ready := st == executor.StateReady || st == executor.StateBusy
+		return ready, exec.IsStateRegistryRegistered(), exec.IsOpenHandsReachable()
 	}))
 	// Register the probes under /v1 (e.g. /v1/livez) so they match the
 	// platform-wide convention for versioned APIs. The mux is wrapped

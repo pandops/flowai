@@ -15,8 +15,9 @@
 
 - Long-running Go daemon.
 - Reads YAML configuration with environment variable overrides (see Configuration).
-- Generates a unique `executor_id` UID at process startup and uses that UID as the identity for State Registry registration, State Registry events, Env Registry reads, health-probe responses, and Docker labels for the lifetime of that process.
-- Owns zero or more Docker containers labeled `flowai.executor_id=<executor_id>`, `flowai.runtime=openhands`, and `flowai.task_id=<task_id>`, capped by `EXECUTOR_MAX_CONTAINERS`.
+- Generates a unique `executor_id` UID at process startup and uses that UID as the identity for State Registry registration, State Registry events, Env Registry reads, health-probe responses, and the per-process Docker label for the lifetime of that process.
+- Loads (or creates) a stable `cleanup_id` from a user-owned, non-world-writable filesystem location — under the OS user cache dir by default, with the `FLOWAI_CLEANUP_ID_DIR` and `FLOWAI_CLEANUP_ID_PATH` environment variables as overrides. The cleanup_id is stamped on every owned container as the `flowai.cleanup_id` label and is used by the startup-cleanup phase to find and remove leftovers from a previous run on the same host. Cleanup_id is an additive concern: it does NOT change the wire shapes of the Router, State Registry, or Env Registry surfaces, and it does NOT rename `flowai.executor_id`.
+- Owns zero or more Docker containers labeled `flowai.executor_id=<executor_id>`, `flowai.cleanup_id=<cleanup_id>`, `flowai.runtime=openhands`, and `flowai.task_id=<task_id>`, capped by `EXECUTOR_MAX_CONTAINERS`.
 - Maintains clients to the mocked Router, State Registry, and Env Registry surfaces.
 - Maintains per-task HTTP clients to OpenHands containers on distinct `localhost:<mapped_port>` values (or container IPs).
 - Exposes only `GET /v1/livez` and `GET /v1/readyz` on localhost. It does not expose task start, interrupt, message, or OpenHands proxy endpoints.
@@ -25,14 +26,27 @@
 
 - Image: `ghcr.io/openhands/agent-server:latest-python` (see ADR-0003).
 - Exposes REST/WebSocket API on container port 8000.
+- The Executor integrates with the confirmed official V1 contract
+  (OpenHands/software-agent-sdk commit 2eff609, v1.34.0):
+  - `POST /api/conversations` accepts `{workspace, initial_message}` plus
+    either `agent_profile_id` OR an inline `agent.llm` block
+    (model/api_key/usage_id with optional `base_url`); the response has
+    `{id, ...}`. The Executor reads `id` (NOT `conversation_id`).
+  - `POST /api/conversations/{id}/events` accepts the V1 structured-content
+    shape `{role, content:[{type, text}], run:true}`. The Executor no longer
+    sends the legacy V0 top-level `type` field.
+  - The WS event stream is at `/sockets/events/{id}`. The Executor still
+    sends `X-Session-API-Key` for compatibility; first-frame auth is
+    available on the server but not yet exercised by the Executor.
+  - `POST /api/conversations/{id}/pause` remains the interrupt endpoint.
 - Runs the OpenHands agent runtime: LLM calls, tool use, code execution, browser automation (all inside the container).
 - OpenHands itself emits observability via OpenTelemetry (Laminar by default; any OTLP-compatible backend via env vars). The Executor does not proxy or interpret this observability.
-- Exposes a pause endpoint (`POST /api/conversations/{conversation_id}/pause`) used by the Executor after the Router returns an `interrupt_task` action.
-- Exposes an event-creation endpoint (`POST /api/conversations/{conversation_id}/events`) used by the Executor after the Router returns an `append_task_message` action.
+- Exposes a pause endpoint (`POST /api/conversations/{id}/pause`) used by the Executor after the Router returns an `interrupt_task` action.
+- Exposes an event-creation endpoint (`POST /api/conversations/{id}/events`) used by the Executor after the Router returns an `append_task_message` action.
 
 ### Mocked task server
 
-The mocked task server imitates three eventually-separate services. The exact request and response schemas are defined in `specs/openapi/router.openapi.yaml`, `specs/openapi/state-registry.openapi.yaml`, and `specs/openapi/env-registry.openapi.yaml`.
+The mocked task server imitates three eventually-separate services. It is a stateless test service: all seeded tasks, executor registrations, events, and environment values are held in memory and MAY be discarded when the process restarts. Durable State Registry persistence belongs to `v0002-state-registry`. The exact request and response schemas are defined in `specs/openapi/router.openapi.yaml`, `specs/openapi/state-registry.openapi.yaml`, and `specs/openapi/env-registry.openapi.yaml`.
 
 All mocked-server REST paths are served under `/v1` and use a shared error envelope with request correlation metadata.
 
@@ -65,29 +79,33 @@ The Executor translates queued tasks and pending actions into OpenHands calls. I
 
 Each OpenHands container is started with Docker labels:
 
-- `flowai.executor_id=<executor_id>`
+- `flowai.executor_id=<executor_id>` — unique per process instance.
+- `flowai.cleanup_id=<cleanup_id>` — additively stable across restarts on the same host.
 - `flowai.runtime=openhands`
 - `flowai.task_id=<task_id>`
 
-These labels make containers discoverable via `docker ps --filter label=flowai.executor_id=<id>` and tie each container to one FlowAI task.
+`docker ps --filter label=flowai.executor_id=<id>` finds the live containers of THIS process; `docker ps --filter label=flowai.cleanup_id=<id>` finds leftover containers from a previous run on the same host. The cleanup_id label exists for the second use case — the per-process executor_id cannot span restarts.
 
 ### Start sequence
 
 1. Read configuration.
-2. Generate a unique `executor_id` UID for this Executor process instance.
-3. Pull the OpenHands image (idempotent; honors `IMAGE_PULL_POLICY`).
-4. Resolve env values via `GET /v1/env` on the mocked Env Registry; merge with any literals.
-5. Register the active Executor instance with the mocked State Registry via `PUT /v1/executors/{executor_id}` using the generated `executor_id`, configured capacity, and current `running_child_count`.
-6. Append `executor.registered` and `executor.healthy` to the mocked State Registry.
-7. Enter the ready state. Containers are started per queued task until capacity is full.
+2. Load (or create and persist) a stable `cleanup_id` from the user-owned location under `os.UserCacheDir()` (or the `FLOWAI_CLEANUP_ID_DIR` / `FLOWAI_CLEANUP_ID_PATH` overrides). Legacy `/tmp/flowai-cleanup-id` is retained as a best-effort, non-portable fallback.
+3. Generate a unique `executor_id` UID for this Executor process instance.
+4. Remove any leftover containers matching `flowai.cleanup_id=<cleanup_id>` so this Executor process never re-attaches to leftover containers across restarts.
+5. Pull the OpenHands image (idempotent; honors `IMAGE_PULL_POLICY`).
+6. Resolve env values via `GET /v1/env` on the mocked Env Registry; merge with any literals.
+7. Register the active Executor instance with the mocked State Registry via `PUT /v1/executors/{executor_id}` using the generated `executor_id`, configured capacity, and current `running_child_count=0`.
+8. Append `executor.registered` and `executor.healthy` to the mocked State Registry.
+9. Enter the ready state. Containers are started per queued task until capacity is full.
 
 ### Steady state
 
 - List matching Router tasks via `GET /v1/tasks?filter=<ROUTING_TARGET>`.
-- While `running_child_count < EXECUTOR_MAX_CONTAINERS`, start one OpenHands container per queued matching task, append `task.started` and `task.start_message`, submit the task to that task's container, observe OpenHands events, append every intermediate message/event to State Registry, and append `task.finished` or `task.failed` when terminal.
-- On a pending `interrupt_task` action for the active task: append `task.cancel_requested`, forward to OpenHands pause endpoint, then append `task.cancelled`/`task.interrupted` or `task.failed` on timeout.
-- On a pending `append_task_message` action for the active task: forward to OpenHands event endpoint and append `task.message_forwarded`; any later OpenHands message caused by that input is also journaled as an intermediate task message/event.
-- Subscribe to Docker events for the labeled container and append container lifecycle events to State Registry.
+- While `running_child_count < EXECUTOR_MAX_CONTAINERS`, start one OpenHands container per queued matching task, append `task.started` and `task.start_message`, submit the task to that task's container, observe OpenHands events, append every intermediate message/event to State Registry, and append `task.finished` (or `task.failed`, `task.interrupted`) when terminal.
+- The running_child_count transitions emit `executor.busy` (0 -> 1+) or `executor.idle` (any count -> 0) and trigger a State Registry registration refresh. Every net slot-count delta (0->1, 1->2, 2->1, 1->0) re-PUTs the Executor record so the State Registry mirrors the live count.
+- On a pending `interrupt_task` action for the active task: append `task.cancel_requested`, forward to OpenHands pause endpoint, then append `task.interrupted` on success or `task.failed` with `phase=interrupt_timeout` on timeout. Exactly one terminal task event is appended per slot.
+- On a pending `append_task_message` action for the active task: forward to OpenHands event endpoint and append `task.message_forwarded`; if the forward fails the slot is terminalized with `task.failed phase=append_message` exactly once.
+- Subscribe to Docker events for the labeled container and append container lifecycle events to State Registry. A stream error or unannounced close on the Docker event subscription transitions the Executor to `State=Failed`, appends `executor.failed`, cancels the run-owned poll context so `pollLoop` exits, and `Run()` drains in-flight slots before returning a non-nil fatal error.
 
 ### Capacity and scheduling
 
@@ -98,13 +116,13 @@ These labels make containers discoverable via `docker ps --filter label=flowai.e
 
 ### Failure of an OpenHands container
 
-- If a task container exits unexpectedly, the Executor appends `task.failed` for that task, frees the task slot, and may start another queued task on the next Router listing.
+- If a task container exits unexpectedly, the Executor appends `task.failed` (reason=container_died) for that task, frees the task slot, and may start another queued task on the next Router listing.
 - If Docker or the Executor process itself becomes unhealthy, the Executor appends `executor.failed` and stops accepting new work.
 
 ### Executor restart
 
-- On Executor startup, the Executor runs `docker ps -a --filter label=flowai.executor_id=<id>`.
-- If previous containers exist, the Executor removes them (no re-attach across Executor restarts).
+- On Executor startup, the Executor runs `docker ps -a --filter label=flowai.cleanup_id=<cleanup_id>`.
+- If previous containers exist, the Executor removes them (no re-attach across Executor restarts). The per-process `flowai.executor_id` cannot discover leftovers because it changes on every restart; the stable `flowai.cleanup_id` is what makes the leftover discovery work.
 - The Executor proceeds with a fresh start sequence and appends new State Registry executor events.
 
 ### Graceful shutdown
@@ -155,6 +173,13 @@ See `specs/diagrams/03-executor-state-machine.puml`.
 | `OPENHANDS_INTERRUPT_TIMEOUT_SECONDS` | Time to wait for OpenHands to acknowledge an interrupt before force-stopping | `15` |
 | `OPENHANDS_STARTUP_TIMEOUT_SECONDS` | Time to wait for OpenHands `/health` to respond | `60` |
 | `OPENHANDS_DRAIN_TIMEOUT_SECONDS` | Graceful drain deadline on SIGTERM | `30` |
+| `OPENHANDS_WORKSPACE` | Working directory the V1 conversation is rooted at (forwarded as `workspace.working_dir`) | `/workspace/project` |
+| `OPENHANDS_LLM_MODEL` | LLM model name (e.g. `openai/gpt-4o-mini`); required for inline `agent` | `openai/gpt-4o-mini` |
+| `OPENHANDS_LLM_API_KEY` | LLM API key for inline `agent.llm.api_key` | (empty) |
+| `OPENHANDS_LLM_BASE_URL` | Optional LLM base URL; if set, the inline `agent.llm.base_url` is included. Production tests point this at a host-reachable OpenAI-compatible stub. | (empty) |
+| `OPENHANDS_LLM_USAGE_ID` | `usage_id` for the inline `agent.llm`; required when an inline agent is used | `flowai-executor` |
+| `OPENHANDS_AGENT_PROFILE_ID` | Server-side agent profile id (alternative to inline `agent`); use when the V1 server resolves the agent name. | (empty) |
+| `OPENHANDS_INITIAL_RUN` | When `true`, `initial_message.run` is `true` so the V1 server starts the agent loop; when `false`, the conversation is created idle. | `true` |
 | `IMAGE_PULL_POLICY` | `always` \| `if-not-present` \| `never` | `if-not-present` |
 | `LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` | `info` |
 
@@ -162,13 +187,12 @@ See `specs/diagrams/03-executor-state-machine.puml`.
 
 All Go backend services implemented by this change use the platform service baseline:
 
-- Common Go project layout inspired by `golang-standards/project-layout`: `cmd/` for service entrypoints, `internal/` for private application code, `configs/` for YAML config templates, and migration directories for DB-backed services.
+- Common Go project layout inspired by `golang-standards/project-layout`: `cmd/` for service entrypoints, `internal/` for private application code, and `configs/` for YAML config templates.
 - HTTP servers use `net/http` with `chi` routers and middleware.
 - Platform probes are `GET /v1/livez` and `GET /v1/readyz`.
 - Logs are JSON emitted through the standard library `slog`.
 - Config is YAML-first with environment variable overrides.
-- PostgreSQL access uses `pgx` with `sqlc`-generated query code.
-- Database schema changes use `goose` migrations.
+- No service in this change owns persistent state. PostgreSQL access, generated queries, and migrations for the real State Registry are deferred to `v0002-state-registry`.
 
 ## Executor REST API
 

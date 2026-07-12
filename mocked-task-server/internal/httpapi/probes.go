@@ -35,17 +35,17 @@ func RegisterProbes(r chi.Router, serviceName, executorID string, ready Readines
 		ok, deps := ready()
 		if ok {
 			JSON(w, req, http.StatusOK, map[string]any{
-				"status":      "ready",
-				"service":     serviceName,
-				"executor_id": executorID,
+				"status":       "ready",
+				"service":      serviceName,
+				"executor_id":  executorID,
 				"dependencies": deps,
 			})
 			return
 		}
 		JSON(w, req, http.StatusServiceUnavailable, map[string]any{
-			"status":      "not_ready",
-			"service":     serviceName,
-			"executor_id": executorID,
+			"status":       "not_ready",
+			"service":      serviceName,
+			"executor_id":  executorID,
 			"dependencies": deps,
 		})
 	})

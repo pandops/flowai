@@ -4,10 +4,12 @@
 
 The Docker Executor SHALL run OpenHands containers concurrently up to configured capacity. Each container SHALL run the OpenHands agent runtime image (`ghcr.io/openhands/agent-server:latest-python`). The Executor SHALL start one container per accepted task, expose each container's REST/WebSocket API on a distinct host port, and supervise each lifecycle until the task reaches a terminal state or the Executor exits.
 
+Every owned container SHALL be labeled with `flowai.executor_id=<executor_id>`, `flowai.runtime=openhands`, `flowai.task_id=<task_id>`, AND, additively, a stable `flowai.cleanup_id=<cleanup_id>` label so the same Executor process (across restarts on the same host) can find and remove its own containers. The `flowai.executor_id` UID is unique per process instance; the `flowai.cleanup_id` is stable across restarts on the same host. The wire contract for the Router task list, State Registry registration and event endpoints, and Env Registry env-read endpoint is unchanged: the cleanup_id is an additive label only.
+
 #### Scenario: Executor starts task containers up to capacity
 
 - **WHEN** the Docker Executor has `running_child_count < EXECUTOR_MAX_CONTAINERS` and the Router returns queued matching tasks
-- **THEN** it starts one Docker container per accepted task with labels `flowai.executor_id=<executor_id>`, `flowai.runtime=openhands`, and `flowai.task_id=<task_id>` until configured capacity is full
+- **THEN** it starts one Docker container per accepted task with labels `flowai.executor_id=<executor_id>`, `flowai.cleanup_id=<cleanup_id>`, `flowai.runtime=openhands`, and `flowai.task_id=<task_id>` until configured capacity is full
 
 #### Scenario: Executor reports bounded capacity
 
@@ -104,11 +106,11 @@ The Docker Executor SHALL treat any unexpected exit of an owned OpenHands contai
 
 ### Requirement: Docker Executor cleans up on startup
 
-The Docker Executor SHALL detect leftover OpenHands containers from a previous Executor process (via the `flowai.executor_id` label) and SHALL remove them before accepting new work. The Executor SHALL NOT re-attach to surviving containers across Executor restarts.
+The Docker Executor SHALL detect leftover OpenHands containers from a previous Executor process using the stable `flowai.cleanup_id` label (not the per-process `flowai.executor_id` UID, which is unique to a single process and cannot discover leftovers across restarts) and SHALL remove them before accepting new work. The Executor SHALL NOT re-attach to surviving containers across Executor restarts. The cleanup_id file is held in a user-owned, non-world-writable location (under the OS user cache dir or under `FLOWAI_CLEANUP_ID_DIR`); the `/tmp` legacy fallback is best-effort and never the source of a cross-process cleanup on a multi-tenant host.
 
 #### Scenario: Executor finds leftover containers on startup
 
-- **WHEN** the Executor starts and `docker ps -a --filter label=flowai.executor_id=<id>` returns existing containers
+- **WHEN** the Executor starts and `docker ps -a --filter label=flowai.cleanup_id=<id>` returns existing containers
 - **THEN** the Executor removes those containers before proceeding with State Registry registration and Router polling
 
 ### Requirement: Docker Executor shuts down gracefully
@@ -141,12 +143,12 @@ The Docker Executor SHALL expose a REST API bound to `EXECUTOR_API_BIND` (defaul
 
 ### Requirement: Go backend services use the platform service standard
 
-All Go backend services in this change SHALL use the platform Go service standard: the golang-standards project layout, `net/http` with `chi`, `/v1/livez` and `/v1/readyz` probes, `slog` JSON logs, YAML configuration files, `pgx` with `sqlc` for PostgreSQL access, and `goose` for migrations.
+All Go backend services in this change SHALL use the stateless platform Go service standard: the golang-standards project layout, `net/http` with `chi`, `/v1/livez` and `/v1/readyz` probes, `slog` JSON logs, and YAML configuration files.
 
 #### Scenario: Developer creates a Go service package
 
 - **WHEN** a developer implements the Docker Executor or mocked registry/router services
-- **THEN** the code is organized under project-layout-style `cmd/`, `internal/`, `configs/`, and migration directories, uses `net/http` + `chi` for HTTP routing, emits JSON logs through `slog`, reads YAML config, and uses `pgx` + `sqlc` + `goose` for database-backed services
+- **THEN** the code is organized under project-layout-style `cmd/`, `internal/`, and `configs/` directories, uses `net/http` + `chi` for HTTP routing, emits JSON logs through `slog`, and reads YAML config
 
 ### Requirement: Docker Executor API contract is documented as OpenAPI
 
@@ -161,6 +163,15 @@ The Docker Executor SHALL keep proposed OpenAPI 3.1 documents under `specs/opena
 
 - **WHEN** a developer implements `/v1/tasks`, `/v1/executors/{executor_id}`, `/v1/executors/{executor_id}/events`, `/v1/tasks/{task_id}/events`, or `/v1/env`
 - **THEN** the request and response shapes match the corresponding service contract in `specs/openapi/router.openapi.yaml`, `specs/openapi/state-registry.openapi.yaml`, or `specs/openapi/env-registry.openapi.yaml`
+
+### Requirement: Mocked task server keeps only ephemeral state
+
+The mocked task server SHALL keep Router tasks, State Registry executor records and events, and Env Registry values in memory only. It SHALL NOT require a database or promise durability across process restarts. Durable State Registry persistence SHALL be implemented by `v0002-state-registry`.
+
+#### Scenario: Mocked task server restarts
+
+- **WHEN** the mocked task server process restarts
+- **THEN** previously seeded tasks, executor registrations, events, and environment values MAY be absent without violating the v0001 contract
 
 ### Requirement: Docker Executor remains local and non-authoritative
 

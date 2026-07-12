@@ -30,8 +30,7 @@ mocked-task-server/               # v0001 Mocked Task Server (a separate service
 │   ├── server/                   # the HTTP server implementation
 │   │   ├── server.go
 │   │   └── server_test.go
-│   └── store/                    # in-memory + pgx-backed State Registry persistence
-├── migrations/                   # goose migrations (this service only)
+│   └── store/                    # ephemeral in-memory mocked service state
 └── test/                         # integration tests for this service
 
 executor-docker/                  # v0001 Docker Executor
@@ -90,6 +89,10 @@ Rules:
 7. **Future services follow the same pattern.** When v0004-router,
    v0005-executor-k8s, etc. land, they each get their own top-level directory
    (`router/`, `executor-k8s/`). Each is fully self-contained.
+8. **The v0001 mocked task server is stateless.** Its Router, State Registry,
+   and Env Registry surfaces keep ephemeral in-memory data only. Durable
+   PostgreSQL persistence belongs to the real State Registry introduced by
+   `v0002-state-registry`, not to `mocked-task-server/`.
 > cross-cutting view: connection matrix, state ownership, cross-cutting rules,
 > and the diagram map.
 >

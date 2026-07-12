@@ -1,16 +1,63 @@
 @startuml
-title v0002-state-registry - events and controls
+title v0002-state-registry - events and controls flow
 
-participant "Executor or direct caller" as Caller
-participant "State Registry" as State
-database "State Registry DB" as Db
+participant "API Gateway\n(post-v0006)" as gateway
+participant "Executor\n(v0001+)" as executor
+participant "State Registry" as state_registry
+database "PostgreSQL\n(state_db)" as pgsql_db
 
-Caller -> State : POST /events runtime event
-State -> Db : append event verbatim
-Caller -> State : POST control request
-State -> Db : append control request and audit entry
-Caller -> State : GET task history / pending controls
-State -> Db : read records
-State --> Caller : records
+executor -> state_registry : PUT /v1/executors/{executor_id}\nregister active executor
+activate state_registry
+state_registry -> pgsql_db : upsert executor record
+state_registry --> executor : registered
+deactivate state_registry
+
+executor -> state_registry : POST /v1/executors/{executor_id}/events\nexecutor.drain,
+activate state_registry
+state_registry -> pgsql_db : append event
+state_registry --> executor : accepted (event_id, accepted_at)
+deactivate state_registry
+
+executor -> state_registry : POST /v1/tasks/{task_id}/events \ntask.started, \ntask.message, \ntask.executor \ntask.finished, \ntask.failed, \ntask.interrupted, ...
+activate state_registry
+state_registry -> pgsql_db : append event to task event log
+state_registry --> executor : accepted
+deactivate state_registry
+
+gateway -> state_registry : POST /v1/controls\nproxied control-request body (post-v0006)
+activate state_registry
+state_registry -> pgsql_db : append control-request record + audit entry
+state_registry --> gateway : accepted
+deactivate state_registry
+
+executor -> state_registry : GET /v1/tasks/{task_id}/controls\npending controls for assigned task
+activate state_registry
+state_registry -> pgsql_db : load pending control-request records
+state_registry --> executor : pending control-request records
+deactivate state_registry
+
+executor -> state_registry : GET /v1/tasks/{task_id}\nGET /v1/tasks/{task_id}/events
+activate state_registry
+state_registry -> pgsql_db : load records
+state_registry --> executor : task record, event log
+deactivate state_registry
+
+gateway -> state_registry : GET task records /\nevent stream subscription (WebSocket)
+activate state_registry
+state_registry -> pgsql_db : load records
+state_registry --> gateway : task records, event stream
+deactivate state_registry
+
+gateway -> state_registry : GET task records, audit, events
+activate state_registry
+state_registry -> pgsql_db : load records
+state_registry --> gateway : task records, audit entries, event log
+deactivate state_registry
+
+note over state_registry, pgsql_db
+  Events are appended.
+  PostgreSQL persists task records, task events,
+  audit entries, and control-request records.
+end note
 
 @enduml

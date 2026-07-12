@@ -365,11 +365,19 @@ func TestPortRangeValidatedAtConfigLoad(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &executor.Config{
-				ExecutorID:         "exec-test",
-				RoutingTarget:      "openhands",
-				MaxContainers:      tc.max,
-				OpenHandsPortStart: tc.portStart,
-				OpenHandsPortEnd:   tc.portEnd,
+				ExecutorID:           "exec-test",
+				RoutingTarget:        "openhands",
+				MaxContainers:        tc.max,
+				OpenHandsPortStart:   tc.portStart,
+				OpenHandsPortEnd:     tc.portEnd,
+				OpenHandsInterruptTO: 1 * time.Second,
+				OpenHandsStartupTO:   1 * time.Second,
+				OpenHandsDrainTO:     1 * time.Second,
+				WebSocketDialTimeout: 1 * time.Second,
+				OpenHandsWorkspace:   "/workspace/project",
+				OpenHandsLLMModel:    "m",
+				OpenHandsLLMAPIKey:   "k",
+				OpenHandsLLMUsageID:  "u",
 			}
 			err := cfg.Validate()
 			if tc.expectError && err == nil {

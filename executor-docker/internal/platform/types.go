@@ -112,12 +112,12 @@ type RouterTask struct {
 
 // PendingAction is a tagged union of router pending actions.
 type PendingAction struct {
-	Type    PendingActionType `json:"type"`
-	ActionID string           `json:"action_id,omitempty"`
-	TaskID   string           `json:"task_id,omitempty"`
-	Reason   string           `json:"reason,omitempty"`
-	Content  string           `json:"content,omitempty"`
-	Role     string           `json:"role,omitempty"`
+	Type     PendingActionType `json:"type"`
+	ActionID string            `json:"action_id,omitempty"`
+	TaskID   string            `json:"task_id,omitempty"`
+	Reason   string            `json:"reason,omitempty"`
+	Content  string            `json:"content,omitempty"`
+	Role     string            `json:"role,omitempty"`
 }
 
 // Action is the discriminator union of router action shapes.
@@ -161,8 +161,8 @@ type LivenessResponse struct {
 
 // ReadinessResponse is returned by GET /v1/readyz.
 type ReadinessResponse struct {
-	Status               string `json:"status"`
-	ExecutorID           string `json:"executor_id,omitempty"`
-	StateRegistryRegistered bool `json:"state_registry_registered"`
-	OpenHandsReachable      bool `json:"openhands_reachable"`
+	Status                  string `json:"status"`
+	ExecutorID              string `json:"executor_id,omitempty"`
+	StateRegistryRegistered bool   `json:"state_registry_registered"`
+	OpenHandsReachable      bool   `json:"openhands_reachable"`
 }

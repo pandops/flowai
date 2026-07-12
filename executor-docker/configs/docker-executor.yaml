@@ -12,6 +12,16 @@ openhands_message_event_type: message
 openhands_interrupt_timeout: 15s
 openhands_startup_timeout: 60s
 openhands_drain_timeout: 30s
+# V1 conversation startup fields. The Executor must satisfy exactly one
+# of: an AgentProfileID OR (LLMModel + LLMAPIKey + LLMUsageID). The
+# harness sets these via OPENHANDS_LLM_* / OPENHANDS_AGENT_PROFILE_ID
+# environment variables at runtime; defaults are placeholders so the
+# load succeeds without a real backend.
+openhands_workspace: "/workspace/project"
+openhands_llm_model: "openai/gpt-4o-mini"
+openhands_llm_api_key: "flowai-placeholder-key"
+openhands_llm_usage_id: "flowai-executor"
+openhands_initial_run: true
 image_pull_policy: if-not-present
 log_level: info
 mocked_server_url: http://127.0.0.1:8080/v1

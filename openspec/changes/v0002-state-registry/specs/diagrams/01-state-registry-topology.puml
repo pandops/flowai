@@ -1,15 +1,32 @@
 @startuml
 title v0002-state-registry - historical record topology
 
-participant "Caller" as Caller
+participant "API Gateway\n(post-v0006)" as GW
+participant "Executor\n(v0001+)" as Ex
+participant "Operator /\ndirect caller\n(pre-v0006)" as Direct
 participant "State Registry" as State
-database "State Registry DB" as Db
-participant "Scheduler" as Scheduler
-participant "Env Registry" as Env
+database "PostgreSQL\n(State Registry)" as Pg
+participant "Router\n(post-v0004)" as Router
+participant "Env Registry\n(post-v0003)" as Env
+participant "Web UI\n(post-v0006)" as UI
 
-Caller -> State : write events / controls, read history
-State -> Db : persist task records, events, audit, controls
-State -x Scheduler : forbidden scheduling call
-State -x Env : forbidden env/secret call
+GW -> State : state reads, control-request writes,\nevent subscription (WebSocket proxy)
+Ex -> State : PUT /v1/executors/{id}, POST events\n(historical writes, control reads)
+Direct -> State : GET task records, audit, events,\nPOST control-request records
+State -> Pg : persist task records, task events,\naudit entries, control requests
+State --> GW : task records, event stream, control records
+State --> Ex : control-request records for assigned tasks
+State --> Direct : task records, audit, control records
+
+State -x Router : forbidden (no direct connection)
+State -x Env : forbidden (no direct connection)
+State -x UI : forbidden (UI talks only via API Gateway)
+
+note over State
+  Owns canonical task records, task event logs,
+  audit trail, and operator control-request records.
+  Does NOT queue, dispatch, hold env vars or secrets,
+  or call the Router or Env Registry.
+end note
 
 @enduml

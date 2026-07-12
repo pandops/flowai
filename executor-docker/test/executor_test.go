@@ -14,11 +14,10 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -174,24 +173,6 @@ func (s *stubServer) handleExecutors(w http.ResponseWriter, r *http.Request) {
 
 // handleExecutors also serves POST /v1/tasks/{id}/events (we route that here
 // because the executor also appends task events under /v1/executors/{id}/events).
-func (s *stubServer) handleTaskEvents(taskID string, w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method", http.StatusMethodNotAllowed)
-		return
-	}
-	s.taskEventHits.Add(1)
-	var ev stubEvent
-	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	ev.TaskID = taskID
-	s.mu.Lock()
-	s.taskEvents[taskID] = append(s.taskEvents[taskID], ev)
-	s.mu.Unlock()
-	_ = json.NewEncoder(w).Encode(map[string]any{"event_id": ev.EventID})
-}
-
 func (s *stubServer) handleTaskEventsByPath(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -247,6 +228,17 @@ func (s *stubServer) taskEventTypes(taskID string) []string {
 	return out
 }
 
+// execEventTypes returns the types of recorded executor events.
+func (s *stubServer) execEventTypes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.execEvents))
+	for i, e := range s.execEvents {
+		out[i] = e.Type
+	}
+	return out
+}
+
 // testEnv bundles the stub server, executor, fakes, and logger for one test.
 type testEnv struct {
 	cfg     *executor.Config
@@ -264,7 +256,7 @@ func setupTestEnv(t *testing.T, mutate func(*executor.Config)) *testEnv {
 	ts := httptest.NewServer(stub.routes())
 	t.Cleanup(ts.Close)
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	cfg := &executor.Config{
 		ExecutorID:           "exec-" + uuid.NewString(),
@@ -286,6 +278,11 @@ func setupTestEnv(t *testing.T, mutate func(*executor.Config)) *testEnv {
 		MockedServerURL:      ts.URL + "/v1",
 		EnvScopeToken:        "default-scope",
 		PollInterval:         50 * time.Millisecond,
+		WebSocketDialTimeout: 500 * time.Millisecond,
+		OpenHandsWorkspace:   "/workspace/project",
+		OpenHandsLLMModel:    "test-model",
+		OpenHandsLLMAPIKey:   "test-key",
+		OpenHandsLLMUsageID:  "flowai-executor",
 	}
 	if mutate != nil {
 		mutate(cfg)
@@ -309,8 +306,13 @@ func setupTestEnv(t *testing.T, mutate func(*executor.Config)) *testEnv {
 
 func startFakeOH(t *testing.T, env *testEnv, port int) {
 	t.Helper()
-	env.oh.StartOn(fmt.Sprintf("127.0.0.1:%d", port))
+	env.oh.Start()
 	env.docker.URLOverrides[port] = env.oh.URL()
+	// Register the fake URL for every host port the executor might
+	// allocate, so subsequent startTask calls don't dial a free port.
+	for p := env.cfg.OpenHandsPortStart; p <= env.cfg.OpenHandsPortEnd; p++ {
+		env.docker.URLOverrides[p] = env.oh.URL()
+	}
 }
 
 func runExecutor(t *testing.T, env *testEnv) context.CancelFunc {
@@ -487,7 +489,12 @@ func TestAppendTaskMessageRoutesToOpenHands(t *testing.T) {
 	if appendCalls == 0 {
 		t.Fatalf("expected OpenHands append to be called")
 	}
-	if lastAppendBody["content"] != "follow up" {
+	parts, _ := lastAppendBody["content"].([]any)
+	if len(parts) == 0 {
+		t.Fatalf("append body missing content parts: %+v", lastAppendBody)
+	}
+	first, _ := parts[0].(map[string]any)
+	if first["text"] != "follow up" {
 		t.Fatalf("append body mismatch: %+v", lastAppendBody)
 	}
 }

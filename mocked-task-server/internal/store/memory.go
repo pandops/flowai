@@ -1,9 +1,9 @@
-// Package store provides the in-memory + optional PostgreSQL persistence used
-// by the mocked task server. The State Registry surface persists through this
-// store; the Router and Env Registry surfaces are in-memory only.
+// Package store provides the ephemeral in-memory state used by the mocked task
+// server's Router, State Registry, and Env Registry surfaces.
 package store
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"sync"
@@ -24,50 +24,89 @@ type ExecutorStore interface {
 	ListExecutorEvents(ctx context.Context, executorID string) ([]*platform.ExecutorEvent, error)
 	AppendTaskEvent(ctx context.Context, ev *platform.TaskEvent) error
 	ListTaskEvents(ctx context.Context, taskID string) ([]*platform.TaskEvent, error)
-	MarkIdempotency(key string)
+	// ClaimIdempotency atomically checks whether key was seen and, if
+	// not, records it. Returns (true, nil) on first claim, (false,
+	// nil) on already-seen. The returned conflict path guarantees no
+	// Seen-then-Mark race.
+	ClaimIdempotency(key string) (claimed bool)
 	IdempotencySeen(key string) bool
 }
+
+// IdempotencyCap is the bounded retention for Idempotency-Keys.
+// Adapted to ephemeral v0001: a small constant prevents unbounded
+// growth from misbehaving clients without dropping useful dedupe
+// state during a normal Executor lifecycle.
+const IdempotencyCap = 4096
 
 // MemoryStore is the default in-memory store. Concurrent-safe.
 type MemoryStore struct {
 	mu sync.RWMutex
 
-	executors   map[string]*platform.ExecutorRecord
-	execEvents  map[string][]*platform.ExecutorEvent // by executor_id
-	taskEvents  map[string][]*platform.TaskEvent     // by task_id
+	executors  map[string]*platform.ExecutorRecord
+	execEvents map[string][]*platform.ExecutorEvent // by executor_id
+	taskEvents map[string][]*platform.TaskEvent     // by task_id
 
-	// Idempotency keys. Maps key -> recordedAt.
-	idempotency map[string]time.Time
+	// Idempotency keys: FIFO list of keys (oldest at front) plus a
+	// map for O(1) lookup. Bounded by IdempotencyCap.
+	idemMu   sync.Mutex
+	idemList *list.List
+	idemMap  map[string]*list.Element
 }
 
 // NewMemoryStore constructs a fresh in-memory store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		executors:   map[string]*platform.ExecutorRecord{},
-		execEvents:  map[string][]*platform.ExecutorEvent{},
-		taskEvents:  map[string][]*platform.TaskEvent{},
-		idempotency: map[string]time.Time{},
+		executors:  map[string]*platform.ExecutorRecord{},
+		execEvents: map[string][]*platform.ExecutorEvent{},
+		taskEvents: map[string][]*platform.TaskEvent{},
+		idemList:   list.New(),
+		idemMap:    map[string]*list.Element{},
 	}
 }
 
-// IdempotencySeen returns true if the key was recorded before (and within retention).
+// IdempotencySeen returns true if the key was recorded before.
 func (s *MemoryStore) IdempotencySeen(key string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if _, ok := s.idempotency[key]; ok {
-		return true
+	if key == "" {
+		return false
 	}
-	return false
+	s.idemMu.Lock()
+	defer s.idemMu.Unlock()
+	_, ok := s.idemMap[key]
+	return ok
 }
 
-// MarkIdempotency records a key for later dedupe checks.
-func (s *MemoryStore) MarkIdempotency(key string) {
+// ClaimIdempotency atomically records the key on first call and
+// returns true; subsequent calls return false. The map insert +
+// list push happen under a single lock acquisition so two
+// concurrent requests cannot both observe "not seen".
+func (s *MemoryStore) ClaimIdempotency(key string) (claimed bool) {
 	if key == "" {
-		return
+		// Empty key is a no-op marker; not claimable, not seen.
+		return false
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.idempotency[key] = time.Now().UTC()
+	s.idemMu.Lock()
+	defer s.idemMu.Unlock()
+	if _, ok := s.idemMap[key]; ok {
+		return false
+	}
+	elem := s.idemList.PushBack(key)
+	s.idemMap[key] = elem
+	for s.idemList.Len() > IdempotencyCap {
+		front := s.idemList.Front()
+		if front == nil {
+			break
+		}
+		s.idemList.Remove(front)
+		delete(s.idemMap, front.Value.(string))
+	}
+	return true
+}
+
+// MarkIdempotency records a key for later dedupe checks. Prefer
+// ClaimIdempotency for race-safe semantics; this helper is kept for
+// the ExecutorStore interface.
+func (s *MemoryStore) MarkIdempotency(key string) {
+	s.ClaimIdempotency(key)
 }
 
 // UpsertExecutor creates or replaces an active Executor record.

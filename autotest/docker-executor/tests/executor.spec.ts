@@ -26,7 +26,13 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  if (handles) await stopServices(handles);
+  if (handles) {
+    try {
+      await stopServices(handles);
+    } catch {
+      // best-effort
+    }
+  }
 });
 
 test.describe('Docker Executor cross-service e2e', () => {

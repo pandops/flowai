@@ -1,33 +1,57 @@
-// Package dockerclient wraps the Docker Engine HTTP REST API calls the
-// Executor needs. It exposes a small internal interface so unit tests can
-// substitute a mock implementation without touching business logic.
+// Package dockerclient is the Docker Engine integration boundary for the
+// Executor. All Docker Engine SDK types are kept inside this package so the
+// business logic in internal/executor never imports the upstream Docker
+// module. The exposed surface (the Client interface and the surrounding
+// pure-Go types) has no SDK types in it.
 //
-// Why HTTP instead of the Docker SDK? The SDK has a complicated module
-// history (the docker/docker repo was split into moby/moby/api modules in
-// 2024, breaking downstream go.mod setups). The Docker daemon REST API is
-// stable, well-documented, and trivial to call over a UNIX socket with the
-// standard library. For v0001 we need only a handful of endpoints.
+// Per ADR-0002 we use the official Docker Engine SDK for Go
+// (github.com/docker/docker/client) over the Docker daemon UNIX socket.
+// The socket path is configurable via DOCKER_SOCKET_PATH (default
+// /var/run/docker.sock).
+//
+// Implementation notes:
+//
+//   - PullImage honours the IMAGE_PULL_POLICY setting ("always",
+//     "if-not-present", "never"). "never" is a no-op, "if-not-present"
+//     skips the pull when ImageInspect succeeds, otherwise we fall through
+//     to ImagePull and drain the JSON progress stream.
+//   - ListOwned uses label-based filtering via SDK filters.Args.
+//   - StartContainer creates the container with the documented labels
+//     (flowai.executor_id, flowai.cleanup_id, flowai.runtime, flowai.task_id)
+//     and binds host_port:container_port=8000/tcp.
+//   - ContainerURL returns the URL the Executor should use to talk to the
+//     container on the published host port. Real Docker engines return
+//     127.0.0.1:<hostPort>; test fakes redirect as needed.
 package dockerclient
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
-	"net/url"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/containerd/errdefs"
+	dockertypes "github.com/docker/docker/api/types/container"
+	dockerevents "github.com/docker/docker/api/types/events"
+	"github.com/docker/docker/api/types/filters"
+	dockerimage "github.com/docker/docker/api/types/image"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
+
+	"github.com/flowai/platform/executor-docker/internal/logging"
 )
 
 // Labels used by the Executor to identify its containers.
+//
+// flowai.executor_id is unique per process instance (matches the State
+// Registry identity). flowai.cleanup_id is stable across process restarts
+// (so a fresh process can find and remove leftover containers from a
+// previous run). They are intentionally distinct.
 const (
 	LabelExecutorID  = "flowai.executor_id"
+	LabelCleanupID   = "flowai.cleanup_id"
 	LabelRuntime     = "flowai.runtime"
 	LabelTaskID      = "flowai.task_id"
 	RuntimeOpenHands = "openhands"
@@ -58,18 +82,6 @@ type ContainerRef struct {
 	Labels map[string]string
 }
 
-type dockerAPIContainer struct {
-	ID     string            `json:"Id"`
-	Names  []string          `json:"Names"`
-	Image  string            `json:"Image"`
-	Labels map[string]string `json:"Labels"`
-}
-
-type dockerAPIContainerCreate struct {
-	ID       string   `json:"Id"`
-	Warnings []string `json:"Warnings"`
-}
-
 // EventMessage is a reduced form of the Docker events message.
 type EventMessage struct {
 	Type      string
@@ -79,290 +91,300 @@ type EventMessage struct {
 	Time      time.Time
 }
 
-type dockerAPIEvent struct {
-	Type   string `json:"Type"`
-	Action string `json:"Action"`
-	Actor  struct {
-		ID         string            `json:"ID"`
-		Attributes map[string]string `json:"Attributes"`
-	} `json:"Actor"`
-	Time int64 `json:"time"`
-}
+// errNotFound is the package-local sentinel for 404s returned to tests that
+// construct errors directly.
+var errNotFound = errors.New("docker: not found")
 
-// Client is the abstraction the Executor depends on.
+// Client is the abstraction the Executor depends on. The implementation is
+// the SDK-backed SDKClient; tests may substitute their own.
 type Client interface {
 	PullImage(ctx context.Context, ref, policy string) error
 	ListOwned(ctx context.Context, executorID string) ([]ContainerRef, error)
+	ListLeftover(ctx context.Context, cleanupID string) ([]ContainerRef, error)
 	StartContainer(ctx context.Context, spec ContainerSpec) (*ContainerRef, error)
 	StopContainer(ctx context.Context, containerID string, timeout time.Duration) error
 	ForceKill(ctx context.Context, containerID string) error
 	ContainerLogs(ctx context.Context, containerID string) (io.ReadCloser, error)
-	SubscribeEvents(ctx context.Context, filter map[string]string) (<-chan EventMessage, <-chan error)
+	// SubscribeEvents subscribes to the Docker events stream filtered by
+	// the given EventFilter. The filter is forwarded to the Docker daemon
+	// using the documented `filters.Args` shape; callers must use
+	// EventLabelFilter entries (not invalid "label:key" keys).
+	SubscribeEvents(ctx context.Context, filter EventFilter) (<-chan EventMessage, <-chan error)
 	// ContainerURL returns the URL the Executor should use to talk to a
 	// container published on the given host port. Real Docker impls return
 	// 127.0.0.1:<hostPort>; test fakes may redirect.
 	ContainerURL(hostPort int) string
 }
 
-// HTTPClient is the default implementation backed by the Docker daemon's HTTP API.
-type HTTPClient struct {
-	baseURL string
-	http    *http.Client
+// EventFilterKey enumerates the documented Docker filter keys. Using a
+// closed set lets the compiler catch mistakes like the previous
+// `"label:cleanup"` (not a real key) before they reach the daemon.
+type EventFilterKey string
 
-	hook *TestHook // optional, used by tests
+const (
+	EventFilterKeyType      EventFilterKey = "type"
+	EventFilterKeyLabel     EventFilterKey = "label"
+	EventFilterKeyEvent     EventFilterKey = "event"
+	EventFilterKeyContainer EventFilterKey = "container"
+)
+
+// EventFilter is an ordered list of (key, value) pairs accepted by the
+// Docker events API. The Docker filter model is a multi-valued map: the
+// same key (e.g. "label") may repeat with different values.
+type EventFilter struct {
+	Entries []EventFilterEntry
 }
 
-// NewHTTPClient returns a Client backed by the Docker daemon at sockPath.
-func NewHTTPClient(sockPath string) (*HTTPClient, error) {
+// EventFilterEntry is one (key, value) pair.
+type EventFilterEntry struct {
+	Key   EventFilterKey
+	Value string
+}
+
+// NewEventFilter constructs an EventFilter from (key, value) pairs.
+// Multiple entries with the same key are preserved (Docker filters use a
+// set semantics per key).
+func NewEventFilter(entries ...EventFilterEntry) EventFilter {
+	return EventFilter{Entries: entries}
+}
+
+// IsNotFound reports whether err means a Docker 404.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errdefs.IsNotFound(err) {
+		return true
+	}
+	return errors.Is(err, errNotFound)
+}
+
+// SDKClient is the production Client backed by the official Docker Engine
+// SDK. The underlying *dockerclient.Client is intentionally kept unexported
+// so SDK types never escape the package boundary.
+type SDKClient struct {
+	cli *dockerclient.Client
+}
+
+// NewSDKClient returns a Client backed by the official Docker Engine SDK.
+// sockPath is the path to the Docker daemon UNIX socket
+// (e.g. /var/run/docker.sock). When empty, the SDK default applies.
+func NewSDKClient(sockPath string) (*SDKClient, error) {
 	if sockPath == "" {
 		sockPath = "/var/run/docker.sock"
 	}
-	tr := &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 5 * time.Second}
-			return d.DialContext(ctx, "unix", sockPath)
-		},
-		MaxIdleConns:        10,
-		IdleConnTimeout:     30 * time.Second,
-		DisableCompression:  true,
-		TLSHandshakeTimeout: 5 * time.Second,
+	cli, err := dockerclient.NewClientWithOpts(
+		dockerclient.WithHost("unix://"+sockPath),
+		dockerclient.WithVersionFromEnv(),
+		dockerclient.WithAPIVersionNegotiation(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	return &HTTPClient{
-		baseURL: "http://docker",
-		http:    &http.Client{Transport: tr, Timeout: 60 * time.Second},
-	}, nil
+	return &SDKClient{cli: cli}, nil
 }
 
 // Ping verifies the daemon is reachable.
-func (c *HTTPClient) Ping(ctx context.Context) error {
-	resp, err := c.do(ctx, http.MethodGet, "/_ping", nil, nil)
-	if err != nil {
-		return err
+func (c *SDKClient) Ping(ctx context.Context) error {
+	if _, err := c.cli.Ping(ctx); err != nil {
+		return fmt.Errorf("docker ping: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
-	}
-	return fmt.Errorf("docker ping: status %d", resp.StatusCode)
-}
-
-// PullImage implements Client.
-func (c *HTTPClient) PullImage(ctx context.Context, ref, policy string) error {
-	policy = strings.ToLower(policy)
-	if policy == "" {
-		policy = "if-not-present"
-	}
-	if policy == "never" {
-		return nil
-	}
-	if policy == "if-not-present" {
-		resp, err := c.do(ctx, http.MethodGet, "/images/"+ref+"/json", nil, nil)
-		if err == nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-	}
-	resp, err := c.do(ctx, http.MethodPost, "/images/create?fromImage="+url.QueryEscape(ref), nil, nil)
-	if err != nil {
-		return fmt.Errorf("docker pull %s: %w", ref, err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
 
-// ListOwned implements Client.
-func (c *HTTPClient) ListOwned(ctx context.Context, executorID string) ([]ContainerRef, error) {
-	q := url.Values{}
-	q.Set("all", "1")
-	q.Set("filters", buildFilterJSON(map[string]string{LabelExecutorID: executorID}))
-	resp, err := c.do(ctx, http.MethodGet, "/containers/json", nil, q)
+// PullImage implements Client.
+func (c *SDKClient) PullImage(ctx context.Context, ref, policy string) error {
+	policy = strings.ToLower(strings.TrimSpace(policy))
+	if policy == "" {
+		policy = "if-not-present"
+	}
+	logger := logging.FromContext(ctx)
+	switch policy {
+	case "never":
+		return nil
+	case "if-not-present":
+		if _, err := c.cli.ImageInspect(ctx, ref); err == nil {
+			return nil
+		}
+		// Image not present locally; fall through to pull.
+		logger.Info("pulling openhands image", "ref", ref, "policy", policy)
+	case "always":
+		logger.Info("force-pulling openhands image", "ref", ref, "policy", policy)
+	default:
+		// Unknown policies degrade to pulling once.
+		logger.Warn("unknown image_pull_policy; defaulting to pull", "policy", policy, "ref", ref)
+	}
+
+	rc, err := c.cli.ImagePull(ctx, ref, dockerimage.PullOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("docker list containers: %w", err)
+		return fmt.Errorf("docker pull %s: %w", ref, err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
+	defer rc.Close()
+	// Drain the progress stream so the daemon finishes the pull.
+	if _, err := io.Copy(io.Discard, rc); err != nil {
+		return fmt.Errorf("docker pull drain %s: %w", ref, err)
 	}
-	var raw []dockerAPIContainer
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return nil, fmt.Errorf("decode docker list: %w", err)
+	return nil
+}
+
+// ListOwned implements Client. It returns containers whose flowai.executor_id
+// label matches executorID. The matching process executor_id is unique per
+// process, so this is used for live introspection of the current run only.
+func (c *SDKClient) ListOwned(ctx context.Context, executorID string) ([]ContainerRef, error) {
+	return c.listByLabel(ctx, LabelExecutorID, executorID)
+}
+
+// ListLeftover implements Client. It returns containers whose flowai.cleanup_id
+// label matches cleanupID. The cleanup_id is stable across process restarts,
+// so this is what startup cleanup uses to find previous-run leftovers.
+func (c *SDKClient) ListLeftover(ctx context.Context, cleanupID string) ([]ContainerRef, error) {
+	return c.listByLabel(ctx, LabelCleanupID, cleanupID)
+}
+
+func (c *SDKClient) listByLabel(ctx context.Context, key, value string) ([]ContainerRef, error) {
+	// Docker / Podman expect the filter key to be the literal string
+	// "label" and the value to be "key=value" (or repeated pairs). Earlier
+	// versions of this file passed `key` directly, which Podman rejects
+	// with "X is an invalid filter".
+	args := filters.NewArgs(filters.Arg("label", key+"="+value))
+	list, err := c.cli.ContainerList(ctx, dockertypes.ListOptions{All: true, Filters: args})
+	if err != nil {
+		return nil, fmt.Errorf("docker list (label %s=%s): %w", key, value, err)
 	}
-	out := make([]ContainerRef, 0, len(raw))
-	for _, r := range raw {
+	out := make([]ContainerRef, 0, len(list))
+	for _, ctr := range list {
 		name := ""
-		if len(r.Names) > 0 {
-			name = strings.TrimPrefix(r.Names[0], "/")
+		if len(ctr.Names) > 0 {
+			name = strings.TrimPrefix(ctr.Names[0], "/")
 		}
 		out = append(out, ContainerRef{
-			ID:     r.ID,
+			ID:     ctr.ID,
 			Name:   name,
-			Image:  r.Image,
-			Labels: r.Labels,
+			Image:  ctr.Image,
+			Labels: ctr.Labels,
 		})
 	}
 	return out, nil
 }
 
 // StartContainer implements Client.
-func (c *HTTPClient) StartContainer(ctx context.Context, spec ContainerSpec) (*ContainerRef, error) {
-	portBindings := make(map[string][]map[string]string, len(spec.Ports))
-	exposedPorts := make(map[string]any, len(spec.Ports))
-	for _, p := range spec.Ports {
-		key := fmt.Sprintf("%d/%s", p.ContainerPort, strings.ToLower(p.Protocol))
-		portBindings[key] = []map[string]string{{"HostPort": fmt.Sprintf("%d", p.HostPort)}}
-		exposedPorts[key] = map[string]any{}
+func (c *SDKClient) StartContainer(ctx context.Context, spec ContainerSpec) (*ContainerRef, error) {
+	cfg := &dockertypes.Config{
+		Image:  spec.Image,
+		Env:    append([]string(nil), spec.Env...),
+		Labels: copyLabels(spec.Labels),
+		Cmd:    append([]string(nil), spec.Command...),
 	}
-	body := map[string]any{
-		"Image":        spec.Image,
-		"Env":          spec.Env,
-		"Labels":       spec.Labels,
-		"ExposedPorts": exposedPorts,
-		"Cmd":          spec.Command,
-		"HostConfig": map[string]any{
-			"PortBindings": portBindings,
-			"AutoRemove":   false,
-		},
+	hostCfg := &dockertypes.HostConfig{
+		AutoRemove: false,
 	}
-	resp, err := c.do(ctx, http.MethodPost, "/containers/create?name="+url.QueryEscape(spec.Name), jsonBody(body), nil)
+	if len(spec.Ports) > 0 {
+		portBindings, exposedPorts := buildPortBindings(spec.Ports)
+		cfg.ExposedPorts = exposedPorts
+		hostCfg.PortBindings = portBindings
+	}
+
+	created, err := c.cli.ContainerCreate(ctx, cfg, hostCfg, nil, nil, spec.Name)
 	if err != nil {
 		return nil, fmt.Errorf("docker create: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("docker create: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
-	var created dockerAPIContainerCreate
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return nil, fmt.Errorf("decode create response: %w", err)
-	}
-	if err := c.startByID(ctx, created.ID); err != nil {
-		return nil, err
+	if err := c.cli.ContainerStart(ctx, created.ID, dockertypes.StartOptions{}); err != nil {
+		return nil, fmt.Errorf("docker start: %w", err)
 	}
 	return &ContainerRef{
 		ID:     created.ID,
 		Name:   spec.Name,
 		Image:  spec.Image,
-		Labels: spec.Labels,
+		Labels: copyLabels(spec.Labels),
 	}, nil
 }
 
-func (c *HTTPClient) startByID(ctx context.Context, id string) error {
-	resp, err := c.do(ctx, http.MethodPost, "/containers/"+id+"/start", nil, nil)
-	if err != nil {
-		return fmt.Errorf("docker start: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("docker start: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-	}
-	return nil
-}
-
 // StopContainer implements Client.
-func (c *HTTPClient) StopContainer(ctx context.Context, containerID string, timeout time.Duration) error {
-	q := url.Values{}
-	q.Set("t", fmt.Sprintf("%d", int(timeout.Seconds())))
-	resp, err := c.do(ctx, http.MethodPost, "/containers/"+containerID+"/stop", nil, q)
-	if err != nil && !IsNotFound(err) {
+func (c *SDKClient) StopContainer(ctx context.Context, containerID string, timeout time.Duration) error {
+	t := int(timeout.Seconds())
+	stopOpts := dockertypes.StopOptions{Timeout: &t}
+	if err := c.cli.ContainerStop(ctx, containerID, stopOpts); err != nil && !errdefs.IsNotFound(err) {
 		return err
 	}
-	if resp != nil {
-		resp.Body.Close()
-	}
-	rm, err := c.do(ctx, http.MethodDelete, "/containers/"+containerID, nil, url.Values{"force": {"true"}, "v": {"true"}})
-	if err != nil && !IsNotFound(err) {
+	removeOpts := dockertypes.RemoveOptions{Force: true, RemoveVolumes: true}
+	if err := c.cli.ContainerRemove(ctx, containerID, removeOpts); err != nil && !errdefs.IsNotFound(err) {
 		return err
-	}
-	if rm != nil {
-		rm.Body.Close()
 	}
 	return nil
 }
 
 // ForceKill implements Client.
-func (c *HTTPClient) ForceKill(ctx context.Context, containerID string) error {
-	resp, err := c.do(ctx, http.MethodPost, "/containers/"+containerID+"/kill", nil, url.Values{"signal": {"SIGKILL"}})
-	if err != nil && !IsNotFound(err) {
+func (c *SDKClient) ForceKill(ctx context.Context, containerID string) error {
+	if err := c.cli.ContainerKill(ctx, containerID, "SIGKILL"); err != nil && !errdefs.IsNotFound(err) {
 		return err
 	}
-	if resp != nil {
-		resp.Body.Close()
-	}
-	rm, err := c.do(ctx, http.MethodDelete, "/containers/"+containerID, nil, url.Values{"force": {"true"}, "v": {"true"}})
-	if err != nil && !IsNotFound(err) {
+	removeOpts := dockertypes.RemoveOptions{Force: true, RemoveVolumes: true}
+	if err := c.cli.ContainerRemove(ctx, containerID, removeOpts); err != nil && !errdefs.IsNotFound(err) {
 		return err
-	}
-	if rm != nil {
-		rm.Body.Close()
 	}
 	return nil
 }
 
-// ContainerLogs implements Client.
-func (c *HTTPClient) ContainerLogs(ctx context.Context, containerID string) (io.ReadCloser, error) {
-	q := url.Values{}
-	q.Set("stdout", "1")
-	q.Set("stderr", "1")
-	q.Set("follow", "1")
-	resp, err := c.do(ctx, http.MethodGet, "/containers/"+containerID+"/logs", nil, q)
-	if err != nil {
-		return nil, err
+// ContainerLogs implements Client. The caller is responsible for closing the
+// returned reader when done.
+func (c *SDKClient) ContainerLogs(ctx context.Context, containerID string) (io.ReadCloser, error) {
+	opts := dockertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+		Timestamps: false,
 	}
-	if resp.StatusCode >= 300 {
-		resp.Body.Close()
-		return nil, fmt.Errorf("docker logs: status %d", resp.StatusCode)
-	}
-	return resp.Body, nil
+	return c.cli.ContainerLogs(ctx, containerID, opts)
 }
 
-// SubscribeEvents implements Client.
-func (c *HTTPClient) SubscribeEvents(ctx context.Context, filter map[string]string) (<-chan EventMessage, <-chan error) {
+// SubscribeEvents implements Client. Each EventFilterEntry is forwarded to
+// the Docker events API using `filters.Args.Add(key, value)`; the SDK
+// correctly accumulates repeated keys.
+func (c *SDKClient) SubscribeEvents(ctx context.Context, filter EventFilter) (<-chan EventMessage, <-chan error) {
+	args := filters.NewArgs()
+	for _, e := range filter.Entries {
+		args.Add(string(e.Key), e.Value)
+	}
+	opts := dockerevents.ListOptions{Filters: args}
+	src, errs := c.cli.Events(ctx, opts)
+
 	out := make(chan EventMessage, 16)
 	errc := make(chan error, 1)
 	go func() {
 		defer close(out)
 		defer close(errc)
-		q := url.Values{}
-		if len(filter) > 0 {
-			q.Set("filters", buildFilterJSON(filter))
-		}
-		resp, err := c.do(ctx, http.MethodGet, "/events", nil, q)
-		if err != nil {
-			errc <- err
-			return
-		}
-		defer resp.Body.Close()
-		reader := bufio.NewReaderSize(resp.Body, 64*1024)
 		for {
-			if ctx.Err() != nil {
+			select {
+			case <-ctx.Done():
 				errc <- ctx.Err()
 				return
-			}
-			line, err := reader.ReadBytes('\n')
-			if len(line) > 0 {
-				var ev dockerAPIEvent
-				if jerr := json.Unmarshal(line, &ev); jerr == nil {
-					out <- EventMessage{
-						Type:      ev.Type,
-						Action:    ev.Action,
-						ActorID:   ev.Actor.ID,
-						ActorName: ev.Actor.Attributes["name"],
-						Time:      time.Unix(ev.Time, 0),
-					}
-				}
-			}
-			if err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+			case e, ok := <-src:
+				if !ok {
 					return
 				}
-				errc <- err
-				return
+				actorName := ""
+				if e.Actor.Attributes != nil {
+					actorName = e.Actor.Attributes["name"]
+				}
+				t := time.Unix(e.Time, 0)
+				if e.Time == 0 {
+					t = time.Now()
+				}
+				out <- EventMessage{
+					Type:      string(e.Type),
+					Action:    string(e.Action),
+					ActorID:   e.Actor.ID,
+					ActorName: actorName,
+					Time:      t,
+				}
+			case e, ok := <-errs:
+				if !ok {
+					return
+				}
+				if e != nil && !errors.Is(e, context.Canceled) && !errors.Is(e, io.EOF) {
+					errc <- e
+					return
+				}
 			}
 		}
 	}()
@@ -370,73 +392,50 @@ func (c *HTTPClient) SubscribeEvents(ctx context.Context, filter map[string]stri
 }
 
 // ContainerURL implements Client.
-func (c *HTTPClient) ContainerURL(hostPort int) string {
+func (c *SDKClient) ContainerURL(hostPort int) string {
 	return fmt.Sprintf("http://127.0.0.1:%d", hostPort)
 }
 
-func (c *HTTPClient) do(ctx context.Context, method, path string, body io.Reader, query url.Values) (*http.Response, error) {
-	u := c.baseURL + path
-	if len(query) > 0 {
-		u += "?" + query.Encode()
+// Close releases any resources held by the underlying SDK client.
+func (c *SDKClient) Close() error {
+	if c.cli == nil {
+		return nil
 	}
-	var reader io.Reader
-	if body != nil {
-		reader = body
-	}
-	req, err := http.NewRequestWithContext(ctx, method, u, reader)
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		resp.Body.Close()
-		return nil, errNotFound
-	}
-	return resp, nil
+	return c.cli.Close()
 }
 
-var errNotFound = errors.New("docker: not found")
-
-// IsNotFound reports whether err means a Docker 404.
-func IsNotFound(err error) bool { return errors.Is(err, errNotFound) }
-
-// jsonBody returns an io.Reader wrapping the JSON encoding of v.
-func jsonBody(v any) io.Reader {
-	buf := &bytes.Buffer{}
-	if err := json.NewEncoder(buf).Encode(v); err != nil {
-		return bytes.NewReader([]byte("{}"))
+// buildPortBindings converts the simple PortMapping list into the SDK's
+// nat.PortMap and ExposedPorts set.
+func buildPortBindings(ports []PortMapping) (nat.PortMap, nat.PortSet) {
+	bindings := nat.PortMap{}
+	exposed := nat.PortSet{}
+	for _, p := range ports {
+		proto := strings.ToLower(p.Protocol)
+		if proto == "" {
+			proto = "tcp"
+		}
+		key, err := nat.NewPort(proto, fmt.Sprintf("%d", p.ContainerPort))
+		if err != nil {
+			continue
+		}
+		bindings[key] = []nat.PortBinding{
+			{HostIP: "127.0.0.1", HostPort: fmt.Sprintf("%d", p.HostPort)},
+		}
+		exposed[key] = struct{}{}
 	}
-	return buf
+	return bindings, exposed
 }
 
-// buildFilterJSON encodes a flat filter map to the JSON shape Docker expects.
-func buildFilterJSON(m map[string]string) string {
-	expanded := map[string][]string{}
-	for k, v := range m {
-		expanded[k] = []string{v}
+func copyLabels(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
 	}
-	b, _ := json.Marshal(expanded)
-	return string(b)
-}
-
-// TestHook lets tests inject a custom transport.
-type TestHook struct {
-	mu sync.Mutex
-	tr http.RoundTripper
-}
-
-// SetRoundTripper installs a custom RoundTripper.
-func (h *TestHook) SetRoundTripper(rt http.RoundTripper) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.tr = rt
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // Compile-time interface check.
-var _ Client = (*HTTPClient)(nil)
+var _ Client = (*SDKClient)(nil)

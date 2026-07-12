@@ -1,17 +1,30 @@
+' diagram-type: sequence
 @startuml
-title v0003-env-registry - environment store topology
+title v0003-env-registry - executor environment store topology
 
-participant "Setup caller" as Setup
-participant "Executor" as Ex
+actor "Operator" as Op
+participant "Web UI" as UI
+participant "API Gateway" as GW
 participant "Env Registry" as Env
 database "Env Registry DB" as Db
+participant "Executor" as Ex
+participant "Router" as Router
 participant "State Registry" as State
-participant "Scheduler" as Scheduler
 
-Setup -> Env : store env vars and secret values
-Ex -> Env : open-env with scope token
-Env -> Db : persist env metadata, ciphertext, audit
+Op -> UI : manage executor environments\nand secret values
+UI -> GW : POST store surface write
+GW -> Env : proxy store env vars and secret values
+Env -> Env : validate input and select KMS data key
+Env -> Db : persist env metadata,\nciphertext, and audit entry
+Env --> GW : env ids and secret ids
+GW --> UI : response unchanged
+
+Ex -> Env : open-env with HMAC-signed scope token
+Env -> Db : load authorized env metadata\nand ciphertext
+Env --> Ex : env-style KEY=value values
+
+UI -x Env : forbidden direct call (must go through API Gateway)
+Env -x Router : forbidden queueing or scheduling call
 Env -x State : forbidden historical-state call
-Env -x Scheduler : forbidden scheduling call
 
 @enduml

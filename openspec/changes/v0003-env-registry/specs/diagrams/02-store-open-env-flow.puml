@@ -1,20 +1,33 @@
+' diagram-type: sequence
 @startuml
 title v0003-env-registry - store and open-env flow
 
-participant "Setup caller" as Setup
+participant "Web UI\n(setup caller)" as UI
+participant "API Gateway" as GW
 participant "Env Registry" as Env
 database "Env Registry DB" as Db
 participant "Executor" as Ex
+note over Ex : task start
 
-Setup -> Env : write env vars and secret values
-Env -> Env : validate input and encrypt secret values
-Env -> Db : persist metadata and ciphertext
-Env --> Setup : env ids and secret ids
+== Store surface - non-secret env and secret values ==
+UI -> GW : POST env vars and secret values
+GW -> Env : proxy store surface write\n(env vars, secret values)
+Env -> Env : validate input
+Env -> Env : encrypt secret values at rest\nwith KMS-backed data key
+Env -> Db : persist non-secret env metadata
+Env -> Db : persist secret metadata + ciphertext
+Env -> Db : append store audit entry\n(env ids, secret ids, actor)
+Env --> GW : env ids and secret ids
+GW --> UI : response unchanged
 
-Ex -> Env : open-env with signed scope token
-Env -> Env : validate signature, expiry, project binding
-Env -> Db : load authorized env and ciphertext
-Env -> Env : decrypt for response only
-Env --> Ex : KEY=value values
+== Open-env surface - Executor only ==
+Ex -> Env : open-env with HMAC-signed\nproject-bound scope token
+Env -> Env : validate scope token\n(signature, expiry, project binding)
+Env -> Db : load authorized non-secret env metadata
+Env -> Db : load authorized secret ciphertext
+Env -> Env : decrypt secret values for response\n(plaintext stays in-memory)
+Env -> Db : append open-env audit entry\n(env ids, executor id, task id)
+Env --> Ex : env-style KEY=value values
+note over Ex : inject values into\nOpenHands container
 
 @enduml

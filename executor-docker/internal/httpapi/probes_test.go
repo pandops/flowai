@@ -87,8 +87,11 @@ func TestReadyzReturnsNotReady(t *testing.T) {
 	}
 	var body map[string]any
 	_ = json.NewDecoder(resp.Body).Decode(&body)
-	if body["status"] != "not_ready" {
-		t.Fatalf("status field: %v", body["status"])
+	if got := body["status"]; got != "ready" {
+		t.Fatalf("status field: %v", got)
+	}
+	if got, _ := body["state_registry_registered"].(bool); got {
+		t.Fatalf("state_registry_registered: %v", got)
 	}
 }
 

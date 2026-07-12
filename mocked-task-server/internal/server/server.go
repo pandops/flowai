@@ -2,14 +2,21 @@
 // surfaces under /v1: Router (task listing), State Registry (executor
 // registration + events), Env Registry (env reads). All surfaces share the
 // platform error envelope and request-id correlation.
+//
+// Loopback binding is the caller's responsibility (see cmd/mocked-task-server
+// for the -bind flag); this package does NOT enforce loopback here so the
+// test binary can use it via 127.0.0.1 directly without rewriting.
 package server
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +28,11 @@ import (
 	"github.com/flowai/platform/mocked-task-server/internal/platform"
 	"github.com/flowai/platform/mocked-task-server/internal/store"
 )
+
+// MaxMutationBodyBytes caps JSON request bodies on every mutation
+// endpoint. 1 MiB is a generous ceiling for the wire shapes exposed
+// by v0001; raising it requires a deliberate review.
+const MaxMutationBodyBytes int64 = 1 << 20
 
 // Server is the mocked task server.
 type Server struct {
@@ -52,13 +64,21 @@ func (s *Server) Routes() http.Handler {
 		v1.Post("/tasks/{task_id}/events", s.appendTaskEvent)
 		v1.Get("/env", s.getEnv)
 
+		// GET /v1/tasks/{task_id}/events exists ONLY in test mode so the
+		// e2e helpers can read what the executor journaled. Production
+		// mocked-server reads must not rely on this endpoint.
+		testMode := os.Getenv("MOCKED_SERVER_TEST_MODE") == "true"
+		if testMode {
+			v1.Get("/tasks/{task_id}/events", s.listTaskEventsHandler)
+		}
+
 		httpapi.RegisterProbes(v1, "mocked-task-server", "", httpapi.ReadinessFunc(func() bool { return true }))
 
 		// Test-only endpoints. Only enabled when the MOCKED_SERVER_TEST_MODE
 		// env var is set on the server process. These exist so e2e tests
 		// (autotest/) can seed Router tasks without bypassing the wire
 		// protocol.
-		if os.Getenv("MOCKED_SERVER_TEST_MODE") == "true" {
+		if testMode {
 			v1.Post("/_test/tasks", s.testSeedTask)
 			v1.Delete("/_test/tasks", s.testClearTasks)
 			v1.Delete("/_test/tasks/{task_id}", s.testDeleteTask)
@@ -67,10 +87,37 @@ func (s *Server) Routes() http.Handler {
 	return r
 }
 
+// bodyLimit returns the per-endpoint request body limit. Mutation
+// endpoints get MaxMutationBodyBytes; test-only endpoints get a small
+// allowance sized for one task fixture.
+func bodyLimit(path string) int64 {
+	if strings.Contains(path, "/_test/") {
+		return 256 << 10
+	}
+	return MaxMutationBodyBytes
+}
+
+// readJSON reads at most limit bytes from r.Body into out, returning
+// a platform BadRequest error if the body exceeds the limit.
+func readJSON(w http.ResponseWriter, r *http.Request, limit int64, out interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if err := json.NewDecoder(r.Body).Decode(out); err != nil {
+		var mbErr *http.MaxBytesError
+		if errors.As(err, &mbErr) {
+			httpapi.BadRequest(w, r, "request body too large", nil)
+			return err
+		}
+		// Drain to allow keep-alive; ignore short read EOFs as JSON parse errors.
+		_, _ = io.Copy(io.Discard, r.Body)
+		httpapi.BadRequest(w, r, "invalid json body: "+err.Error(), nil)
+		return err
+	}
+	return nil
+}
+
 func (s *Server) testSeedTask(w http.ResponseWriter, r *http.Request) {
 	var t platform.RouterTask
-	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
-		httpapi.BadRequest(w, r, "invalid task body: "+err.Error(), nil)
+	if err := readJSON(w, r, bodyLimit("/_test/tasks"), &t); err != nil {
 		return
 	}
 	if t.TaskID == "" {
@@ -161,8 +208,7 @@ func (s *Server) upsertExecutor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req platform.ExecutorRecord
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpapi.BadRequest(w, r, "invalid json body: "+err.Error(), nil)
+	if err := readJSON(w, r, MaxMutationBodyBytes, &req); err != nil {
 		return
 	}
 	if req.ExecutorID == "" {
@@ -198,8 +244,7 @@ func (s *Server) appendExecutorEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req platform.ExecutorEvent
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpapi.BadRequest(w, r, "invalid json body: "+err.Error(), nil)
+	if err := readJSON(w, r, MaxMutationBodyBytes, &req); err != nil {
 		return
 	}
 	if req.ExecutorID == "" {
@@ -209,11 +254,16 @@ func (s *Server) appendExecutorEvent(w http.ResponseWriter, r *http.Request) {
 		httpapi.BadRequest(w, r, "executor_id mismatch between path and body", nil)
 		return
 	}
+	idem := r.Header.Get("Idempotency-Key")
+	if idem != "" && !s.store.ClaimIdempotency(idem) {
+		httpapi.JSON(w, r, http.StatusAccepted, platform.EventAppendResponse{
+			EventID:    req.EventID,
+			AcceptedAt: time.Now().UTC(),
+		})
+		return
+	}
 	if req.EventID == "" {
 		req.EventID = uuid.NewString()
-	}
-	if idem := r.Header.Get("Idempotency-Key"); idem != "" {
-		s.store.MarkIdempotency(idem)
 	}
 	if err := s.store.AppendExecutorEvent(r.Context(), &req); err != nil {
 		httpapi.Internal(w, r, err.Error())
@@ -221,8 +271,25 @@ func (s *Server) appendExecutorEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	httpapi.JSON(w, r, http.StatusAccepted, platform.EventAppendResponse{
 		EventID:    req.EventID,
-		AcceptedAt: req.OccurredAt,
+		AcceptedAt: time.Now().UTC(),
 	})
+}
+
+// listTaskEventsHandler is the HTTP handler for GET /v1/tasks/{task_id}/events.
+// Available in test mode so the e2e helpers can read what the executor
+// journaled; not part of the public OpenSpec contract.
+func (s *Server) listTaskEventsHandler(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "task_id")
+	if taskID == "" {
+		httpapi.BadRequest(w, r, "missing task_id", nil)
+		return
+	}
+	evs, err := s.store.ListTaskEvents(r.Context(), taskID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	httpapi.JSON(w, r, http.StatusOK, evs)
 }
 
 func (s *Server) appendTaskEvent(w http.ResponseWriter, r *http.Request) {
@@ -232,8 +299,7 @@ func (s *Server) appendTaskEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req platform.TaskEvent
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpapi.BadRequest(w, r, "invalid json body: "+err.Error(), nil)
+	if err := readJSON(w, r, MaxMutationBodyBytes, &req); err != nil {
 		return
 	}
 	if req.TaskID == "" {
@@ -243,11 +309,16 @@ func (s *Server) appendTaskEvent(w http.ResponseWriter, r *http.Request) {
 		httpapi.BadRequest(w, r, "task_id mismatch between path and body", nil)
 		return
 	}
+	idem := r.Header.Get("Idempotency-Key")
+	if idem != "" && !s.store.ClaimIdempotency(idem) {
+		httpapi.JSON(w, r, http.StatusAccepted, platform.EventAppendResponse{
+			EventID:    req.EventID,
+			AcceptedAt: time.Now().UTC(),
+		})
+		return
+	}
 	if req.EventID == "" {
 		req.EventID = uuid.NewString()
-	}
-	if idem := r.Header.Get("Idempotency-Key"); idem != "" {
-		s.store.MarkIdempotency(idem)
 	}
 	if err := s.store.AppendTaskEvent(r.Context(), &req); err != nil {
 		httpapi.Internal(w, r, err.Error())
@@ -255,7 +326,7 @@ func (s *Server) appendTaskEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	httpapi.JSON(w, r, http.StatusAccepted, platform.EventAppendResponse{
 		EventID:    req.EventID,
-		AcceptedAt: req.OccurredAt,
+		AcceptedAt: time.Now().UTC(),
 	})
 }
 

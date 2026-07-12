@@ -22,8 +22,8 @@ const RequestIDHeader = "X-Request-Id"
 
 // ErrorEnvelope is the platform-wide error response shape.
 type ErrorEnvelope struct {
-	RequestID string         `json:"request_id"`
-	Error     ErrorBody      `json:"error"`
+	RequestID string    `json:"request_id"`
+	Error     ErrorBody `json:"error"`
 }
 
 // ErrorBody is the nested error payload.
@@ -34,11 +34,14 @@ type ErrorBody struct {
 }
 
 // NewRouter returns a chi router pre-configured with platform middleware
-// (RequestID, real IP, structured access logs, panic recovery).
+// (RequestID, structured access logs, panic recovery).
+//
+// The router intentionally does NOT use middleware.RealIP: the loopback
+// services in this repo bind to 127.0.0.1 and must not trust spoofable
+// X-Forwarded-For / X-Real-IP headers supplied by the local client.
 func NewRouter(serviceName string, logger *slog.Logger) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(slogRequestLogger(serviceName, logger))
 	r.Use(middleware.Timeout(30 * time.Second))
@@ -114,11 +117,11 @@ func slogRequestLogger(serviceName string, logger *slog.Logger) func(http.Handle
 
 // Common HTTP error helpers.
 var (
-	ErrBadRequest    = errors.New("bad request")
-	ErrNotFound      = errors.New("not found")
-	ErrConflict      = errors.New("conflict")
-	ErrInternal      = errors.New("internal error")
-	ErrUnavailable   = errors.New("service unavailable")
+	ErrBadRequest  = errors.New("bad request")
+	ErrNotFound    = errors.New("not found")
+	ErrConflict    = errors.New("conflict")
+	ErrInternal    = errors.New("internal error")
+	ErrUnavailable = errors.New("service unavailable")
 )
 
 // BadRequest writes a 400 error envelope.

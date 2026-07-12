@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -266,6 +268,171 @@ func TestIdempotencyKeyMarked(t *testing.T) {
 	resp.Body.Close()
 	if !mem.IdempotencySeen("key-123") {
 		t.Fatalf("expected idempotency key to be marked")
+	}
+
+	// Idempotent replay must NOT append a second event AND must return
+	// 202 Accepted with a fresh server-stamped accepted_at.
+	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/tasks/"+taskID+"/events", bytes.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Idempotency-Key", "key-123")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusAccepted {
+		t.Fatalf("replay status: %d", resp2.StatusCode)
+	}
+	var replayOut platform.EventAppendResponse
+	if err := json.NewDecoder(resp2.Body).Decode(&replayOut); err != nil {
+		t.Fatalf("decode replay: %v", err)
+	}
+	if replayOut.AcceptedAt.IsZero() {
+		t.Fatalf("replay accepted_at zero")
+	}
+	if replayOut.AcceptedAt.Equal(mustTime("2026-01-01T00:00:00Z")) {
+		t.Fatalf("replay accepted_at reused client occurred_at (server must stamp)")
+	}
+	evs, _ := mem.ListTaskEvents(context.Background(), taskID)
+	if len(evs) != 1 {
+		t.Fatalf("idempotent replay wrote duplicate events: got %d want 1", len(evs))
+	}
+}
+
+func mustTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// TestIdempotencyClaimAtomic exercises the Seen-then-Mark race window.
+// Two concurrent requests with the same Idempotency-Key must result in
+// exactly one stored event (the second is a replay) and the store's
+// ClaimIdempotency must return false to the loser.
+func TestIdempotencyClaimAtomic(t *testing.T) {
+	_, mem, ts := newTestServer(t)
+	taskID := uuid.NewString()
+	body, _ := json.Marshal(map[string]any{
+		"event_id":    uuid.NewString(),
+		"task_id":     taskID,
+		"executor_id": "exec-1",
+		"source":      "executor",
+		"type":        "task.started",
+		"occurred_at": "2026-01-01T00:00:00Z",
+		"payload":     map[string]any{},
+	})
+
+	const N = 16
+	done := make(chan struct{}, N)
+	results := make(chan int, N)
+	for i := 0; i < N; i++ {
+		go func() {
+			req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/tasks/"+taskID+"/events", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", "concurrent-key")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Errorf("post: %v", err)
+				done <- struct{}{}
+				return
+			}
+			results <- resp.StatusCode
+			resp.Body.Close()
+			done <- struct{}{}
+		}()
+	}
+	for i := 0; i < N; i++ {
+		<-done
+	}
+	close(results)
+
+	if !mem.IdempotencySeen("concurrent-key") {
+		t.Fatalf("expected key to be marked after race")
+	}
+	evs, _ := mem.ListTaskEvents(context.Background(), taskID)
+	if len(evs) != 1 {
+		t.Fatalf("expected exactly 1 stored event after race, got %d", len(evs))
+	}
+}
+
+// TestIdempotencyCapBounded verifies the FIFO cap evicts old entries so
+// the store cannot grow unboundedly.
+func TestIdempotencyCapBounded(t *testing.T) {
+	mem := store.NewMemoryStore()
+	for i := 0; i < store.IdempotencyCap+128; i++ {
+		mem.ClaimIdempotency(fmt.Sprintf("k-%d", i))
+	}
+	if !mem.IdempotencySeen(fmt.Sprintf("k-%d", store.IdempotencyCap+127)) {
+		t.Fatalf("newest key must be present")
+	}
+	if mem.IdempotencySeen("k-0") {
+		t.Fatalf("oldest key should have been evicted by FIFO cap")
+	}
+}
+
+// TestAppendEventBodyCapRejected confirms a >1MiB body on a mutation
+// endpoint is rejected by the platform's MaxBytesReader.
+func TestAppendEventBodyCapRejected(t *testing.T) {
+	_, _, ts := newTestServer(t)
+	taskID := uuid.NewString()
+	// Build a body whose total length exceeds the cap by wrapping
+	// payload content in repetitive JSON-encoded material.
+	longPayload := strings.Repeat("a", int(server.MaxMutationBodyBytes)+1024)
+	frame := map[string]any{
+		"event_id":    uuid.NewString(),
+		"task_id":     taskID,
+		"executor_id": "exec-1",
+		"source":      "executor",
+		"type":        "task.started",
+		"occurred_at": "2026-01-01T00:00:00Z",
+		"payload":     map[string]any{"junk": longPayload},
+	}
+	body, err := json.Marshal(frame)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if int64(len(body)) <= server.MaxMutationBodyBytes {
+		t.Fatalf("payload not large enough: %d <= %d", len(body), server.MaxMutationBodyBytes)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/tasks/"+taskID+"/events", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 400 for oversized body, got %d: %s", resp.StatusCode, string(raw))
+	}
+}
+
+// TestUpsertExecutorBodyCapRejected confirms the same cap applies to
+// PUT /v1/executors/{id}.
+func TestUpsertExecutorBodyCapRejected(t *testing.T) {
+	_, _, ts := newTestServer(t)
+	huge := bytes.Repeat([]byte("a"), int(server.MaxMutationBodyBytes)+1024)
+	rec := map[string]any{
+		"executor_id":         "exec-cap",
+		"executor_type":       platform.ExecutorTypeDockerOpenHands,
+		"routing_target":      "openhands",
+		"capacity":            2,
+		"running_child_count": 0,
+		"metadata":            map[string]any{"payload": string(huge)},
+	}
+	body, _ := json.Marshal(rec)
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/v1/executors/exec-cap", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for oversized body, got %d", resp.StatusCode)
 	}
 }
 

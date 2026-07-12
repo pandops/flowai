@@ -9,11 +9,15 @@ import (
 
 func TestConfigValidateRejectsBadRange(t *testing.T) {
 	cfg := &Config{
-		ExecutorID:         "exec-1",
-		RoutingTarget:      "openhands",
-		MaxContainers:      5,
-		OpenHandsPortStart: 19000,
-		OpenHandsPortEnd:   19001,
+		ExecutorID:          "exec-1",
+		RoutingTarget:       "openhands",
+		MaxContainers:       5,
+		OpenHandsPortStart:  19000,
+		OpenHandsPortEnd:    19001,
+		OpenHandsWorkspace:  "/workspace/project",
+		OpenHandsLLMModel:   "m",
+		OpenHandsLLMAPIKey:  "k",
+		OpenHandsLLMUsageID: "u",
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error for too-small port range")
@@ -22,14 +26,32 @@ func TestConfigValidateRejectsBadRange(t *testing.T) {
 
 func TestConfigValidateRejectsEmptyRoutingTarget(t *testing.T) {
 	cfg := &Config{
-		ExecutorID:         "exec-1",
-		RoutingTarget:      "",
-		MaxContainers:      1,
-		OpenHandsPortStart: 19000,
-		OpenHandsPortEnd:   19001,
+		ExecutorID:          "exec-1",
+		RoutingTarget:       "",
+		MaxContainers:       1,
+		OpenHandsPortStart:  19000,
+		OpenHandsPortEnd:    19001,
+		OpenHandsWorkspace:  "/workspace/project",
+		OpenHandsLLMModel:   "m",
+		OpenHandsLLMAPIKey:  "k",
+		OpenHandsLLMUsageID: "u",
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error for empty routing target")
+	}
+}
+
+func TestConfigValidateRejectsMissingV1Agent(t *testing.T) {
+	cfg := &Config{
+		ExecutorID:         "exec-1",
+		RoutingTarget:      "openhands",
+		MaxContainers:      1,
+		OpenHandsPortStart: 19000,
+		OpenHandsPortEnd:   19000,
+		OpenHandsWorkspace: "/workspace/project",
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error for missing V1 agent profile/model")
 	}
 }
 
@@ -40,6 +62,8 @@ func TestConfigLoadFromYAML(t *testing.T) {
 executor_max_containers: 4
 openhands_host_port_start: 20000
 openhands_host_port_end: 20010
+openhands_llm_model: openai/gpt-4o-mini
+openhands_llm_api_key: test-key
 `
 	if err := os.WriteFile(path, []byte(yaml), 0644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -60,6 +84,7 @@ openhands_host_port_end: 20010
 }
 
 func TestConfigLoadGeneratesExecutorID(t *testing.T) {
+	t.Setenv("OPENHANDS_AGENT_PROFILE_ID", "flowai-default")
 	cfg, err := LoadConfig("")
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -73,7 +98,7 @@ func TestConfigLoadGeneratesExecutorID(t *testing.T) {
 }
 
 func TestStateStringValues(t *testing.T) {
-	states := []State{StateStarting, StateRegistering, StateReady, StateBusy, StateDraining, StateStopped}
+	states := []State{StateStarting, StateRegistering, StateReady, StateBusy, StateStopping, StateStopped, StateFailed}
 	for _, s := range states {
 		if string(s) == "" {
 			t.Fatalf("empty state value")

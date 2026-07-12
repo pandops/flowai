@@ -20,9 +20,9 @@ For unit tests and per-service integration tests, see each service's own
 | File | Tests | Style | What it covers |
 |---|---|---|---|
 | [`docker-executor/tests/executor.spec.ts`](docker-executor/tests/executor.spec.ts) | 8 | Cross-service (real binaries) | Wire-contract e2e: probes, task listing, env, registration, API surface limits |
-| [`docker-executor/tests/container-execution.spec.ts`](docker-executor/tests/container-execution.spec.ts) | 1 | Cross-service (real binaries + real Docker daemon) | Real container execution against the real OpenHands V1 agent-server |
+| [`docker-executor/tests/container-execution.spec.ts`](docker-executor/tests/container-execution.spec.ts) | 3 | Cross-service (real binaries + real Docker daemon) | Real container execution against the real OpenHands V1 agent-server (health-failure, V1 happy-path with fake LLM, V1 interrupt) |
 
-**Total: 9 Playwright tests, all passing.**
+**Total: 11 Playwright tests, all passing.**
 
 The two files correspond to two distinct concerns:
 - `executor.spec.ts` — does the executor talk the right wire protocol? (no Docker required)
@@ -33,9 +33,16 @@ The two files correspond to two distinct concerns:
 ```bash
 cd autotest/docker-executor
 npm install          # one-time
-npm test             # runs all 9 tests
+npm test             # runs all 11 tests
 npm run test:report  # opens the HTML report
 ```
+
+`FLOWAI_DOCKER_SOCKET` is forwarded to the spawned executor so the test
+harness can drive a rootless podman daemon at `/run/user/1000/podman/podman.sock`
+without hard-coding the path. `workers: 1` keeps the shared subprocess
+state isolated between specs — each spec runs to completion before the next
+starts, and per-spec alt ports (MOCKED_BIND_ALT / EXECUTOR_BIND_ALT plus
+per-spec container port ranges) further prevent bleed across runs.
 
 The HTML report lives at `playwright-report/index.html` after every run.
 
@@ -70,7 +77,7 @@ the mocked task server.
 
 - **Setup**: both services spawned, no env scopes seeded
 - **Action**: `GET /v1/env?executor_id=…&routing_target=openhands&scope_token=missing-scope`
-- **Assert**: response status is 204 (no content)
+- **Assert**: response status is 204
 - **Purpose**: confirms the env endpoint correctly signals "no values
   configured" via 204, not 200 with an empty body or 404.
 
@@ -122,13 +129,19 @@ the mocked task server.
 
 ---
 
-### `container-execution.spec.ts` — Real-container e2e (1 test)
+### `container-execution.spec.ts` — Real-container e2e (3 tests)
 
-This test spawns the same services as above, but also configures the
+These tests spawn the same services as above, but also configures the
 docker-executor to use the real OpenHands V1 agent-server image
-(`agent-openhands-image:latest`). A TCP-to-UNIX-socket proxy is set up so the
-test can drive the local podman daemon via Playwright's TCP-only request
+(`agent-openhands-image:latest`). A TCP-to-UNIX-socket proxy is set up so
+the test can drive the local podman daemon via Playwright's TCP-only request
 fixture.
+
+The harness starts a tiny in-process OpenAI-compatible LLM server (FakeLLM
+in helpers) so the V1 agent-server can resolve chat completions during the
+real-V1 happy-path test without external secrets. The fake LLM is reachable
+from the container via `host.containers.internal` (rootless podman and
+docker-desktop both resolve it to the host's loopback).
 
 **Prerequisites**:
 - A Docker-compatible daemon reachable at `FLOWAI_DOCKER_SOCKET` (default
@@ -176,6 +189,66 @@ the health check and tears down the container ~200ms after creation. When
 run with `agent-openhands-image:latest` (the real V1 agent-server), the
 container stays alive until test end and is removed by `stopServices`.
 
+#### `executor records V1 task events through the real V1 agent-server`
+
+- **Setup**:
+  - spawn `mocked-task-server` (port 18082) and `docker-executor` (port 18022)
+    with the local in-process OpenAI-compatible LLM stub wired in via
+    `OPENHANDS_LLM_BASE_URL=http://host.containers.internal:<fake-llm-port>/v1`
+  - the executor must satisfy the V1 conversation-start contract: it
+    POSTs `workspace` + `agent_profile_id` (or inline `agent.llm.model/api_key/usage_id`)
+    and a structured `initial_message` with `content` and `run` to
+    `/api/conversations`, then the V1 server returns `{id}` and the executor
+    dials the WS at `/sockets/events/{id}`.
+
+- **Action**:
+  - seed a task and `await waitForTaskEvent(handles, taskId, 'task.started', 60_000)`.
+  - then `await waitForTaskEvent(handles, taskId, 'openhands.conversation_started', 90_000, predicate)`
+    — this is the deterministic real-runtime signal that the
+    V1 server accepted the conversation. `predicate` requires
+    `payload.openhands_conversation_id` to be a string.
+  - then poll for an intermediate `openhands.event` frame and a terminal
+    `task.finished` (the LLM stub always returns a static assistant
+    message so the V1 server closes the conversation cleanly).
+
+- **Assert**:
+  - the conversation_started event was journaled (so the V1 wire shape
+    matches the documented contract)
+  - at least one openhands.event frame was journaled
+  - exactly one terminal event was journaled (`task.finished`)
+
+- **Purpose**: end-to-end confirmation that the V1 conversation-startup
+  contract (workspace + initial_message + agent or profile_id) lands a
+  real V1 agent-server and that the executor's stream loop consumes its
+  events.
+
+#### `executor forwards Router pending_actions interrupt_task to OpenHands and records the cancel chain`
+
+- **Setup**:
+  - same wiring as the V1 happy-path test, but with
+    `initialRun: false` (initial_message.run=false) so the V1 server
+    does not enter the agent loop — the test depends on the executor's
+    interrupt path alone.
+  - `openHandsInterruptTimeout: 5` so the cancel times out within the
+    test's 30s window without needing a live LLM response.
+
+- **Action**:
+  - seed a task and `await waitForTaskEvent(handles, taskId, 'task.started', 60_000)`.
+  - `await waitForTaskEvent(handles, taskId, 'openhands.conversation_started', 90_000, predicate)`
+    to confirm the V1 server accepted the conversation.
+  - then `await replaceTask(handles, taskId, { pending_actions: [interrupt_task, ...] })`
+    and wait for `task.cancel_requested`. Wait for exactly one
+    `task.failed`/`task.interrupted`/`task.finished` terminal.
+
+- **Assert**:
+  - `task.cancel_requested` was journaled (Router → Executor → OpenHands
+    interrupt path landed)
+  - exactly one terminal event was journaled (no double-firing; the
+    executor's interrupt_timeout path emits `task.failed phase=interrupt_timeout`)
+
+- **Purpose**: the documented Router → Executor → OpenHands interrupt chain
+  works end-to-end with the real V1 agent-server.
+
 ---
 
 ## Why this is "cross-service" and not "unit"
@@ -199,8 +272,11 @@ fidelity:
 - `container-execution.spec.ts` — does a real container actually run?
   Requires a daemon.
 
-If the OpenHands agent-server image is unavailable, only the second test
-is affected; the first 8 still validate the protocol end-to-end.
+If the OpenHands agent-server image is unavailable, only the second
+describe-block is affected; the first 8 still validate the protocol
+end-to-end. If the daemon is missing, the V1 tests are fatal: the
+executor publishes `executor.failed` and exits (this is by design — the
+mocked task server cannot supervise containers without a real daemon).
 
 ### Where the report is
 
@@ -212,8 +288,8 @@ After every `npm test` run, two outputs are written:
   see per-test timing, error traces, network logs, and stdout/stderr for
   each spawned subprocess.
 
-The HTML report is a single-file React SPA that requires no server. It
-includes the test results inline so it works from `file://` URLs and can
+The HTML report is a single-file React SPA that requires no server.
+It includes the test results inline so it works from `file://` URLs and can
 be archived as a build artifact.
 
 To view the latest report after a test run:

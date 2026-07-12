@@ -258,7 +258,7 @@ components:
           enum: [executor, docker, openhands]
         type:
           type: string
-          examples: [task.started, task.start_message, task.message_forwarded, task.message, task.cancel_requested, task.cancelled, task.interrupted, task.finished, task.failed, openhands.event, docker.container.die]
+          examples: [task.started, task.start_message, task.message_forwarded, task.message, task.cancel_requested, task.cancelled, task.interrupted, task.finished, task.failed, task.terminalized, openhands.conversation_started, openhands.event, docker.container.die]
         occurred_at:
           type: string
           format: date-time
