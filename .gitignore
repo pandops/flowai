@@ -14,10 +14,10 @@
 .opencode/
 
 # Local agent skill symlinks; canonical skills live outside this repo.
-.agents/skills/
+.agents/skills
 
 # Local OpenSpec CLI/runtime cache. Persist only openspec/ source artifacts.
-.tools/openspec/
+.tools/openspec
 openspec/.cache/
 openspec/tmp/
 openspec/temp/
