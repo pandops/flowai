@@ -1,16 +1,24 @@
+' diagram-type: sequence
 @startuml
-title v0006-web-ui - no-auth gateway routing
+title v0006-web-ui - configured bootstrap operator + team no-auth gateway routing
 
-start
-:Receive Web UI request;
-if (Target is State Registry?) then (yes)
-  :Proxy to State Registry;
-elseif (Target is Env Registry?) then (yes)
-  :Proxy to Env Registry;
-else (no)
-  :Reject forbidden target;
-endif
-:Return backend response unchanged;
-stop
+participant "Web UI / Browser" as UI
+participant "API Gateway" as Gateway
+participant "State Registry" as State
+
+UI -> Gateway : allowed platform REST request\n(possibly forged X-FlowAI-* headers)
+Gateway -> Gateway : remove Operator-ID, Team-ID,\nTeam-Name, Request-ID from client request
+alt configured bootstrap operator_id or team_id/team_name missing or ambiguous
+  Gateway --> UI : reject before proxying
+else valid configured bootstrap operator and team
+  Gateway -> Gateway : generate request_id
+  Gateway -> State : child request with configured Operator-ID\n(audit attribution only), configured Team-ID,\ndisplay-only Team-Name, Request-ID\n(no browser bearer credential)
+  State -> State : enforce ownership by stable team_id;\nattribute to operator_id + request_id
+  State --> Gateway : backend response
+  Gateway --> UI : status, headers, and body unchanged
+end
+alt target is any other service
+  Gateway --> UI : reject forbidden target
+end
 
 @enduml
