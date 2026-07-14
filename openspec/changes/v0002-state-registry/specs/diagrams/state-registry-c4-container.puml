@@ -1,0 +1,28 @@
+' diagram-type: c4-container
+@startuml
+!include <c4/C4_Container>
+
+title v0002 State Registry - Team-Scoped C4 Container Architecture
+
+Person(operator, "Operator", "Belongs to one authenticated team; uses only Web UI")
+System_Ext(listeners, "Event Listeners", "One service identity is bound to one immutable team_id")
+System_Ext(executors, "Executors", "Each process and identity owns one immutable team_id and one tag")
+System_Ext(openbao, "OpenBao Transit", "Encrypts and decrypts secret values; owns and rotates keys")
+
+System_Boundary(flowai, "FlowAI Platform") {
+  Container(webui, "Web UI", "Browser application", "Sole operator surface; displays team_name but never authorizes with it")
+  Container(gateway, "API Gateway", "HTTP / WebSocket", "Checks the operator's canonical team and forwards trusted operator_id, team_id, and request_id; the optional display-only team_name is forwarded only when the verified operator team carries one")
+  Container(state, "State Registry", "Go HTTP service", "Canonical immutable team_id ownership for tasks, Executors, events, controls, environments, secrets, versions, and audit. Listener dedupe is (team_id, source, source_task_id). Executors register one team and one tag; discover same-team exact-tag created tasks; receive atomic same-team approval; append strictly ordered lifecycle events with no accepted_sequence. Foreign point identifiers are non-revealing 404. Same-team Executor event writers who are not the recorded tasks.executor_id are rejected with 403 not_assigned; envelope team_id that does not match the authenticated Executor's immutable team is rejected with 403 team_mismatch. Collection filters and WebSocket isolation apply team_id before shaping. Capacity is observation only.")
+  ContainerDb(db, "State Registry PostgreSQL", "PostgreSQL", "Normalized 3NF tables: teams, executors, tasks, task_events, executor_events, environment_definitions, secrets, secret_versions, audit_entries, task_control_requests. teams owns immutable team_id and display-only team_name. Tenant parents and child constraints enforce same-team ownership. executor_events.executor_id is NOT NULL. task events order by (occurred_at, event_id).")
+}
+
+Rel(operator, webui, "Uses", "HTTPS")
+Rel(webui, gateway, "Reads state; writes controls, team environments, and team secrets", "HTTPS / WebSocket")
+Rel(gateway, state, "Trusted one-team operator context; team-filtered REST and WebSocket", "mTLS + REST / WebSocket")
+Rel(listeners, state, "Submit team_id with external tasks; persist before acknowledgement; dedupe within team", "mTLS + REST")
+Rel(executors, state, "Register one team + one tag; same-team discovery and approval; task/self events; assigned controls; team-bound environment open", "mTLS + REST")
+Rel(state, db, "Transactional 3NF persistence; team constraints before pagination/counts; projections from strictly ordered events", "TLS + SQL")
+Rel(state, openbao, "Encrypt only after same-team secret authorization; decrypt only after scope-token and canonical binding checks", "mTLS + Transit HTTP API")
+
+SHOW_LEGEND()
+@enduml
