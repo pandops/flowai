@@ -1,0 +1,66 @@
+' diagram-type: state-machine
+@startuml
+title v0002 State Registry - Team-Bound Executor Capacity State Machine
+
+state "Executor local: available" as ExAvail
+state "Executor local: full" as ExFull
+
+[*] --> ExAvail : Executor starts\nservice identity bound to one immutable team_id\nregisters same team_id + exactly one tag\nlocally observes max_capacity and running_count
+
+ExAvail --> ExFull : Executor local decision\nrunning_count >= max_capacity
+ExFull --> ExAvail : Executor local decision\nlocal runtime terminates\nrunning_count drops
+
+note right of ExAvail
+  Executor-owned local decision.
+  When available, the Executor may discover
+  only created tasks matching both its
+  authenticated immutable team_id and its
+  single registered tag, then request approval.
+  The Registry applies team + tag predicates
+  before pagination and never reads capacity.
+end note
+
+note right of ExFull
+  Executor-owned local decision.
+  When full, the Executor stops discovery and
+  approval requests. The Registry is not the
+  capacity scheduler and emits no capacity-based
+  rejection. Team ownership remains unchanged.
+end note
+
+note as TeamInvariant
+  One-team invariant:
+    Executor process and service identity belong
+    to exactly one immutable team_id.
+    Registration cannot omit or change team_id.
+    team_name is display-only and never authority.
+    Foreign task, Executor, control, environment,
+    or token identifiers are rejected locally or
+    receive the Registry's non-revealing 404.
+end note
+
+note as Observations
+  Informational observation flow:
+    Executor appends executor_events with
+    executor_id NOT NULL, envelope team_id
+    equal to the authenticated Executor team,
+    event_id, event_type, occurred_at,
+    payload, and inherited team ownership.
+    In the same transaction the latest
+    max_capacity and running_count are mirrored
+    onto the same-team executors row.
+    Observations never influence Registry
+    discovery, approval, assignment, or events.
+end note
+
+note as RegistryContract
+  Registry capacity responses for an otherwise
+  eligible same-team, same-tag task are unchanged:
+    200 approved
+    409 task_already_dispatched
+    non-revealing 404 for unknown/foreign id
+    authorization rejection for invalid identity/tag
+  No 422 executor_at_capacity response exists.
+end note
+
+@enduml
