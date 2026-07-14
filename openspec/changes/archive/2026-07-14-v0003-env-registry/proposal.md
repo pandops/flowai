@@ -1,5 +1,13 @@
 # Change: v0003-env-registry
 
+## Status
+
+Superseded without acceptance or implementation by `v0002-state-registry`.
+This archive preserves the rejected standalone Env Registry design for
+decision history; its delta specs were never synced into the implemented baseline. State
+Registry now owns team-scoped environment definitions, encrypted secret
+versions, open-environment authorization, and related audit behavior.
+
 ## Why
 
 FlowAI needs a dedicated executor environment store after historical state exists. Env Registry owns non-secret env vars and encrypted secrets independently from State Registry and scheduling.
