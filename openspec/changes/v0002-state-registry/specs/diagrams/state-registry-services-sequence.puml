@@ -1,0 +1,124 @@
+' diagram-type: sequence
+@startuml
+title v0002 State Registry - Abstract Team-Scoped Service Sequence
+
+actor Operator
+participant "Web UI" as UI
+participant "Trusted API Gateway" as Gateway
+participant "Event Listener\n(one team)" as Listener
+participant "Executor\n(one team + one tag)" as Executor
+participant "State Registry" as State
+database "PostgreSQL" as DB
+participant "OpenBao Transit" as OpenBao
+
+== Listener task ingestion ==
+Listener -> State : submit immutable team_id, source, source_task_id, required_tag, payload
+State -> State : verify listener identity is authorized for submitted team_id
+State -> DB : transactionally insert team-owned task + created event\ndedupe by (team_id, source, source_task_id)
+State --> Listener : 201 created or 200 same-team existing task
+
+== Executor registration and discovery ==
+Executor -> State : register immutable team_id + exactly one tag\n+ type, metadata, capacity observations
+State -> State : verify service binding matches team_id and one tag
+State -> DB : persist one-team Executor
+State --> Executor : 200 Executor record
+Executor -> State : discover created tasks by registered team + exact tag
+State -> DB : team predicate + tag predicate before page/count/cursor\n(read-only; no reservation; no capacity decision)
+State --> Executor : same-team summaries or 204/empty\n(no foreign metadata)
+
+== Atomic approval and ordered lifecycle ==
+Executor -> State : request approval for task_id
+State -> DB : atomic same-team + same-tag compare-and-set\nset immutable executor_id + approved_at\nappend dispatched(executor_id=NULL)
+alt eligible same-team created task
+  State --> Executor : 200 approved + environment_id + team-bound scope token
+else same-team stale candidate
+  State --> Executor : 409 task_already_dispatched
+else foreign or unknown point identifier
+  State --> Executor : non-revealing 404
+end
+Executor -> State : append running then finished|failed\n{executor_id, team_id=team-a, event_id,\nevent_type, occurred_at, payload}
+State -> State : verify envelope team_id equals authenticated Executor team\nassigned same-team check; retry by event_id\nreject invalid/out-of-order; no accepted_sequence
+State -> DB : append event + update projection in one transaction
+State --> Executor : 202 original acceptance or rejection without append
+
+== Informational Executor observations ==
+Executor -> State : append self event\n{executor_id NOT NULL, team_id=team-a, event_id,\nevent_type, occurred_at, payload}
+State -> State : verify envelope team_id equals authenticated Executor team
+State -> DB : append same-team executor_event + mirror latest observations
+State --> Executor : 202 accepted; observations never gate discovery/approval
+
+== Trusted operator context and isolated reads ==
+Operator -> UI : read state; manage controls, team environments, team secrets
+UI -> Gateway : authenticated operator request
+Gateway -> Gateway : check canonical operator team
+Gateway -> State : trusted operator_id, team_id, request_id\n(optional display-only team_name when verified team carries one)
+State -> State : authorize by team_id only
+State -> DB : filter team_id before pagination, counts, cursors, aggregates
+State --> Gateway : same-team state or non-revealing 404 for foreign point id
+Gateway --> UI : response
+
+== Team-isolated WebSocket ==
+Gateway -> State : WebSocket upgrade with one verified team_id
+State -> State : bind team at upgrade; filter before replay/cursor/fan-out/frame
+State --> Gateway : only bound-team frames; foreign filters emit no signal
+
+== Controls, environments, secrets, and open ==
+Gateway -> State : same-team control or environment/secret write
+State -> DB : enforce canonical team ownership + plaintext-free audit
+State -> OpenBao : encrypt only authorized same-team secret writes
+OpenBao --> State : ciphertext
+State -> DB : persist logical secret + immutable referenced version
+Executor -> State : open environment via
+State -> State : GET /v1/environments/{environment_id}/open?task_id={task_id}
+State -> State : (query equals
+State -> State : payload task_id and canonical task)
+State -> State : with compact three-part scope token
+State -> State : <header>.<payload>.<signature>
+State -> State : in X-FlowAI-Scope-Token header
+State -> State : (no scope-token fields in body)
+State -> State : carrying team_id, project_id (required
+State -> State : claim; null only when canonical env has
+State -> State : no project scope), task_id,
+State -> State : environment_id, executor_id, audience =
+State -> State : state-registry.environment.open,
+State -> State : issued_at <= server_now + 30s,
+State -> State : expiry > issued_at,
+State -> State : expiry - issued_at <= 5min, and
+State -> State : key_id under server-controlled rotating
+State -> State : key; protected header carries alg
+State -> State : (allow-listed HS256/HS384/HS512), kid,
+State -> State : and typ (scope-token+json),
+State -> State : with kid == payload key_id
+State -> State : kid-vs-key_id checked before any MAC
+State -> State : computation, then MAC recomputed under
+State -> State : declared allow-listed HMAC algorithm
+State -> State : and verified under constant-time
+State -> State : comparison, then canonical claims,
+State -> State : issued_at <= server_now + 30s window,
+State -> State : key_id window, audience, every claim,
+State -> State : authenticated Executor team, same-team
+State -> State : assignment, applicability, and
+State -> State : non-terminal task state, all before any
+State -> State : OpenBao call
+State -> State : every invalid or unavailable attempt
+State -> State : returns the same non-revealing
+State -> State : 404 environment_unknown_or_unavailable
+State -> State : with zero OpenBao calls and no token
+State -> State : plaintext, claim values beyond
+State -> State : identifier-level metadata, MAC bytes,
+State -> State : key material, or derived key bytes in
+State -> State : logs, audit entries, or error responses
+State -> OpenBao : decrypt authorized versions only after every check passes
+OpenBao --> State : plaintext in memory only
+State -> DB : append plaintext-free team audit
+State --> Executor : values only for assigned same-team
+State --> Executor : task when checks pass; 404 for any
+State --> Executor : invalid or unavailable variant
+State --> Executor : including another identity, terminal
+State --> Executor : task, or not-assigned caller
+State --> Executor : a same assigned identity retry within
+State --> Executor : TTL succeeds only when every check
+State --> Executor : still passes and never extends TTL or
+State --> Executor : revives an expired token
+
+@enduml

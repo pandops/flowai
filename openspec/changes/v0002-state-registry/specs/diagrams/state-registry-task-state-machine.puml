@@ -1,0 +1,89 @@
+' diagram-type: state-machine
+@startuml
+title v0002 State Registry - Team-Scoped Task Lifecycle State Machine
+
+state "created" as Created
+state "dispatched" as Dispatched
+state "running" as Running
+state "finished" as Finished
+state "failed" as Failed
+
+[*] --> Created : Registry\nlistener identity authorized for task.team_id\nINSERT team-owned task + created(executor_id=NULL)\nin one transaction
+
+Created --> Dispatched : Registry\natomic same-team + same-tag approval\nset immutable tasks.executor_id + approved_at\nINSERT dispatched(executor_id=NULL)
+
+Dispatched --> Running : Assigned same-team Executor\nINSERT running with non-null executor_id\nenvelope team_id = authenticated Executor team\nnew (occurred_at,event_id) > latest
+
+Running --> Finished : Assigned same-team Executor\nINSERT finished with strictly later tuple\nenvelope team_id = authenticated Executor team
+Running --> Failed : Assigned same-team Executor\nINSERT failed with strictly later tuple\nenvelope team_id = authenticated Executor team
+
+Finished --> [*]
+Failed --> [*]
+
+note right of Created
+  Task team invariant:
+    Every task has exactly one immutable team_id.
+    Listener identity must be authorized for it.
+    Dedupe key is
+    (team_id, source, source_task_id).
+    No discovery occurs before commit.
+end note
+
+note right of Dispatched
+  Approval invariant:
+    task.team_id = executor.team_id
+    required_tag = registered single tag
+    exactly one same-team winner
+    foreign task_id -> unknown-shape 404
+    later same-team winner -> 409
+    tasks.executor_id never changes.
+end note
+
+note right of Running
+  Executor-event invariant:
+    caller is authenticated assigned Executor
+    envelope team_id equals authenticated Executor team
+    envelope executor_id is NOT NULL
+    append and projection update share a transaction.
+end note
+
+note as Ownership
+  Event ownership:
+    Registry emits created and dispatched
+      with task_events.executor_id = NULL
+      and team_id inherited from the task row.
+    Assigned same-team Executor emits
+      running, finished, failed
+      with executor_id = tasks.executor_id
+      and envelope team_id equal to
+      the authenticated Executor team
+      (which State Registry verifies).
+    Every child row inherits and enforces
+      the task's immutable team ownership.
+end note
+
+note as Ordering
+  Idempotency and strict ordering:
+    Resolve identical (task_id,event_id) retry first.
+    Every fresh lifecycle event must have
+      (occurred_at,event_id) strictly greater
+      than the latest accepted tuple.
+    Read by occurred_at ASC, event_id ASC.
+    Equal timestamps require a greater event_id.
+    accepted_sequence and all recovery overrides
+      are rejected and never affect ordering.
+end note
+
+note as Rejections
+  Reject without append or projection change:
+    - running before dispatched
+    - finished or failed before running
+    - any fresh event after terminal state
+    - unassigned same-team Executor
+    - envelope team_id != authenticated Executor team
+    - foreign-team task or Executor (404 as unknown)
+    - non-increasing ordering tuple
+    - caller-supplied accepted_sequence.
+end note
+
+@enduml
