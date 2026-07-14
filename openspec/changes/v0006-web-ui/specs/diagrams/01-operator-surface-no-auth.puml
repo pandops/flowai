@@ -1,19 +1,29 @@
+' diagram-type: sequence
 @startuml
-title v0006-web-ui - operator surface without auth
+title v0006-web-ui - configured single-team bootstrap operator surface without auth
 
 actor "Operator" as Operator
-participant "Web UI" as UI
-participant "API Gateway\nno-auth mode" as GW
-participant "State Registry" as State
-participant "Env Registry" as Env
-participant "Router" as Router
+participant "Web UI\nno team selector\nno operator selector" as UI
+participant "API Gateway\nno-auth configured bootstrap operator + team" as GW
+participant "State Registry\nresource authority" as State
 
-Operator -> UI : uses dashboard
-UI -> GW : HTTP / WebSocket only
-GW -> State : state reads, events, controls
-GW -> Env : env/secret writes
-GW -x Router : forbidden
-UI -x State : forbidden direct call
-UI -x Env : forbidden direct call
+note over GW
+Configuration: one bootstrap operator_id\n+ one team_id + canonical team_name
+operator_id: audit attribution only (not auth proof)
+team_id scopes; team_name displays only
+end note
+Operator -> UI : use dashboard labeled with team_name
+UI -> GW : REST / WebSocket only\n(no internal identity headers,\nno Operator-ID, no Team-ID, no Team-Name, no Request-ID)
+GW -> GW : strip client identity context\nvalidate configured bootstrap operator + team\ngenerate request_id
+alt configured bootstrap operator or team invalid
+  GW --> UI : reject before proxying
+else valid configured bootstrap operator and team
+  GW -> State : child request with configured Operator-ID,\nconfigured Team-ID, display-only Team-Name, Request-ID
+  State -> State : authorize resource ownership by team_id;\nattribute to operator_id + request_id
+  State --> GW : response
+  GW --> UI : response unchanged
+end
+UI -x State : direct call forbidden
+UI -x State : no alternate team origin
 
 @enduml
