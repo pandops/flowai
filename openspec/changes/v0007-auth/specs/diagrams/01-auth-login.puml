@@ -1,11 +1,24 @@
+' diagram-type: sequence
 @startuml
-title v0007-auth - login and token issue
+title v0007-auth - canonical operator/team login and token issue
 
 participant "Web UI" as UI
 participant "API Gateway" as GW
+participant "Canonical Auth State" as Auth
 
 UI -> GW : login credentials
-GW -> GW : validate credentials
-GW --> UI : bearer token
+GW -> Auth : validate credentials and resolve\noperator + active team assignment
+Auth --> GW : canonical operator_id, one team_id,\noptional team_name
+alt missing or multiple active teams
+  GW --> UI : reject; no token
+else exactly one active team
+  GW -> GW : issue signed token with operator_id,\nimmutable team_id, optional display-only team_name,\naudience, expiry
+  GW --> UI : bearer token for API Gateway only
+end
+
+note over UI,GW
+Refresh preserves the immutable team_id.
+A changed/stale assignment requires a new login.
+end note
 
 @enduml

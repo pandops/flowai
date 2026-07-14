@@ -1,14 +1,24 @@
+' diagram-type: sequence
 @startuml
-title v0007-auth - authenticated WebSocket upgrade
+title v0007-auth - authenticated team-scoped WebSocket
 
-participant "Web UI" as UI
+participant "Web UI / Browser" as UI
 participant "API Gateway" as GW
+participant "Canonical Auth State" as Auth
 participant "State Registry" as State
 
-UI -> GW : WebSocket upgrade with bearer token
-GW -> GW : validate token
-GW -> State : subscribe to event stream
-State --> GW : events
-GW --> UI : events
+UI -> GW : WebSocket upgrade + bearer token\n(possibly forged X-FlowAI-* headers)
+GW -> GW : validate signature/issuer, audience, expiry,\noperator_id, exactly one team_id
+GW -> Auth : confirm active team assignment is current
+Auth --> GW : current / stale
+alt missing, ambiguous, invalid, expired, or stale context
+  GW --> UI : reject upgrade before subscription
+else valid canonical context
+  GW -> GW : strip browser identity headers + Authorization\ngenerate request_id
+  GW -> State : subscribe with canonical Operator-ID, Team-ID,\noptional display-only Team-Name, Request-ID\n(no browser bearer credential)
+  State -> State : authorize/filter events by stable team_id
+  State --> GW : token-team event stream
+  GW --> UI : event frames unchanged
+end
 
 @enduml
