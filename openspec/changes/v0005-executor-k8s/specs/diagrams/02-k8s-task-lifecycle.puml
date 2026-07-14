@@ -1,15 +1,96 @@
+' diagram-type: sequence
 @startuml
-title v0005-executor-k8s - Kubernetes task lifecycle
+title v0005-executor-k8s - Kubernetes task lifecycle (team-bound, with restart reconciliation)
 
-start
-:Register with Router as k8s;
-:Pull task when running_child_count < capacity;
-:Create Kubernetes Pod;
-:Watch Pod phase and logs;
-:Observe terminal Pod status;
-:Update running_child_count;
-:Post terminal status to Router;
-:Delete or clean up Pod;
-stop
+participant "Authenticated\nExecutor identity" as Identity
+participant "K8s Executor" as Executor
+participant "State Registry" as State
+participant "Kubernetes API" as K8s
+participant "Agent Pod" as Pod
+
+== Registration (team-bound) ==
+Executor -> Identity : present service credential\n(bound team_id = T-A)
+Executor -> State : PUT /v1/executors/{executor_id}\n{executor_type=k8s,\nexactly one team_id = T-A,\nexactly one authorized_tag,\noptional display-only team_name,\nobserved max_capacity, observed running_count,\nruntime metadata}
+State -> State : verify team_id matches identity-bound team\nreject zero/extra team_id\nreject team_id change
+State --> Executor : 200 Executor record\n(holds team_id = T-A,\n authorized_tag, observed capacity)
+
+== Local capacity decision (Executor side only) ==
+Executor -> Executor : locally observe running_count vs max_capacity\ndecide locally whether to discover and request approval
+
+== Discovery (same-team exact tag, collection level) ==
+Executor -> State : GET /v1/executors/{executor_id}/tasks\n?tag={exact_registered_tag}\n(implicit team_id = T-A from identity)
+State -> State : SELECT created tasks\nWHERE required_tag = registered_tag\n  AND team_id = T-A\n(team filter applied BEFORE result shaping)
+alt matching same-team created task exists
+  State --> Executor : 200 created task summaries
+else no same-team created task matches
+  State --> Executor : 204 No Content\n(or 200 with empty task list,\nno count/cursor/total/pagination metadata;\nindistinguishable from "no tasks match this tag anywhere")
+end
+
+== Approval (same-team exact tag, atomic) ==
+Executor -> State : POST /v1/executors/{executor_id}/approvals\n{task_id}
+alt approved
+  State -> State : verify task team_id = T-A\nverify required_tag = registered_tag\natomic created -> dispatched\nUPDATE task SET status=dispatched, executor_id=<id>,\napproved_at=now()\n+ INSERT dispatched event (executor_id=NULL)
+  State --> Executor : 200 approved + task +\n  environment reference /\n  allow-listed HMAC scope token\n  (HS256/HS384/HS512)\n(header: alg, kid, typ=scope-token+json;\n payload: team_id, project_id\n  [required non-null when env has\n  project scope, nullable only when\n  no project scope], task_id,\n  environment_id, executor_id,\n  audience=state-registry.environment.open,\n  key_id, issued_at, expiry)
+
+  == Running event before Pod creation ==
+  Executor -> State : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id = T-A,\nevent_id, event_type=running,\nocurred_at, payload}
+  State --> Executor : 202 accepted
+
+  == Pod creation and runtime ==
+  Executor -> K8s : create task Pod from agent image
+  K8s -> Pod : schedule and start agent runtime
+  Executor -> K8s : watch Pod phase and logs
+
+  == Terminal events ==
+  alt Pod terminated successfully
+    Executor -> State : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id = T-A,\nevent_id, event_type=finished,\noccurred_at, payload}
+    State --> Executor : 202 accepted
+  else Pod failed
+    Executor -> State : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id = T-A,\nevent_id, event_type=failed,\noccurred_at, payload}
+    State --> Executor : 202 accepted
+  end
+
+  Executor -> K8s : delete or clean up terminal Pod
+else identity invalid or team_id mismatches
+  State --> Executor : 404 not_found\n(no Pod, no event)
+else task already dispatched
+  State --> Executor : 409 task_already_dispatched
+else task does not exist
+  State --> Executor : 404 task_unknown
+end
+
+== Assigned task environment open (inherited v0002 token contract) ==
+Executor -> State : GET /v1/environments/{environment_id}/open\n?task_id={task_id}\nX-FlowAI-Scope-Token: <header>.<payload>.<signature>\n(header: alg=HS256|HS384|HS512, kid, typ=scope-token+json;\npayload: team_id, project_id, task_id, environment_id,\nexecutor_id, audience=state-registry.environment.open,\nkey_id, issued_at, expiry;\nexpiry > issued_at; expiry - issued_at <= 5 minutes;\nissued_at <= server_now + 30 seconds;\nproject_id present and non-null when canonical env\nhas project scope, may be null only when no project scope;\nno token fields in body or other headers)
+State -> State : verify kid == key_id BEFORE any MAC\nreject alg outside allow-listed HS256/HS384/HS512\nconstant-time MAC compare under declared algorithm\nverify key_id in documented active window\n(retired key_id rejected)\nverify expiry > issued_at\nverify expiry - issued_at <= 5 minutes\nverify issued_at <= server_now + 30 seconds\nverify audience = state-registry.environment.open\nverify canonical claim shape\n(project_id present, non-null when project-scoped)\nverify every claim against canonical records\nverify authenticated Executor mTLS identity\nmatches assigned same-team Executor\nverify task is in non-terminal state\nverify project/task applicability
+alt every check passes (BEFORE any OpenBao call or plaintext)
+  State --> Executor : 200 env-style values (in-memory only)\n+ plaintext-free team-scoped audit entry\n(executor_id, environment_id, task_id,\naudience, key_id, access time)
+else any invalid / tampered / missing-claim /\n  kid != key_id / alg-outside-set / retired-key /\n  expiry <= issued_at / TTL > 5 min /\n  premature-beyond-30s / audience-mismatch /\n  null project_id for project-scoped env /\n  missing project_id / foreign-team /\n  unassigned / terminal-state /\n  applicability-violating
+  State --> Executor : 404 environment_unknown_or_unavailable\n(no values, no OpenBao operation,\nno audit, no plaintext,\nidentical shape for every invalid variant)
+end
+
+== Pending control reads (assigned task in bound team) ==
+Executor -> State : GET /v1/tasks/{task_id}/controls
+alt task assigned to executor AND team_id = T-A
+  State --> Executor : 200 pending control
+  Executor -> Pod : apply control
+else task in different team or different executor
+  State --> Executor : 404 not_found
+end
+
+== Informational observation reports ==
+Executor -> State : POST /v1/executors/{executor_id}/events\n{executor_id, team_id = T-A,\nevent_id,\nobserved max_capacity, observed running_count,\nocurred_at, payload}
+State -> State : append executor_events\n+ mirror latest max_capacity and running_count\nonto executors row in same transaction
+State --> Executor : 202 accepted (informational only, never gates discovery or approval)
+
+== Restart reconciliation (no reassignment) ==
+Executor -> Executor : process restart
+Executor -> State : PUT /v1/executors/{executor_id}\n(same bound team_id = T-A,\nsame authorized_tag,\nobserved max_capacity, observed running_count)
+State -> State : verify team_id unchanged\nreject if team_id diverges
+State --> Executor : 200 Executor record (unchanged)
+Executor -> State : re-read assigned tasks\n(filter by team_id = T-A AND executor_id = self)
+State --> Executor : 200 assigned tasks (running, finished|failed pending)
+Executor -> K8s : observe existing Pods by task_id
+Executor -> Executor : no Pod created for already-running tasks\nno additional running event appended
+Executor -> State : POST /v1/tasks/{task_id}/events\n{terminal event for tasks whose Pod terminated\nduring/after restart,\nteam_id = T-A}
 
 @enduml
