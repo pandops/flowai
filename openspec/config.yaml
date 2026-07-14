@@ -8,10 +8,10 @@ context: |
 
   Service topology rules are hard constraints:
   - The Web UI talks only to the API Gateway.
-  - The API Gateway talks only to the State Registry and the Env Registry.
-  - The Router, State Registry, and Env Registry do not call each other.
-  - Executors talk to the Router, State Registry, and Env Registry only.
-  - Automation submits tasks to the Router directly.
+  - The API Gateway talks only to the State Registry.
+  - No Router, broker, or Env Registry service is planned.
+  - Executors talk only to the State Registry for claims, events, controls, and scoped environment opens.
+  - Automation and event listeners persist tasks in the State Registry before acknowledging ingestion.
 
 rules:
   specs:

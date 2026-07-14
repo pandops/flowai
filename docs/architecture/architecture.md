@@ -10,8 +10,6 @@ Planned architecture lives in active numbered OpenSpec changes:
 
 - `openspec/changes/v0001-executor-docker/`
 - `openspec/changes/v0002-state-registry/`
-- `openspec/changes/v0003-env-registry/`
-- `openspec/changes/v0004-router/`
 - `openspec/changes/v0005-executor-k8s/`
 - `openspec/changes/v0006-web-ui/`
 - `openspec/changes/v0007-auth/`
