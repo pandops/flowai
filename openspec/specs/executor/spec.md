@@ -29,12 +29,12 @@ Every owned container SHALL be labeled with `flowai.executor_id=<executor_id>`, 
 
 ### Requirement: Docker Executor registers with the State Registry
 
-The Docker Executor SHALL generate a unique `executor_id` UID at process startup and SHALL use that UID as its unique identifier for the lifetime of the process. The Docker Executor SHALL register the active Executor process instance with the mocked State Registry via `PUT /v1/executors/{executor_id}` using `executor_type: "docker-openhands"`, the configured `routing_target`, configured capacity, current `running_child_count`, and container metadata. The State Registry SHALL be the owner of active Executor records and historical information about every Executor that has existed.
+The Docker Executor SHALL generate a unique `executor_id` UID at process startup and SHALL use that UID as its unique identifier for the lifetime of the process. The Docker Executor SHALL register the active Executor process instance with the mocked State Registry via `PUT /v1/executors/{executor_id}` using `executor_type: "executor_docker_opehands"`, the configured `routing_target`, configured capacity, current `running_child_count`, and container metadata. The concrete `executor_type` follows the platform `executor_<runtime>_<tool>` naming convention documented in AGENTS.md: `docker` is the runtime, `openhands` is the agent tool, and `opehands` is the deliberate service identifier (the external product spelling `OpenHands` stays unchanged). The State Registry SHALL be the owner of active Executor records and historical information about every Executor that has existed.
 
 #### Scenario: Executor registers on startup
 
 - **WHEN** the Executor starts and is ready to poll Router tasks
-- **THEN** the Executor generates a unique `executor_id` UID, registers the active process instance with the mocked State Registry via `PUT /v1/executors/{executor_id}`, and posts `{executor_id, executor_type: "docker-openhands", routing_target, capacity: EXECUTOR_MAX_CONTAINERS, running_child_count: 0, metadata}`
+- **THEN** the Executor generates a unique `executor_id` UID, registers the active process instance with the mocked State Registry via `PUT /v1/executors/{executor_id}`, and posts `{executor_id, executor_type: "executor_docker_opehands", routing_target, capacity: EXECUTOR_MAX_CONTAINERS, running_child_count: 0, metadata}`
 
 #### Scenario: Executor records lifecycle events
 

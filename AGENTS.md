@@ -8,6 +8,10 @@
 > **Service catalog index.** Per-service planned target descriptions (purpose,
 > responsibilities, will-not-do) live in OpenSpec change artifacts under
 > `openspec/changes/*/specs/` until accepted into real state. This file is the
+> cross-cutting view: connection matrix, state ownership, cross-cutting rules,
+> and the diagram map.
+>
+> Last synced with architecture topology on this branch: yes (see git log).
 
 ## Repository layout convention: one directory per service, no shared code
 
@@ -33,9 +37,9 @@ mocked-task-server/               # v0001 Mocked Task Server (a separate service
 │   └── store/                    # ephemeral in-memory mocked service state
 └── test/                         # integration tests for this service
 
-executor-docker/                  # v0001 Docker Executor
-├── cmd/docker-executor/
-├── configs/docker-executor.yaml
+executor_docker_opehands/         # v0001 concrete Executor service
+├── cmd/executor_docker_opehands/
+├── configs/executor_docker_opehands.yaml
 ├── internal/
 │   ├── config/                   # YAML loader (this service only)
 │   ├── httpapi/                  # chi scaffolding (this service only)
@@ -54,7 +58,12 @@ executor-docker/                  # v0001 Docker Executor
 └── test/                         # integration tests for this service
 
 autotest/                         # Cross-service Playwright e2e tests (root only)
-└── (placeholder for v0006+; v0001 has no UI yet)
+├── executor_docker_opehands/     # Playwright e2e for the concrete Executor
+│   ├── tests/
+│   ├── package.json              # name = "executor_docker_opehands"
+│   └── playwright.config.js
+├── agent-openhands-image/        # OpenHands V1 agent-server image used by the e2e
+└── test-cases/                   # implementation-active E2E test definitions
 
 docs/adr/                         # Architectural Decision Records
 ```
@@ -74,7 +83,7 @@ Rules:
    coupling.
 3. **Test fakes follow the package they fake.** A test fake for an
    executor-only interface (e.g. `dockerclient.Client`) goes under
-   `executor-docker/internal/mocks/`. Test fakes for a shared component (e.g.
+   `executor_docker_opehands/internal/mocks/`. Test fakes for a shared component (e.g.
    the mocked task server, which is itself a service) live with that service.
 4. **Per-service `test/` directory.** Unit and integration tests for a
    single service live under `<service>/test/`. These tests use only the
@@ -88,17 +97,70 @@ Rules:
    (`github.com/flowai/platform`); service directories are organization only.
 7. **Future services follow the same pattern.** When
    v0005-executor-k8s and later services land, they each get their own
-   top-level directory (for example, `executor-k8s/`). Each is fully
+   top-level directory named following the concrete Executor naming convention
+   (see *Concrete Executor service naming* below) — for example,
+   `executor_k8s_<tool>/` once the K8s tool is chosen. Each is fully
    self-contained. No Router service is planned; durable task intake,
-   deduplication, tag-based discovery, start approvals, and assignments belong to State Registry.
+   deduplication, FIFO discovery, atomic claims, and assignments belong to State Registry.
 8. **The v0001 mocked task server is stateless.** Its legacy task, state, and
    environment surfaces keep ephemeral in-memory data only. Durable
    PostgreSQL persistence belongs to the real State Registry introduced by
    `v0002-state-registry`, not to `mocked-task-server/`.
-> cross-cutting view: connection matrix, state ownership, cross-cutting rules,
-> and the diagram map.
->
-> Last synced with architecture topology on this branch: yes (see git log).
+
+## Concrete Executor service naming
+
+The platform hosts one or more **concrete Executor services**. Each concrete
+Executor implements the generic Executor contract from `openspec/specs/executor/`
+against a specific runtime and a specific agent tool. To keep the wire surface,
+filesystem layout, and registration body stable, every concrete Executor
+directory and wire identifier follows one pattern:
+
+```
+executor_<runtime>_<tool>
+```
+
+- **`<runtime>`** — the container runtime the Executor supervises
+  (`docker`, `k8s`, …). Runtime is a low-level lifecycle owner (containers or
+  Pods); it is never the agent tool.
+- **`<tool>`** — the agent runtime / agent SDK the Executor wraps inside the
+  container or Pod. Today `openhands`; future concrete Executors will use the
+  tool selected when the K8s change lands.
+
+Both `<runtime>` and `<tool>` are lowercase, alphanumeric, and joined with `_`
+to one token. The runtime tool stays lowercase too — uppercase is reserved for
+the external product spelling (e.g. `OpenHands`) and never appears in the wire
+value, the directory name, the binary name, the log/probe service name, or
+the `executor_type` field on `PUT /v1/executors/{executor_id}`.
+
+Concrete Executor rule summary:
+
+- The directory, the `cmd/` subdirectory, the config YAML, the binary name,
+  the Go import path, the wire `executor_type` value, the slog `service`
+  field, the chi `RegisterProbes` service label, and the `flowai.runtime`
+  label's tool portion all derive from `executor_<runtime>_<tool>`.
+- The platform OpenSpec change IDs (`v0001-executor-docker`,
+  `v0005-executor-k8s`, …) and the implementation-active test IDs are
+  **not** renamed by this rule — they keep their pre-convention ordinals.
+- The `executor_type` Go constant name (e.g. `ExecutorTypeDockerOpenHands`)
+  preserves the runtime/tool axis for clarity at call sites; its wire value
+  is the concrete name (`executor_docker_opehands`). Pinning both is covered
+  by a regression test in every concrete Executor's `internal/platform`
+  package.
+- Generic State Registry terms (`/v1/executors`, `executor_id`,
+  `executor_type` field name, `Executor` records/interfaces, the
+  `internal/executor` package) are NOT renamed. The generic Executor noun is
+  the contract; `executor_<runtime>_<tool>` is one concrete binding of it.
+
+Current concrete services:
+
+- `executor_docker_opehands` — runtime = `docker`, tool = `openhands`.
+  `opehands` is the deliberate service identifier (it matches the
+  `executor_<runtime>_<tool>` pattern and the directory layout); the external
+  product spelling `OpenHands` stays unchanged everywhere it appears as a
+  product name (`internal/openhands`, `flowai.runtime=openhands`, OpenHands
+  API/image/env vars, ADRs).
+- Future K8s concrete service — `executor_k8s_<tool>` where `<tool>` is the
+  agent tool selected when `v0005-executor-k8s` lands.
 
 ## OpenSpec management rules
 
@@ -115,8 +177,8 @@ Rules:
 - Do not treat a spec requirement as implemented merely because it is in the
   baseline; implementation status requires code and verification artifacts.
 - Validate OpenSpec before implementation and before completion:
-  `npx -y @fission-ai/openspec@1.5.0 validate <change-id>` for changes and
-  `npx -y @fission-ai/openspec@1.5.0 validate --all` for the full baseline.
+  `npx -y @fission-ai/openspec@1.5.0 validate <change-id> --strict` for changes and
+  `npx -y @fission-ai/openspec@1.5.0 validate --all --strict` for the full baseline.
 - Planned diagrams move with the change they describe. Sync diagrams to
   `docs/architecture/diagrams/` only after the change is implemented and
   accepted as current state.
@@ -125,8 +187,8 @@ Rules:
 
 Each planned target service has an OpenSpec file inside an active change. Click through for the full purpose / responsibilities / will-not-do.
 
-- [**Docker Executor**](openspec/changes/v0001-executor-docker/specs/executor/spec.md) — first local worker type; controls only Docker container lifecycle for agent runtimes.
-- [**State Registry**](openspec/changes/v0002-state-registry/specs/state-registry/spec.md) — main source of truth; immutable team ownership, durable listener task intake, team-scoped deduplication, same-team exact-tag discovery, atomic start approvals, assignments, strictly ordered events, team-owned environment definitions, logical secrets with encrypted immutable versions, controls, and audit.
+- [**executor_docker_opehands**](openspec/changes/archive/2026-07-12-v0001-executor-docker/specs/executor/spec.md) — current concrete local worker; controls Docker container lifecycle for the OpenHands agent runtime. The archived change ID remains `v0001-executor-docker`.
+- [**State Registry**](openspec/changes/v0002-state-registry/specs/state-registry/spec.md) — main source of truth; immutable team ownership (team resource create-only — no `PUT`/`PATCH`/`DELETE` team endpoint), durable listener task intake with REQUIRED `task_type_id` (server-derived `required_tag` from `task_types.execution_tag`) and `(team_id, source_system_id, source_id)` dedupe, FIFO discovery and atomic FIFO claim with immutable `command_id`, strictly ordered events beginning with a first `created` event on successful claim (`pending (no event) -> created -> running -> finished | failed`), team-owned environment definitions, logical secrets with encrypted immutable versions, four-level image precedence (`tasks.image` -> `task_types.default_image` -> `source_systems.default_image` -> required `teams.default_image`), admin-only team / source-system / task-type registration, system-admin-only read-only `GET /admin/tags` and `GET /admin/tasks` projections, controls, and audit. Cryptography: `v0002-state-registry` ships the local AES-256-GCM provider; **`v0008-use-openbao-transit` (active)** replaces the local provider with OpenBao Transit behind the same opaque `key_id` / `key_version` envelope and ships the resumable per-row migration that converts v0002 local ciphertext to Transit ciphertext.
 - [**K8s Executor**](openspec/changes/v0005-executor-k8s/specs/executor/spec.md) — cluster worker type; controls only Kubernetes Pod lifecycle for agent runtimes.
 - [**Web UI**](openspec/changes/v0006-web-ui/specs/web-ui/spec.md) — thin frontend, sole surface for human operators, initially without auth.
 - [**API Gateway**](openspec/changes/v0006-web-ui/specs/api-gateway/spec.md) — Web UI's sole backend, initially no-auth; auth is added by [**Auth**](openspec/changes/v0007-auth/specs/auth/spec.md).
@@ -138,54 +200,61 @@ Web UI, and Auth changes land. `v0001-executor-docker` uses a mocked task server
 for its original bootstrap contract; v0002 replaces that task path with the
 durable State Registry contract.
 
-| Caller ↓ / Callee → | Web UI | API Gateway | State Registry | Executor | Automation/listeners |
-|---|---|---|---|---|---|
-| **Web UI** | — | HTTPS, WS; sole operator backend | ❌ no | ❌ no | n/a |
-| **API Gateway** | via WS proxy | — | REST and WS with Gateway-verified `operator_id`, immutable `team_id`, and `request_id`; optional display-only `team_name` when the verified operator team carries one | ❌ no | n/a |
-| **State Registry** | n/a | REST/WS responses to trusted proxied requests | — | REST responses for one-team registration, same-team discovery/approval/events/controls/open | REST responses for team-bound task ingestion |
-| **Executor** | n/a | ❌ no | REST: register one immutable team + one tag; discover same-team exact-tag tasks; request approval; append task/self events; read assigned controls; open team-bound environments | — | n/a |
-| **Automation/listeners** | n/a | ❌ no (auth only) | REST: persist externally sourced tasks with authorized immutable `team_id` before acknowledgement | n/a | — |
+| Caller ↓ / Callee → | Web UI | API Gateway | State Registry | Executor | Automation/listeners | System Administrator |
+|---|---|---|---|---|---|---|
+| **Web UI** | — | HTTPS, WS; sole operator backend | ❌ no | ❌ no | n/a | n/a |
+| **API Gateway** | via WS proxy | — | REST and WS with Gateway-verified `operator_id`, immutable `team_id`, and `request_id`; optional display-only `team_name` when the verified operator team carries one | ❌ no | n/a | n/a |
+| **State Registry** | n/a | REST/WS responses to trusted proxied requests | — | REST responses for one-team or system-scope registration, FIFO discovery / atomic FIFO claim / ordered task events / self events / controls / open | REST responses for one-team, one-source-system, team-bound task ingestion (REQUIRED `task_type_id`; `required_tag` is derived server-side from the task type's `execution_tag`) | REST responses for `/admin/teams`, `/admin/source-systems`, `/admin/task-types` (create-only; no team update/delete API) and read-only `/admin/tags` and `/admin/tasks` projections, all under an authenticated system-administrator identity only |
+| **Executor** | n/a | ❌ no | REST: register one tag and either `scope=team` (one immutable `team_id` referencing an existing team) or `scope=system` (no team; cross-team dispatch); discover oldest eligible pending tasks in FIFO `(ingested_at ASC, task_id ASC)` order per scope; claim oldest eligible pending task with `command_id`; append task/self events; read assigned controls; open team-bound environments; use `resolved_image` verbatim | — | n/a | n/a |
+| **Automation/listeners** | n/a | ❌ no (auth only) | REST: persist externally sourced tasks with authorized immutable `team_id` and `source_system_id` before acknowledgement | n/a | — | n/a |
+| **System Administrator** | n/a | n/a | REST: create teams (`POST /admin/teams`), source systems (`POST /admin/source-systems`), and task types (`POST /admin/task-types`) — team resource is create-only, no team update/delete API; read-only `GET /admin/tags` (global task-type-derived tag projection) and `GET /admin/tasks` (global task-summary projection); required authenticated system-administrator identity; never reachable through listener, Executor, or operator paths | n/a | n/a | — |
 
 **Hard final topology and tenancy rules (encoded in active OpenSpec change files):**
 
 - The **Web UI** talks ONLY to the **API Gateway**.
 - The **API Gateway** talks ONLY to the **State Registry**. It checks the operator's canonical one-team membership and forwards trusted `operator_id`, immutable `team_id`, and `request_id`; the optional display-only `team_name` is forwarded only when the verified operator team carries one. State Registry authorizes with `team_id` only, never with `team_name`.
+- **Only an authenticated system administrator** may call `POST /admin/teams`, `POST /admin/source-systems`, and `POST /admin/task-types`, or read `GET /admin/tags` and `GET /admin/tasks`. The team resource is create-only: no `PUT`, `PATCH`, or `DELETE` team endpoint exists; no listener, Executor, or Gateway path may create or update a team, source system, or task type; the admin reads perform no mutation and reject every non-admin identity before reading any row.
 - No **Router** or separate task broker is planned.
 - No **Env Registry** or separate environment/secret service is planned.
-- **Executors** talk only to State Registry. Each Executor service identity and process belongs to exactly one immutable team and registers exactly one tag. Discovery is same-team plus exact-tag; approval, task/self events, assigned control reads, and open-environment access are same-team operations. Executors do not talk to API Gateway or Web UI.
-- **Automation and event listeners** authenticate as one authorized team and persist tasks in State Registry before acknowledging ingestion. Dedupe uses `(team_id, source, source_task_id)`. Listeners do not talk to Web UI or Executors.
+- **Executors** talk only to State Registry. An Executor registers one tag and one ownership `scope` from `{team, system}`. A team-owned Executor is bound to exactly one immutable `team_id` that references an existing team; a system-owned Executor has no team binding and may claim tasks across teams with the registered tag. Same-team discovery/claim applies both predicates (`tasks.team_id = executors.team_id AND tasks.required_tag = executors.authorized_tag`) before pagination, counts, and cursors; system-owned discovery/claim matches `tasks.required_tag = executors.authorized_tag` across every team. Discovery ordering is FIFO `(ingested_at ASC, task_id ASC)` with eligibility predicates applied first; ordering second; pagination and counts last. Claim succeeds only when the requested task is the oldest currently eligible `pending` task for the authenticated Executor inside the claim transaction. `tasks.team_id` is immutable for the row's lifetime regardless of Executor scope; `tasks.owner_command_id` is set once at successful claim and immutable thereafter. Executors do not talk to API Gateway or Web UI.
+- **Automation and event listeners** authenticate as one authorized team bound to one registered source system and persist tasks with immutable `team_id` and `source_system_id` before acknowledging ingestion. Dedupe uses `(team_id, source_system_id, source_id)`. A source-system identity belongs to exactly one team; independence across teams is established by each team registering its own source system, never by one source-system identity spanning teams. Listeners do not talk to Web UI or Executors.
 
 ## Planned final state ownership matrix
 
 | Concern | Owner | Notes |
 |---|---|---|
-| Team identity and display metadata | **State Registry** | `teams.team_id` is immutable canonical ownership; `team_name` is display-only and never authorizes |
-| Incoming task records | **State Registry** | Each task belongs to exactly one immutable team; listeners are team-bound; persistence and `created` append precede acknowledgement; dedupe key is `(team_id, source, source_task_id)` |
-| Created (discoverable) task list | **State Registry** | Only same-team `created` tasks with exact equality to the Executor's one registered tag; team/tag predicates precede pagination and counts; foreign-only matches yield `204` or empty without metadata |
-| Dispatched and processing task state | **State Registry** | Same-team approval and canonical lifecycle (`created` -> `dispatched` -> `running` -> `finished` \| `failed`) |
-| Executor registry | **State Registry** | Each Executor has one immutable `team_id`, one tag, `executor_type`, identity, and lifecycle; foreign point identifiers are non-revealing `404` |
-| Executor `max_capacity` and `running_count` observations | **State Registry** | Stored as informational observations; the Registry SHALL NOT gate discovery or approval and SHALL NEVER emit capacity-based rejection |
-| Local capacity enforcement | **Each Executor** | The Executor alone decides when to discover, request approval, and start a runtime/Pod based on local observation |
-| Task assignment (which Executor runs which task) | **State Registry** | Atomic same-team, same-tag approval; exactly one winner; `tasks.executor_id` is set on dispatch and immutable thereafter; foreign task IDs are non-revealing `404` |
+| Team identity and display metadata | **State Registry** | `teams.team_id` is immutable canonical ownership; `team_name` is display-only and never authorizes; `teams.default_image` is REQUIRED at `POST /admin/teams` and immutable through any operator or admin path |
+| Source-system identity | **State Registry** | One source-system identity belongs to exactly one immutable team; cross-team reattachment is rejected |
+| Task-type identity | **State Registry** | One task-type identity belongs to exactly one immutable team and declares one required execution tag |
+| Admin team, source-system, and task-type onboarding | **State Registry** under authenticated system-administrator identity | Only `/admin/*` creates or updates `teams`, `source_systems`, and `task_types`. No other path touches these rows |
+| Incoming task records | **State Registry** | Each task belongs to exactly one immutable team; listeners are team-bound; persistence and `ingested_at` (set once, immutable) precede acknowledgement; dedupe key is `(team_id, source_system_id, source_id)`; no lifecycle event is appended at ingestion — the durable unclaimed row projects as `pending` |
+| Pending (discoverable) task list | **State Registry** | Only eligible `pending` tasks with exact equality to the Executor's one registered tag, ordered `(ingested_at ASC, task_id ASC)`, eligibility predicate applied first; team-owned callers require same team; system-owned callers match the tag across every team; foreign-only matches yield `204` or empty without metadata |
+| Claimed and processing task state | **State Registry** | Atomic FIFO claim sets immutable `owner_command_id` and `executor_id`, persists `resolved_image` + `image_source`, and appends the FIRST lifecycle event `created` (with `executor_id = claiming_executor` and payload `task <task_id> loaded by <executor_id>`); project to `created`, `running`, `finished` | `failed`; the `dispatched` state is removed and never appended as an event |
+| Executor registry | **State Registry** | Each Executor has one immutable `team_id` (NULL when `scope = system`), one `scope` field (immutable), one tag, `executor_type`, identity, and lifecycle; foreign point identifiers are non-revealing `404` |
+| Executor `max_capacity` and `running_count` observations | **State Registry** | Stored as informational observations; the Registry SHALL NOT gate discovery or claim and SHALL NEVER emit capacity-based rejection |
+| Local capacity enforcement | **Each Executor** | The Executor alone decides when to discover and claim based on local observation |
+| Task assignment (which Executor runs which task) | **State Registry** | Atomic same-Executor-or-system-oldest-eligible FIFO compare-and-set claim; exactly one winner; `tasks.owner_command_id` and `tasks.executor_id` are set on claim and immutable thereafter; `tasks.team_id` remains immutable for the row's lifetime; foreign task IDs are non-revealing `404` |
 | Task records (canonical history) | **State Registry** | Immutable `team_id`, status, timestamps, parameters, assignment, and immutable event log |
-| Event log (per-task events) | **State Registry** | Team-owned, historical, and replayable; accepted events are strictly ordered by `(occurred_at, event_id)` with no `accepted_sequence` override |
-| Executor-emitted task events (`running`, `finished`, `failed`) | **Assigned Executor** | Accepted only from assigned same-team Executor; non-null `executor_id`; retries dedupe by `(task_id, event_id)` |
-| Executor self events | **State Registry** | Team-owned `executor_events` rows have `executor_id NOT NULL`; latest capacity observations mirror onto the same-team Executor row transactionally |
+| Event log (per-task events) | **State Registry** | Team-owned, historical, and replayable; accepted events are strictly ordered by `(occurred_at, event_id)` with no `accepted_sequence` override; the first event on any claimed task is `created` with non-null `executor_id`; `pending` rows have no event |
+| Executor-emitted task events (`running`, `finished`, `failed`) | **Assigned Executor** | Accepted only from assigned same-team or system Executor; non-null `executor_id`; envelope team verification is scope-conditional; retries dedupe by `(task_id, event_id)` |
+| Executor self events | **State Registry** | `executor_events.executor_id NOT NULL`; latest capacity observations mirror onto the Executor row transactionally |
+| Image precedence at claim | **State Registry** | Four-level precedence: `tasks.image` -> `task_types.default_image` -> `source_systems.default_image` -> `teams.default_image` (REQUIRED, so resolution always succeeds); the Executor uses `resolved_image` verbatim and never falls back to a local image; image strings are not team-owned resources and image equality across teams grants no authority |
 | Team-filtered reads and WebSocket subscriptions | **State Registry** | Trusted `team_id` predicate applies before pagination, cursors, totals, counts, aggregates, replay, fan-out, and frame serialization |
-| Audit trail | **State Registry** | Immutable, plaintext-free, and team-scoped; reads filter by trusted `team_id` before shaping |
-| Operator control requests | **State Registry** | Trusted Gateway context and target task must share `team_id`; audit-backed requests are read only by the assigned same-team Executor |
+| Audit trail | **State Registry** | Immutable, plaintext-free, and team-scoped; reads filter by trusted `team_id` before shaping; never contains plaintext, nonce bytes, ciphertext bytes, authentication tag bytes, key material, or individual claim values beyond identifier-level metadata |
+| Operator control requests | **State Registry** | Trusted Gateway context and target task must share `team_id`; audit-backed requests are read only by the assigned same-team (or system-with-parent-task-match) Executor |
 | Environment definitions | **State Registry** | Operators register and manage non-secret definitions for their own team; project/task scope only narrows applicability within that team |
-| Logical secrets and encrypted secret versions | **State Registry** | Team-owned `secrets` rows reference same-team environments; immutable ciphertext `secret_versions` rows reference logical secrets; operator writes are same-team only |
-| Open-environment authorization | **State Registry** | State Registry is the sole issuer and verifier of open-environment scope tokens. It signs each token with an allow-listed HMAC algorithm (`HS256`, `HS384`, or `HS512` — the "HMAC-SHA-256 or a stronger HMAC" family) under a server-controlled rotating key identified by `key_id`. The compact three-part signed token `<header>.<payload>.<signature>` is carried only in the `X-FlowAI-Scope-Token` request header for `GET /v1/environments/{environment_id}/open?task_id={task_id}`; the protected header carries `alg` (allow-listed), `kid`, and `typ = scope-token+json`, and the payload carries `team_id`, `project_id` (required claim; nullable only when the canonical environment has no project scope), `task_id`, `environment_id`, `executor_id`, `audience` (literal `state-registry.environment.open`), `issued_at`, `expiry` (`expiry > issued_at`, `expiry - issued_at <= 5 minutes`), and `key_id`. State Registry verifies that the protected-header `kid` equals the payload `key_id` before any MAC computation, then recomputes the signature under the declared allow-listed algorithm using the server-side key handle and compares it under constant-time comparison, then the canonical claim shape, the `key_id` active window, the `issued_at <= server_now + 30s` and `expiry <= issued_at + 5 minutes` window, the expected `audience`, every claim, the authenticated Executor team, same-team assignment, project/task applicability, and non-terminal task state, before any OpenBao operation. Any invalid or unavailable condition — including missing token, tampered MAC, algorithm outside the allow-listed set, `kid` mismatch with payload `key_id`, `key_id` outside the active window, lifetime exceeding five minutes, expired or premature tokens, audience or canonical-claim mismatch, mismatched `team_id`, terminal task, or not-assigned caller — returns the same non-revealing `404 environment_unknown_or_unavailable` shape with zero OpenBao calls and no token plaintext, individual claim values beyond identifier-level metadata, MAC bytes, key material, or derived key bytes in logs, audit entries, or error responses. A same assigned identity retry within TTL succeeds only when every check still passes; it never bypasses canonical claim, transition, or assignment checks, never extends TTL, and never revives an expired token. |
-| Bearer tokens, sessions, and operator team verification | **API Gateway** | Stateless per request; verifies one canonical operator team and forwards trusted `operator_id`, immutable `team_id`, and `request_id`; forwards optional display-only `team_name` only when the verified operator team carries one; never grants authority from `team_name` |
+| Logical secrets and encrypted secret versions | **State Registry** | Team-owned `secrets` rows reference same-team environments; immutable `secret_versions` rows reference logical secrets and carry ciphertext encrypted through a **pluggable crypto provider** (256-bit data key, fresh random 96-bit nonce per encryption, 128-bit authentication tag, associated data binding team identifier, logical secret identifier, and version), plus opaque provider-neutral `key_id` / `key_version` envelopes; `v0002-state-registry` ships the local AES-256-GCM implementation; **`v0008-use-openbao-transit` (active)** replaces it with OpenBao Transit behind the same envelope and ships the resumable per-row migration that converts v0002 local ciphertext to Transit ciphertext; operator writes are same-team only |
+| Open-environment authorization | **State Registry** | State Registry is the sole issuer and verifier of open-environment scope tokens. It signs each token with an allow-listed HMAC algorithm (`HS256`, `HS384`, or `HS512` — the "HMAC-SHA-256 or a stronger HMAC" family) under a server-controlled rotating key identified by `key_id`. The compact three-part signed token `<header>.<payload>.<signature>` is carried only in the `X-FlowAI-Scope-Token` request header for `GET /v1/environments/{environment_id}/open?task_id={task_id}`; the protected header carries `alg` (allow-listed), `kid`, and `typ = scope-token+json`, and the payload carries `team_id`, `project_id` (required claim; nullable only when the canonical environment has no project scope), `task_id`, `environment_id`, `executor_id`, `audience` (literal `state-registry.environment.open`), `issued_at`, `expiry` (`expiry > issued_at`, `expiry - issued_at <= 5 minutes`), and `key_id`. State Registry verifies that the protected-header `kid` equals the payload `key_id` before any MAC computation, then recomputes the signature under the declared allow-listed algorithm using the server-side key handle and compares it under constant-time comparison, then the canonical claim shape, the `key_id` active window, the `issued_at <= server_now + 30s` and `expiry <= issued_at + 5 minutes` window, the expected `audience`, every claim, the authenticated Executor team, same-team assignment, project/task applicability, and non-terminal task state, before any decrypt operation. Any invalid or unavailable condition returns the same non-revealing `404 environment_unknown_or_unavailable` shape with zero decrypt operations and no token plaintext, individual claim values beyond identifier-level metadata, MAC bytes, key material, or derived key bytes in logs, audit entries, or error responses. The active crypto provider's decrypt operation runs only after every check passes; no decrypt operation runs for any invalid or unavailable case (the active provider is the local AES-256-GCM implementation shipped by `v0002-state-registry` until `v0008-use-openbao-transit` replaces it with OpenBao Transit behind the same opaque `key_id` / `key_version` envelope). A same `(task_id, command_id)` retry by the original claiming Executor within the token's TTL MAY be allowed when every check still passes; it SHALL NOT bypass canonical claim, transition, or assignment checks, SHALL NOT extend TTL, and SHALL NOT revive an expired token |
+| Bearer tokens, sessions, and operator team verification | **API Gateway** | Stateless per request; verifies one canonical operator team and forwards trusted `operator_id`, immutable `team_id`, and `request_id`; forwards optional display-only `team_name` only when the verified operator team carries one; never grants authority from `team_name`. The system-administrator authentication mechanism for `/admin/*` is required but is not specified by this contract |
 | UI state (UI prefs, sessions) | **Client-only** | The Web UI maintains its own; no server-side state |
 
-**The State Registry is the main source of truth for durable task intake, discovery, start approvals, assignments, platform history, environment definitions, and encrypted secret versions.**
+**The State Registry is the main source of truth for durable task intake, FIFO discovery, atomic FIFO claim, assignments, platform history, environment definitions, encrypted secret versions, four-level image resolution, and admin onboarding.**
 **The API Gateway is the auth-aware reverse proxy (no persistent state).**
+**Cryptography: `v0002-state-registry` ships the local AES-256-GCM provider. `v0008-use-openbao-transit` (active) replaces the local provider with OpenBao Transit behind the same opaque `key_id` / `key_version` envelope while preserving the v0002 public contract, FIFO claim, lifecycle, image precedence, HMAC scope-token wire format, team authorization, and the single non-revealing `404 environment_unknown_or_unavailable` response shape. v0008 uses Transit `rotate` to create a new latest Transit key version and never calls `rewrap` because the documented `/transit/rewrap/:name` endpoint has no `associated_data` parameter and cannot authenticate v0008 ciphertext; ordinary rotation does not decrypt historical rows and does not raise `min_decryption_version` past any still-referenced version.**
 
 ## Cross-cutting rules
 
-The platform treats team tenancy as the cross-cutting axis that bounds every interface below. Every service-level rule in this section is enforced by State Registry against canonical immutable `team_id`; no service-level rule is allowed to grant authority from `team_name`, caller-supplied tenant headers, or unauthenticated payload fields.
+The platform treats team tenancy as the cross-cutting axis that bounds every interface below. Every service-level rule in this section is enforced by State Registry against canonical immutable `team_id`; no service-level rule is allowed to grant authority from `team_name`, caller-supplied tenant headers, image equality, or unauthenticated payload fields.
 
 ### What "the Web UI talks to the API Gateway only" means in practice
 
@@ -198,11 +267,12 @@ The platform treats team tenancy as the cross-cutting axis that bounds every int
 - Every operator request that reaches State Registry is forwarded by the API Gateway with a verified one-team context containing `operator_id`, immutable `team_id`, and `request_id`. The optional display-only `team_name` is forwarded only when the verified operator team carries one. The Gateway establishes the operator's canonical team from its bearer/session credential; the Gateway never grants authority from `team_name`, and the absence of `team_name` never weakens State Registry authorization anchored to `team_id`.
 - An operator whose session does not correspond to exactly one canonical team is rejected at the Gateway. Multi-team or unknown operator contexts never reach State Registry.
 - The Gateway is the sole origin State Registry trusts for operator reads, subscriptions, controls, environment writes, and secret writes; direct clients that copy operator or team headers without the Gateway service identity are rejected before any protected read or write.
+- The `/admin/*` endpoints accept only an authenticated system-administrator identity; the Registry does NOT describe the mechanism beyond requiring this identity. The mechanism for obtaining that identity is an operational concern outside the Registry contract.
 
 ### What "the Web UI talks to the API Gateway only" and "no Router" mean together
 
 - The platform deploys no separate task broker, queue manager, or Router address.
-- Listener ingestion, team-scoped task deduplication, same-team exact-tag discovery, and atomic same-team start approval are State Registry responsibilities; no Executor may start without approval.
+- Listener ingestion with `(team_id, source_system_id, source_id)` dedupe, eligibility-then-FIFO pending-task discovery, atomic FIFO claim with `command_id`, and lifecycle `pending (no event) -> created -> running -> finished | failed` are State Registry responsibilities; no Executor may start a runtime before a successful `200 claimed`. The `dispatched` state is removed; no event of that name is appended.
 - WebSocket frames from the UI that the Gateway proxies bind at upgrade to the verified immutable `team_id` and only emit frames for resources owned by that team. The Gateway's WS connection never forwards state for another team.
 
 ### What "there is no Env Registry" means
@@ -210,38 +280,43 @@ The platform treats team tenancy as the cross-cutting axis that bounds every int
 - State Registry persists environment definitions, encrypted secret versions, scope metadata, and access audits in its own PostgreSQL database using normalized team-owned tables.
 - Operators register, read, update, and delete environment definitions and logical secrets only for their own team through the Web UI and API Gateway. The Gateway and State Registry authorize with `team_id` only; `team_name` is display-only and never widens access.
 - Project and task scope metadata narrow the use of an environment or secret inside the same team and never grant cross-team access.
-- Only the assigned same-team Executor may open task-scoped values through `GET /v1/environments/{environment_id}/open?task_id={task_id}` with the compact signed scope token carried in the `X-FlowAI-Scope-Token` request header. State Registry signs each token with an allow-listed HMAC algorithm (`HS256`, `HS384`, or `HS512`) under a server-controlled rotating key identified by `key_id`. The protected header carries `alg` (allow-listed), `kid`, and `typ = scope-token+json`; the token carries `team_id`, `project_id` (required claim; nullable only when the canonical environment has no project scope), `task_id`, `environment_id`, `executor_id`, `audience` (literal `state-registry.environment.open`), `issued_at`, `expiry` (`expiry > issued_at`, `expiry - issued_at <= 5 minutes`), and `key_id`. State Registry verifies that the protected-header `kid` equals the payload `key_id` before any MAC computation, then recomputes the signature under the declared allow-listed algorithm using the server-side key handle and compares it under constant-time comparison, then the canonical claim shape, the `key_id` active window, the `issued_at <= server_now + 30s` and `expiry <= issued_at + 5 minutes` window, the expected `audience`, every claim, the authenticated Executor team, same-team assignment, applicability, and non-terminal task state before any OpenBao operation. Any invalid or unavailable condition, including a terminal task, another identity, or a not-assigned caller, returns the same non-revealing `404 environment_unknown_or_unavailable` shape with zero OpenBao calls and no token plaintext, individual claim values beyond identifier-level metadata, MAC bytes, key material, or derived key bytes in logs, audit entries, or error responses. A same assigned identity retry within TTL succeeds only when every check still passes; it never bypasses canonical claim, transition, or assignment checks, never extends TTL, and never revives an expired token.
-- Secret plaintext is encrypted through OpenBao Transit before persistence, is never logged, never persisted in plaintext, never returned to operators or listeners, and exists only in memory while serving an authorized open-environment response for the assigned same-team task.
+- Only the assigned Executor (team-owned: matches the Executor's team; system-owned: matches the parent task's team) may open task-scoped values through `GET /v1/environments/{environment_id}/open?task_id={task_id}` with the compact signed scope token carried in the `X-FlowAI-Scope-Token` request header. State Registry signs each token with an allow-listed HMAC algorithm (`HS256`, `HS384`, or `HS512`) under a server-controlled rotating key identified by `key_id`. The protected header carries `alg` (allow-listed), `kid`, and `typ = scope-token+json`; the token carries `team_id`, `project_id` (required claim; nullable only when the canonical environment has no project scope), `task_id`, `environment_id`, `executor_id`, `audience` (literal `state-registry.environment.open`), `issued_at`, `expiry` (`expiry > issued_at`, `expiry - issued_at <= 5 minutes`), and `key_id`. State Registry verifies that the protected-header `kid` equals the payload `key_id` before any MAC computation, then recomputes the signature under the declared allow-listed algorithm using the server-side key handle and compares it under constant-time comparison, then the canonical claim shape, the `key_id` active window, the `issued_at <= server_now + 30s` and `expiry <= issued_at + 5 minutes` window, the expected `audience`, every claim, the authenticated Executor team, same-team assignment, applicability, and non-terminal task state before any decrypt operation. Any invalid or unavailable condition returns the same non-revealing `404 environment_unknown_or_unavailable` shape with zero decrypt operations and no token plaintext, individual claim values beyond identifier-level metadata, MAC bytes, key material, or derived key bytes in logs, audit entries, or error responses.
+- Secret plaintext is encrypted through **a pluggable crypto provider** (256-bit data key, fresh random 96-bit nonce per encryption, 128-bit authentication tag, associated data binding team identifier, logical secret identifier, and secret version) before persistence, is never logged, never persisted in plaintext, never returned to operators or listeners, exists only in memory while serving an authorized open-environment response for the assigned task, and records opaque provider-neutral `key_id` / `key_version` metadata on every `secret_versions` row. `v0002-state-registry` ships the local AES-256-GCM implementation; **`v0008-use-openbao-transit` (active)** replaces it with OpenBao Transit behind the same envelope and ships the resumable per-row migration that converts v0002 local ciphertext to Transit ciphertext. Cryptographic separation does not replace team checks: State Registry establishes same-team ownership, applicability, and scope-token verification before any decrypt operation.
 
-### What "Executors belong to one immutable team" means
+### What "Executors belong to one immutable team or to no team" means
 
-- Every Executor service identity and process is bound to exactly one immutable authorized `team_id` for its lifetime. The identity cannot omit or change `team_id` on registration, and State Registry rejects mismatched submissions.
-- An Executor registers exactly one tag alongside its team. Zero-tag or multi-tag registrations are rejected without persistence.
-- Same-team discovery applies both equality predicates (`task.team_id = executor.team_id` AND `required_tag = registered_tag`) before pagination, counts, and cursors. Foreign task identifiers are non-revealing `404`; collection discovery returns `204` or an empty collection when only foreign tasks match.
-- Atomic approval runs in one transaction that sets immutable same-team `tasks.executor_id`, records `approved_at`, appends a Registry-owned `dispatched` event with `executor_id = NULL`, and removes the task from same-team discovery. Foreign task identifiers are non-revealing `404`; later eligible same-team competitors receive `409 task_already_dispatched`.
-- Executor-emitted task events (`running`, `finished`, `failed`) are accepted only from the assigned same-team Executor, with non-null `executor_id`, and are appended once by `(task_id, event_id)`. Each fresh event's `(occurred_at, event_id)` tuple must be strictly greater than the latest accepted tuple; `accepted_sequence` and every recovery override are rejected.
-- Executor self events (`executor_events.executor_id NOT NULL`) carry the Executor's same-team ownership and mirror the latest `max_capacity` and `running_count` observations transactionally. Observations are informational only; State Registry never gates discovery or approval on them and never emits capacity-based rejection. Local capacity enforcement lives only in the Executor.
+- Every Executor service identity registers an explicit ownership `scope`. When `scope = team`, the identity is bound to exactly one immutable authorized `team_id` that references an existing team and SHALL supply it on registration, discovery, claim, task events, and self events; State Registry SHALL verify the submitted `team_id` against the authenticated Executor identity and SHALL reject a re-registration that omits, changes, or widens the team. When `scope = system`, the Executor has no team binding; the identity SHALL submit `team_id = null` on registration and SHALL set the envelope `team_id` field to the parent task's `team_id` on every task event and self event where the envelope requires it. The Executor's `scope` is immutable from registration onward; re-registration with a different `scope` is rejected without mutation.
+- An Executor registers exactly one tag alongside its scope. Zero-tag or multi-tag registrations are rejected without persistence.
+- Same-team discovery applies both equality predicates (`task.team_id = executor.team_id` AND `tasks.required_tag = executors.authorized_tag`) BEFORE FIFO ordering (`ingested_at ASC, task_id ASC`) BEFORE pagination and counts; foreign task identifiers are non-revealing `404`; collection discovery returns `204` or an empty collection when only foreign tasks match. System-owned discovery matches `tasks.required_tag = executors.authorized_tag` across every team in FIFO order.
+- Atomic FIFO claim runs in one transaction that: verifies the requested task is the oldest currently eligible `pending` task for the authenticated Executor (FIFO inside the claim transaction); sets immutable `tasks.owner_command_id` (from the request `command_id`); sets immutable `tasks.executor_id`; persists `tasks.resolved_image` and `tasks.image_source` from the four-level precedence (always succeeds because `teams.default_image` is required at admin registration); sets `tasks.claimed_at`; appends the FIRST lifecycle event `created` with non-null `executor_id = claiming_executor` and a payload meaning `task <task_id> loaded by <executor_id>`; projects the task to `created`; and removes the task from the requesting Executor's scope of discovery. The `dispatched` state is removed; no event of that name is appended at any time. Foreign task identifiers are non-revealing `404`. Later eligible competitors receive `409 task_already_claimed` when their `task_id` is already claimed under a different `command_id`. A request for an eligible non-oldest task receives `409 older_task_must_be_claimed_first` with no mutation and no event. A same `(task_id, command_id)` retry by the original Executor returns the original `200 claimed` body without appending an additional event. One `command_id` MAY own many tasks; each task is limited to one command.
+- Executor-emitted task events (`running`, `finished`, `failed`) are accepted only from the assigned Executor (team-owned or system-owned) with the appropriate envelope `team_id` (team-owned: equals authenticated Executor team AND parent task team; system-owned: equals parent task team) and non-null `executor_id`, and are appended once by `(task_id, event_id)`. Each fresh event's `(occurred_at, event_id)` tuple must be strictly greater than the latest accepted tuple; `accepted_sequence` and every recovery override are rejected.
+- Executor self events (`executor_events.executor_id NOT NULL`) carry the Executor ownership scope and mirror the latest `max_capacity` and `running_count` observations transactionally. `executor_events.team_id` is non-null for team-owned Executors and null for system-owned Executors. Observations are informational only; State Registry never gates discovery or claim on them and never emits capacity-based rejection. Local capacity enforcement lives only in the Executor.
+- The Executor uses `tasks.resolved_image` from the claim response verbatim and refuses the task if the resolved image cannot be pulled or started. The Executor never maintains or substitutes a local fallback image. Image strings are not team-owned resources; image equality between tasks in different teams grants no authority.
 
 ### What "listeners persist team-bound tasks in State Registry" means
 
 - Jira listeners, webhooks, CI, and other automation submit each external task to State Registry before acknowledging the source event.
-- Every submission carries an immutable authorized `team_id`, a stable source identifier, and a stable source task identifier. Dedupe uses `(team_id, source, source_task_id)` so retries return the existing canonical task for that team without creating another task or resetting state/history.
-- A listener identity is authorized for exactly one immutable `team_id`. A submission that names another team is rejected without persisting or acknowledging the task. An automation writer does not need to know about Web UI or any Executor.
+- Every submission carries an immutable authorized `team_id`, the immutable `source_system_id` of the registered source system authorized for that listener, and the external `source_id` (the external task identifier within that source system). Dedupe uses `(team_id, source_system_id, source_id)` so retries return the existing canonical `pending` task for that team without creating another task or resetting state/history.
+- A listener identity is authorized for exactly one immutable `team_id` and one immutable `source_system_id`. A submission that names another team is rejected without persisting or acknowledging the task. A submission whose `source_system_id` does not belong to the authorized team is rejected without persisting or acknowledging. The same `source_id` MAY exist independently in different teams only because each team registers its own source system, never because one source-system identity is shared across teams. An automation writer does not need to know about Web UI or any Executor.
+- Ingestion commits the durable task row in `current_state = pending` with no lifecycle event appended; `ingested_at` is set once at ingestion and is immutable.
 
 ### What "team-filtered reads precede result shaping" means
 
-- State Registry applies the trusted `team_id` predicate before pagination, cursor creation, totals, counts, grouping, aggregation, and result serialization for tasks, Executors, events, controls, environments, secrets, versions, and audits. No page length, total, cursor, aggregate, or empty/non-empty distinction may incorporate rows from another team.
+- State Registry applies the trusted `team_id` predicate before pagination, cursor creation, totals, counts, grouping, aggregation, and result serialization for tasks, Executors, events, controls, environments, secrets, versions, source systems, task types, and audits. No page length, total, cursor, aggregate, or empty/non-empty distinction may incorporate rows from another team.
 - WebSocket subscriptions accept upgrades only with one verified `team_id`; the connection binds to that team at upgrade and applies the team predicate before replay selection, cursor handling, subscription filters, live fan-out, and frame serialization. Every emitted frame belongs to the bound team; a cross-team frame, count, cursor, or existence signal is a contract violation.
 
 ### What "audit is plaintext-free and team-scoped" means
 
 - Every authorized operator action, control, environment or secret mutation, and open-environment access produces an immutable audit entry containing `team_id`, actor identity and type, action, resource type and identifier, `request_id`, outcome, and timestamp.
-- Audit entries, application logs, event payloads, and error responses contain no secret plaintext or decrypted environment values. Audit reads filter by trusted `team_id` before pagination or aggregation.
+- Audit entries, application logs, event payloads, and error responses contain no plaintext secret values, no decrypted environment values, no nonce bytes, no ciphertext bytes, no authentication tag bytes, no key material, no derived key bytes, and no individual claim values beyond identifier-level metadata. Audit reads filter by trusted `team_id` before pagination or aggregation.
 
-### What "service identities are team-bound" means
+### What "service identities are team-bound and image strings carry no authority" means
 
-- Each listener and Executor identity is bound to exactly one immutable authorized `team_id`. Listener source identifiers and submitted `team_id` are bound to the authenticated listener. Executor registration, discovery, approval, task and self events, control reads, and environment opens are bound to the authenticated Executor identity.
+- Each listener and team-owned Executor identity is bound to exactly one immutable authorized `team_id`. Listener source-system identifiers and submitted `team_id` are bound to the authenticated listener. Executor registration, discovery, claim, task and self events, control reads, and environment opens are bound to the authenticated Executor identity and its scope.
+- Each system-owned Executor identity has no team binding; its per-task authorization uses the parent task's immutable `team_id`.
 - API Gateway-only reads, subscriptions, environment/secret writes, and controls require the trusted Gateway identity and verified operator context. Untrusted client headers never establish a team.
+- `/admin/*` endpoints require an authenticated system-administrator identity.
+- Image strings are not team-owned resources and image equality between tasks in different teams grants no authority or cross-team visibility; image strings participate only in the four-level precedence resolution at claim time.
 
 ---
 
@@ -253,5 +328,5 @@ The diagram ↔ catalog map:
 
 | Diagram | What it visualizes |
 |---|---|
-| `openspec/changes/*/specs/diagrams/*.puml` | Proposed system/design diagrams for a change |
+| `openspec/changes/*/specs/diagrams/*.puml` | Proposed system/design diagrams for a change (C4, sequence, and the authorized state-machine diagrams in v0002) |
 | `docs/architecture/diagrams/*.puml` | Implemented current-state system/design diagrams |
