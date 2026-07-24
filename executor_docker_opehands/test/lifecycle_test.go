@@ -18,8 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"github.com/flowai/platform/executor-docker/internal/dockerclient"
-	"github.com/flowai/platform/executor-docker/internal/executor"
+	"github.com/flowai/platform/executor_docker_opehands/internal/dockerclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/executor"
 )
 
 // errFakeHangOpenHands causes the FakeOpenHands pause handler to return
@@ -144,8 +144,8 @@ func TestFullRegistrationPayload(t *testing.T) {
 		if rec.ExecutorID == "" {
 			t.Fatalf("missing executor_id")
 		}
-		if rec.ExecutorType != "docker-openhands" {
-			t.Fatalf("executor_type = %q, want docker-openhands", rec.ExecutorType)
+		if rec.ExecutorType != "executor_docker_opehands" {
+			t.Fatalf("executor_type = %q, want executor_docker_opehands", rec.ExecutorType)
 		}
 		if rec.RoutingTarget != "openhands" {
 			t.Fatalf("routing_target = %q, want openhands", rec.RoutingTarget)

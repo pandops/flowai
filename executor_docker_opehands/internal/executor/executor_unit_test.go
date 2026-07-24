@@ -1,10 +1,13 @@
 // Pure unit tests for the executor package. Integration / multi-component
-// scenarios live under /autotests/docker-executor.
+// scenarios live under /autotests/executor_docker_opehands.
 package executor
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
 
 func TestConfigValidateRejectsBadRange(t *testing.T) {
@@ -103,5 +106,20 @@ func TestStateStringValues(t *testing.T) {
 		if string(s) == "" {
 			t.Fatalf("empty state value")
 		}
+	}
+}
+
+// TestExecutorTypeWireValue pins the canonical executor_type wire value
+// to the concrete service directory name and the executor_<runtime>_<tool>
+// convention. Renaming the wire value (or the directory) without updating
+// the other will fail this test.
+func TestExecutorTypeWireValue(t *testing.T) {
+	want := "executor_docker_opehands"
+	if platform.ExecutorTypeDockerOpenHands != want {
+		t.Fatalf("ExecutorTypeDockerOpenHands = %q, want %q",
+			platform.ExecutorTypeDockerOpenHands, want)
+	}
+	if !strings.HasPrefix(platform.ExecutorTypeDockerOpenHands, "executor_") {
+		t.Fatalf("wire value %q must start with executor_", platform.ExecutorTypeDockerOpenHands)
 	}
 }

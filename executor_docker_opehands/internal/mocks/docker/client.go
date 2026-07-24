@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flowai/platform/executor-docker/internal/dockerclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/dockerclient"
 )
 
 // FakeDocker is an in-memory implementation of dockerclient.Client for tests.

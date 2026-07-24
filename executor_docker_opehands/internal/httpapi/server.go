@@ -14,7 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/flowai/platform/executor-docker/internal/logging"
+	"github.com/flowai/platform/executor_docker_opehands/internal/logging"
 )
 
 // RequestIDHeader is the canonical correlation header used across services.

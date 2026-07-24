@@ -1,4 +1,4 @@
-// Package fixtures holds reusable test fixtures for the executor-docker service.
+// Package fixtures holds reusable test fixtures for the executor_docker_opehands service.
 //
 // The task_spec fixture is a sample Router task that can be POSTed to the
 // mocked task server's /v1/tasks seed via SetRouterTask, then observed as
@@ -9,7 +9,7 @@ package fixtures
 import (
 	"github.com/google/uuid"
 
-	"github.com/flowai/platform/executor-docker/internal/platform"
+	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
 
 // TaskSpec returns a sample queued task suitable for integration verification.

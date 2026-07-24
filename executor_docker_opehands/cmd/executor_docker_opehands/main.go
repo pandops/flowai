@@ -1,4 +1,7 @@
-// docker-executor is the FlowAI v0001 Docker Executor service.
+// executor_docker_opehands is the FlowAI concrete Executor for the Docker
+// runtime + OpenHands agent toolchain. Concrete wire names follow
+// executor_<runtime>_<tool>; "opehands" is the deliberate service
+// identifier (the external product spelling "OpenHands" stays unchanged).
 package main
 
 import (
@@ -13,18 +16,18 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/flowai/platform/executor-docker/internal/dockerclient"
-	"github.com/flowai/platform/executor-docker/internal/executor"
-	"github.com/flowai/platform/executor-docker/internal/httpapi"
-	"github.com/flowai/platform/executor-docker/internal/logging"
-	"github.com/flowai/platform/executor-docker/internal/mockedclient"
-	"github.com/flowai/platform/executor-docker/internal/openhands"
-	"github.com/flowai/platform/executor-docker/internal/platform"
+	"github.com/flowai/platform/executor_docker_opehands/internal/dockerclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/executor"
+	"github.com/flowai/platform/executor_docker_opehands/internal/httpapi"
+	"github.com/flowai/platform/executor_docker_opehands/internal/logging"
+	"github.com/flowai/platform/executor_docker_opehands/internal/mockedclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/openhands"
+	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
 
 func main() {
 	var (
-		cfgPath = flag.String("config", "executor-docker/configs/docker-executor.yaml", "YAML config path")
+		cfgPath = flag.String("config", "executor_docker_opehands/configs/executor_docker_opehands.yaml", "YAML config path")
 		bind    = flag.String("bind", "", "API bind (overrides YAML/env)")
 	)
 	flag.Parse()
@@ -48,8 +51,8 @@ func main() {
 	exec := executor.New(cfg, docker, mocked, logger)
 
 	// Local platform health API.
-	mux := httpapi.NewRouter("docker-executor", logger)
-	httpapi.RegisterProbes(mux, "docker-executor", cfg.ExecutorID, httpapi.ReadinessFuncWithDeps(func() (bool, bool, bool) {
+	mux := httpapi.NewRouter("executor_docker_opehands", logger)
+	httpapi.RegisterProbes(mux, "executor_docker_opehands", cfg.ExecutorID, httpapi.ReadinessFuncWithDeps(func() (bool, bool, bool) {
 		st := exec.State()
 		ready := st == executor.StateReady || st == executor.StateBusy
 		return ready, exec.IsStateRegistryRegistered(), exec.IsOpenHandsReachable()
@@ -75,7 +78,7 @@ func main() {
 	defer stop()
 
 	// Append initial executor events.
-	exec.Logger().Info("docker-executor starting", "executor_id", cfg.ExecutorID, "image", cfg.OpenHandsImage)
+	exec.Logger().Info("executor_docker_opehands starting", "executor_id", cfg.ExecutorID, "image", cfg.OpenHandsImage)
 
 	// Run the HTTP server in the background.
 	go func() {
@@ -100,7 +103,7 @@ func main() {
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Warn("http shutdown error", "err", err.Error())
 	}
-	logger.Info("docker-executor stopped")
+	logger.Info("executor_docker_opehands stopped")
 }
 
 // Compile-time references to silence "imported and not used" if some

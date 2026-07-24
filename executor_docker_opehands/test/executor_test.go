@@ -1,4 +1,4 @@
-// Integration tests for the executor-docker service.
+// Integration tests for the executor_docker_opehands service.
 //
 // These tests exercise the executor's full lifecycle (registration,
 // task forwarding, event streaming, interrupt/message handling, graceful
@@ -8,7 +8,7 @@
 // internal-package boundary between sibling services.
 //
 // The Docker client and OpenHands runtime are stubbed by the in-package
-// fakes under executor-docker/internal/mocks.
+// fakes under executor_docker_opehands/internal/mocks.
 package integration_test
 
 import (
@@ -26,11 +26,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/flowai/platform/executor-docker/internal/dockerclient"
-	"github.com/flowai/platform/executor-docker/internal/executor"
-	"github.com/flowai/platform/executor-docker/internal/mockedclient"
-	fakedocker "github.com/flowai/platform/executor-docker/internal/mocks/docker"
-	fakeoh "github.com/flowai/platform/executor-docker/internal/mocks/openhands"
+	"github.com/flowai/platform/executor_docker_opehands/internal/dockerclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/executor"
+	"github.com/flowai/platform/executor_docker_opehands/internal/mockedclient"
+	fakedocker "github.com/flowai/platform/executor_docker_opehands/internal/mocks/docker"
+	fakeoh "github.com/flowai/platform/executor_docker_opehands/internal/mocks/openhands"
 )
 
 // stubTask is the wire shape of a Router task that the inline stub server

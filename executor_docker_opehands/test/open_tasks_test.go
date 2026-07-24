@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/flowai/platform/executor-docker/internal/executor"
+	"github.com/flowai/platform/executor_docker_opehands/internal/executor"
 )
 
 // errFakeAckTimeout is returned by the fake OpenHands pause handler to

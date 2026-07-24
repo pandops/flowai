@@ -46,11 +46,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"github.com/flowai/platform/executor-docker/internal/dockerclient"
-	"github.com/flowai/platform/executor-docker/internal/logging"
-	"github.com/flowai/platform/executor-docker/internal/mockedclient"
-	"github.com/flowai/platform/executor-docker/internal/openhands"
-	"github.com/flowai/platform/executor-docker/internal/platform"
+	"github.com/flowai/platform/executor_docker_opehands/internal/dockerclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/logging"
+	"github.com/flowai/platform/executor_docker_opehands/internal/mockedclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/openhands"
+	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
 
 // State is the Executor process state.

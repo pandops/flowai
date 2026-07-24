@@ -4,8 +4,12 @@ package platform
 
 import "time"
 
-// ExecutorType is the canonical executor type identifier.
-const ExecutorTypeDockerOpenHands = "docker-openhands"
+// ExecutorType is the canonical concrete executor type identifier.
+//
+// The wire value follows executor_<runtime>_<tool> documented in AGENTS.md
+// and matches the concrete service directory. The Go identifier preserves
+// the runtime/tool axis; both refer to the same concrete Executor.
+const ExecutorTypeDockerOpenHands = "executor_docker_opehands"
 
 // ExecutorRecord is the canonical representation of an active Executor
 // instance stored by the State Registry.

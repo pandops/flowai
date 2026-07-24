@@ -16,8 +16,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/flowai/platform/executor-docker/internal/mockedclient"
-	"github.com/flowai/platform/executor-docker/internal/platform"
+	"github.com/flowai/platform/executor_docker_opehands/internal/mockedclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
 
 // minimalStub implements just enough of the mocked-task-server wire format

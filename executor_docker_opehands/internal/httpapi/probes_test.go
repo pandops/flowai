@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flowai/platform/executor-docker/internal/httpapi"
+	"github.com/flowai/platform/executor_docker_opehands/internal/httpapi"
 )
 
 func newTestRouter() http.Handler {

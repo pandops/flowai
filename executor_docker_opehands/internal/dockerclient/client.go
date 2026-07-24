@@ -40,7 +40,7 @@ import (
 	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 
-	"github.com/flowai/platform/executor-docker/internal/logging"
+	"github.com/flowai/platform/executor_docker_opehands/internal/logging"
 )
 
 // Labels used by the Executor to identify its containers.

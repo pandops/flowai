@@ -26,8 +26,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/flowai/platform/executor-docker/internal/dockerclient"
-	"github.com/flowai/platform/executor-docker/internal/executor"
+	"github.com/flowai/platform/executor_docker_opehands/internal/dockerclient"
+	"github.com/flowai/platform/executor_docker_opehands/internal/executor"
 )
 
 func TestPullImageCalledWithConfiguredImage(t *testing.T) {

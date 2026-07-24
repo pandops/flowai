@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"github.com/flowai/platform/executor-docker/internal/executor"
+	"github.com/flowai/platform/executor_docker_opehands/internal/executor"
 )
 
 // TestWSStreamIntermediateThenFinished exercises the streaming path

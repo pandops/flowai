@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/flowai/platform/executor-docker/internal/platform"
+	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
 
 // ReadinessChecker returns true if the service is ready to serve traffic.
