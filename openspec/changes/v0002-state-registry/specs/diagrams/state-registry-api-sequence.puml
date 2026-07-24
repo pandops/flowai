@@ -1,62 +1,152 @@
 ' diagram-type: sequence
 @startuml
+!pragma layout smetana
 title v0002 State Registry - Team-Scoped Detailed API Sequence
 
-participant "Listener\nidentity: team-a" as Listener
+note over Executor
+  Concrete Executor services follow the platform naming convention
+  documented in AGENTS.md:
+    executor_<runtime>_<tool>
+  Current concrete Executor: executor_docker_opehands
+  (runtime = docker, tool = openhands; "opehands" is the service
+  identifier; the external product spelling "OpenHands" stays
+  unchanged). The diagram below uses the generic "Executor"
+  participant on purpose: it covers every concrete service under
+  the executor_<runtime>_<tool> family.
+end note
+
+participant "System Administrator" as Admin
+participant "Listener\nidentity: team-a, source-system-a" as Listener
 participant "Executor\nidentity: team-a, tag: openhands" as Executor
 participant "Foreign Executor\nidentity: team-b" as ForeignExecutor
 participant "Trusted API Gateway\nverified operator team-a" as Gateway
 participant "Direct / Untrusted Client" as Direct
 participant "State Registry" as State
 database "PostgreSQL" as DB
-participant "OpenBao Transit" as OpenBao
 
-== Listener ingestion and team-scoped deduplication ==
-Listener -> State : POST /v1/tasks\n{team_id=team-a, source, source_task_id, required_tag, payload}
-State -> State : authenticate listener; verify submitted team_id\nagainst one-team service binding
-State -> DB : BEGIN\nINSERT team-owned task + created event (executor_id=NULL)\nON CONFLICT (team_id, source, source_task_id) RETURN existing\nCOMMIT
-DB --> State : canonical team-a task + immutable created event
+== Admin /admin/* team, source system, task type registration ==
+Admin -> State : POST /admin/teams\n{team_name=team-a, default_image: {repository, digest=sha256:...}}
+State -> State : authenticated system-administrator identity required\ngenerate immutable team_id\nrecord required default_image\nenforce unique team_name
+State -> DB : INSERT teams (team_id, team_name, default_image, ...)
+State --> Admin : 201 canonical team record
+
+Admin -> State : POST /admin/source-systems\n{team_id=team-a, listener_identity=listener-a, default_image}
+State -> DB : INSERT source_systems (source_system_id, team_id, listener_identity, ...)
+State --> Admin : 201 canonical source system
+
+Admin -> State : POST /admin/task-types\n{team_id=team-a, execution_tag=openhands, default_image}
+State -> DB : INSERT task_types (task_type_id, team_id, execution_tag, ...)
+State --> Admin : 201 canonical task type
+
+note over State,DB
+  /admin/* POST is the only path that creates or updates a team,
+  source system, or task type. Executor registration is never a substitute.
+  Team resource is create-only: no PUT/PATCH/DELETE team endpoint.
+end note
+
+== Admin /admin/tags and /admin/tasks read-only global projections ==
+Admin -> State : GET /admin/tags?team_id=?&tag=?&limit&cursor
+State -> State : authenticated system-administrator identity required\nno mutation path; rejects every non-admin identity before any read
+State -> DB : SELECT task_types projection\n(team_id, task_type_id, execution_tag)\nORDER BY (team_id ASC, execution_tag ASC, task_type_id ASC)\npaginate after ordering; no row is mutated
+State --> Admin : 200 paginated task-type-derived tag entries\n(equal execution_tag across teams grants NO authority)
+
+Admin -> State : GET /admin/tasks?team_id=?&state=?&tag=?&task_type_id=?&limit&cursor
+State -> State : authenticated system-administrator identity required\nno mutation path; rejects every non-admin identity before any read
+State -> DB : SELECT global task summaries\n(task_id, team_id, task_type_id, source_system_id, required_tag,\ncurrent_state, owner_command_id, executor_id, ingested_at, claimed_at)\nORDER BY (ingested_at DESC, task_id DESC)\npaginate after ordering; no row is mutated
+State --> Admin : 200 paginated global current-state summaries\n(no payload, secret, decrypted env value, or event history)
+note over Admin,DB
+  GET /admin/tags and GET /admin/tasks are read-only,
+  system-admin-only, and never mutate any row. Equal tag strings
+  across teams grant NO cross-team authority.
+end note
+
+== Listener ingestion and (team_id, source_system_id, source_id) dedup ==
+Listener -> State : POST /v1/tasks\n{team_id=team-a, source_system_id=source-system-a, source_id,\nREQUIRED task_type_id=tt-a1, payload,\n optional image: {repository, digest=sha256:...}}
+State -> State : authenticate listener; verify submitted team_id and\nsource_system_id against one-team service binding;\nverify task_type_id references a registered task type\nwhose team_id equals team-a; derive tasks.required_tag from\ntask_types.execution_tag (reject any listener-supplied required_tag);\nstore image on tasks.image in the same ingestion transaction\n(first submission only; later retries do not replace or clear image)
+State -> DB : BEGIN\nINSERT team-owned task in current_state = pending\nSET ingested_at = now() (immutable)\npersist task_type_id and server-derived required_tag\nNO lifecycle event appended\nON CONFLICT (team_id, source_system_id, source_id) RETURN existing\nCOMMIT
+DB --> State : canonical team-a pending task (no event)
 State --> Listener : 201 created or 200 existing
 note over Listener,DB
   The task is undiscoverable before commit.
-  The same (source, source_task_id) in team-b is independent.
+  teams.default_image is always present (required at registration);
+  image strings carry no team authority.
 end note
 
-== Executor registration: exactly one team and one tag ==
-Executor -> State : PUT /v1/executors/{executor_id}\n{team_id=team-a, executor_type, one tag,\nmax_capacity, running_count, metadata}
-State -> State : verify team_id matches service identity\nreject missing/changed team or tag count != 1
-State -> DB : upsert team-a Executor; immutable team_id + one tag
-State --> Executor : 200 Executor record
+== Executor registration: scope = team or scope = system + exactly one tag ==
+alt scope = team
+  Executor -> State : PUT /v1/executors/{executor_id}\n{scope=team, team_id=team-a, executor_type, one tag,\nmax_capacity, running_count, metadata}
+  State -> State : verify team_id matches service identity AND references an existing team\nreject missing/changed team, scope mismatch, or tag count != 1
+  State -> DB : upsert team-a Executor; immutable team_id + scope=team + one tag
+  State -> DB : NEVER create or update any teams row from this path
+else scope = system
+  Executor -> State : PUT /v1/executors/{executor_id}\n{scope=system, team_id=null, executor_type, one tag,\nmax_capacity, running_count, metadata}
+  State -> State : verify team_id is null; reject non-null team_id\nor tag count != 1; reject re-registration that changes scope
+  State -> DB : upsert system Executor; team_id NULL + scope=system + one tag
+end
+State --> Executor : 200 Executor record (immutable scope from registration)
 
-== Discovery: team and tag filters before shaping ==
+== Discovery: scope-conditional eligibility then FIFO ordering ==
 Executor -> State : GET /v1/executors/{executor_id}/tasks\n?tag=openhands&limit={n}&cursor={cursor}
-State -> DB : SELECT created tasks\nWHERE team_id=team-a AND required_tag=openhands\napply predicates before count/cursor/page\n(read-only; no reservation; no capacity read)
-DB --> State : team-a discovery snapshot
-State --> Executor : 200 team-a summaries or 204/empty\n(no foreign count, cursor, or metadata)
+alt scope = team
+  State -> DB : SELECT pending tasks\nWHERE team_id=team-a AND required_tag=openhands\nORDER BY ingested_at ASC, task_id ASC\napply eligibility predicate before ordering\nordering before pagination/counts/page\n(read-only; no reservation; no capacity read)
+  DB --> State : team-a FIFO pending snapshot
+  State --> Executor : 200 team-a FIFO summaries or 204/empty\n(no foreign count, cursor, or metadata)
+else scope = system
+  State -> DB : SELECT pending tasks\nWHERE required_tag=openhands\nORDER BY ingested_at ASC, task_id ASC\napply tag predicate before ordering\n(read-only; no reservation; no capacity read)
+  DB --> State : cross-team FIFO pending snapshot
+  State --> Executor : 200 FIFO summaries from every matching team\n(system Executor sees pending metadata across tenants)
+end
 
-== Atomic same-team approval ==
-Executor -> State : POST /v1/executors/{executor_id}/approvals\n{task_id}
-State -> DB : BEGIN\nUPDATE team-a task WHERE state=created\nAND task.team_id=executor.team_id\nAND required_tag=registered_tag\nSET state=dispatched, executor_id, approved_at\nINSERT dispatched event (executor_id=NULL)\nCOMMIT
-alt one eligible same-team row updated
-  State --> Executor : 200 approved + environment_id\n+ signed scope token claims
-else same-team task already dispatched
-  State --> Executor : 409 task_already_dispatched
-else foreign-team or unknown task_id
+== Atomic FIFO claim ==
+Executor -> State : POST /v1/executors/{executor_id}/claim\n{task_id, command_id}
+State -> DB : BEGIN
+alt scope = team
+  State -> DB : SELECT FOR UPDATE the oldest eligible pending task\nWHERE task_id = ? AND current_state = pending\nAND task.team_id = executor.team_id\nAND required_tag = registered_tag
+else scope = system
+  State -> DB : SELECT FOR UPDATE the oldest eligible pending task\nWHERE task_id = ? AND current_state = pending\nAND required_tag = registered_tag
+end
+State -> DB : verify (ingested_at, task_id) of selected task is oldest\namong eligible pending tasks for this authenticated Executor
+State -> DB : SET owner_command_id = command_id (immutable),\nSET executor_id = executor (immutable),\nSET resolved_image, image_source (immutable),\nSET claimed_at = now() (immutable),\nINSERT FIRST 'created' event with executor_id = claimant\nand payload 'task <task_id> loaded by <executor_id>',\ncurrent_state := 'created'\nCOMMIT
+alt one eligible oldest task claimed
+  State --> Executor : 200 claimed + environment_id\n+ signed scope token claims\n+ resolved_image + image_source
+else FIFO violation (older eligible pending exists)
+  State --> Executor : 409 older_task_must_be_claimed_first
+else same task claimed under different command_id
+  State --> Executor : 409 task_already_claimed
+else same (task_id, command_id) retry by the same Executor
+  State --> Executor : 200 claimed (idempotent; no new event)
+else foreign-team or unknown task_id (team-owned only)
   State --> Executor : non-revealing 404
 end
-ForeignExecutor -> State : approve team-a task_id
-State --> ForeignExecutor : same non-revealing 404 as unknown\n(no mutation or event)
+note over Executor,DB
+  Resolution precedence at claim time:
+  tasks.image -> task_types.default_image
+    -> source_systems.default_image -> teams.default_image
+  The team default is always present (required at /admin/teams),
+  so resolution always succeeds; the Executor never falls back
+  to a local image. resolved_image and image_source are immutable.
+  Image equality across teams grants no authority.
+end note
+
+ForeignExecutor -> State : claim team-a task_id\n(with scope = team and team_id = team-b)
+State --> ForeignExecutor : same non-revealing 404 as unknown\n(team predicate blocks foreign team_id)\n(no mutation or event)
 
 == Strict ordered task and self events ==
-Executor -> State : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id=team-a, event_id,\nevent_type, occurred_at, payload}
-State -> State : authenticate Executor\nverify envelope team_id equals authenticated Executor team\nverify assigned same-team Executor and valid transition\nresolve retry by (task_id,event_id)\nrequire new tuple > latest (occurred_at,event_id)\nreject accepted_sequence or override
+alt scope = team
+  Executor -> State : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id=executor.team_id, event_id,\nevent_type, occurred_at, payload}
+  State -> State : authenticate Executor\nverify envelope team_id = authenticated Executor team AND parent task team_id\nverify assigned same-team Executor and valid transition
+else scope = system
+  Executor -> State : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id=parent.task.team_id, event_id,\nevent_type, occurred_at, payload}
+  State -> State : authenticate Executor\nverify envelope team_id = parent task team_id\n(Executor own team_id is NULL)\nverify assigned Executor and valid transition
+end
+State -> State : resolve retry by (task_id,event_id)\nrequire new tuple > latest (occurred_at,event_id)\nreject accepted_sequence or override
 State -> DB : append once + update projection in one transaction
 State --> Executor : 202 original acceptance on retry
 ForeignExecutor -> State : POST event to team-a task_id\n(even with matching envelope team_id field)
 State --> ForeignExecutor : non-revealing 404; no append
 Executor -> State : POST /v1/executors/{executor_id}/events\n{executor_id NOT NULL, team_id=team-a, event_id,\nevent_type, occurred_at, payload}
-State -> State : authenticate Executor\nverify envelope team_id equals authenticated Executor team
-State -> DB : append team-a executor_event\nmirror max_capacity/running_count in same transaction\nnever gate discovery or approval
+State -> State : authenticate Executor\nverify envelope team_id equals authenticated Executor team\n(or null when scope=system)
+State -> DB : append team-a executor_event\nmirror max_capacity/running_count in same transaction\nnever gate discovery or claim
 State --> Executor : 202 accepted
 
 == Trusted Gateway context and team-scoped reads ==
@@ -82,15 +172,15 @@ State -> DB : require task + Executor same team and assignment
 State --> Executor : 200 team-a controls or non-revealing 404
 
 == Team-owned environments and logical secrets ==
-Gateway -> State : POST/GET/PUT/DELETE /v1/environments...\nverified team-a context
+Gateway -> State : POST/GET/PUT/DELETE /v1/environments...\nverified team-a context\nbody MAY name parent_task_id (task-owned)
+State -> State : when parent_task_id set, verify same-team\ntask ownership; reject foreign task_id with\nnon-revealing 404 environment_unknown_or_unavailable\nbefore any decrypt operation or audit disclosure
 State -> DB : persist/read only team-a environment_definition\n+ plaintext-free team-a audit
 State --> Gateway : identifiers/metadata or foreign/unknown 404
-Gateway -> State : POST/PUT /v1/environments/{id}/secrets...\nplaintext value
-State -> State : verify Gateway, environment team, secret team, scope\nbefore cryptography
-State -> OpenBao : encrypt plaintext over mTLS
-OpenBao --> State : versioned ciphertext
-State -> DB : persist team-a logical secrets row\n+ immutable secret_versions row referencing it\n+ plaintext-free audit
-State --> Gateway : secret_id + version; never plaintext
+Gateway -> State : POST/PUT /v1/environments/{id}/secrets...\nplaintext value (secret inherits parent env scope)
+State -> State : verify Gateway, environment team, secret team, scope\nbefore encryption; reject foreign environment\nwith non-revealing 404 before any encrypt operation
+State -> State : encrypt with local AES-256-GCM:\n256-bit data key, fresh random 96-bit nonce per encryption,\n128-bit authentication tag, associated data binding\nteam_id, secret_id, version
+State -> DB : persist team-a logical secrets row\n+ immutable secret_versions row carrying ciphertext,\nnonce, tag, opaque key_id and key_version\n+ plaintext-free audit (no secret material in log)
+State --> Gateway : secret_id + version metadata; never plaintext
 
 == Assigned same-team open-environment ==
 Executor -> State : GET /v1/environments/{environment_id}/open\n?task_id={task_id}\n(query equals payload task_id and canonical task)\nX-FlowAI-Scope-Token: <compact three-part\n scope token <header>.<payload>.<signature>\n carrying team_id, project_id (required; null\n only when env has no project scope), task_id,\n environment_id, executor_id, audience =\n state-registry.environment.open, issued_at\n <= server_now + 30s, expiry > issued_at,\n expiry - issued_at <= 5min, and key_id;\n protected header carries alg (allow-listed\n HS256/HS384/HS512), kid, and typ\n (scope-token+json) with kid == payload key_id;\n under server-controlled rotating key>\n(no scope-token fields in body)
@@ -121,10 +211,10 @@ State -> State : expiry window, expected literal audience,
 State -> State : every claim, authenticated Executor
 State -> State : team, same-team assignment, project/task
 State -> State : applicability, and non-terminal task
-State -> State : state, all before any OpenBao call
+State -> State : state, all before any decrypt operation
 alt every check passes
-  State -> OpenBao : decrypt authorized ciphertext over mTLS
-  OpenBao --> State : plaintext in memory only
+  State -> State : local AES-256-GCM decrypt with\nassociated data (team_id, secret_id, version)
+  State -> State : plaintext in memory only
   State -> DB : append plaintext-free team-a audit
   State --> Executor : 200 authorized env-style values
   note over Executor,State
@@ -137,14 +227,14 @@ alt every check passes
   end note
 else any invalid or unavailable condition
   State --> Executor : 404 environment_unknown_or_unavailable
-  note over State,OpenBao
-    Zero OpenBao calls for every invalid or
+  note over State
+    Zero decrypt operations for every invalid or
     unavailable variant including another
     identity, terminal task, or not-assigned
     caller; logs and audit entries contain no
-    token plaintext, individual claims beyond
-    identifier-level metadata, MAC bytes,
-    key material, or derived key bytes.
+    plaintext, no nonce, no ciphertext, no tag,
+    no key material, no individual claim values
+    beyond identifier-level metadata.
   end note
 end
 

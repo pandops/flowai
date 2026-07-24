@@ -1,66 +1,92 @@
 ' diagram-type: state-machine
 @startuml
-title v0002 State Registry - Team-Bound Executor Capacity State Machine
+!pragma layout smetana
+title v0002 State Registry - Executor Capacity State Machine
+
+note as ConcreteNaming
+  Concrete Executor services follow the platform naming convention
+  documented in AGENTS.md:
+    executor_<runtime>_<tool>
+  Current concrete Executor: executor_docker_opehands
+  (runtime = docker, tool = openhands; "opehands" is the service
+  identifier; the external product spelling "OpenHands" stays
+  unchanged). The state machine below is generic over every concrete
+  Executor under the executor_<runtime>_<tool> family.
+end note
 
 state "Executor local: available" as ExAvail
 state "Executor local: full" as ExFull
 
-[*] --> ExAvail : Executor starts\nservice identity bound to one immutable team_id\nregisters same team_id + exactly one tag\nlocally observes max_capacity and running_count
+[*] --> ExAvail : Executor starts\nscope + tag immutable\nlocally observes max_capacity, running_count
 
-ExAvail --> ExFull : Executor local decision\nrunning_count >= max_capacity
-ExFull --> ExAvail : Executor local decision\nlocal runtime terminates\nrunning_count drops
+ExAvail --> ExFull : Executor local\nrunning_count >= max_capacity
+ExFull --> ExAvail : Executor local\nlocal runtime terminates
 
 note right of ExAvail
-  Executor-owned local decision.
-  When available, the Executor may discover
-  only created tasks matching both its
-  authenticated immutable team_id and its
-  single registered tag, then request approval.
-  The Registry applies team + tag predicates
-  before pagination and never reads capacity.
+  When available, Executor discovers
+  pending tasks matching eligibility
+  and tag, ordered (ingested_at ASC,
+  task_id ASC), then claims oldest
+  eligible pending with command_id.
+  Only starts runtime after 200 claimed.
 end note
 
 note right of ExFull
-  Executor-owned local decision.
-  When full, the Executor stops discovery and
-  approval requests. The Registry is not the
-  capacity scheduler and emits no capacity-based
-  rejection. Team ownership remains unchanged.
+  When full, Executor stops discovery
+  and claim requests. Registry emits
+  no capacity-based rejection
+  (no 422 executor_at_capacity).
 end note
 
 note as TeamInvariant
-  One-team invariant:
-    Executor process and service identity belong
-    to exactly one immutable team_id.
-    Registration cannot omit or change team_id.
-    team_name is display-only and never authority.
-    Foreign task, Executor, control, environment,
-    or token identifiers are rejected locally or
-    receive the Registry's non-revealing 404.
+  scope = team: Executor bound to one
+  immutable team_id referencing existing
+  team; envelope team_id verified against
+  authenticated Executor; foreign
+  identifiers -> non-revealing 404.
+  scope = system: no team binding;
+  envelope team_id verified against
+  parent task team_id; same-team
+  requirement becomes parent-task
+  team_id verification only.
 end note
 
 note as Observations
-  Informational observation flow:
-    Executor appends executor_events with
-    executor_id NOT NULL, envelope team_id
-    equal to the authenticated Executor team,
-    event_id, event_type, occurred_at,
-    payload, and inherited team ownership.
-    In the same transaction the latest
-    max_capacity and running_count are mirrored
-    onto the same-team executors row.
-    Observations never influence Registry
-    discovery, approval, assignment, or events.
+  Executor appends executor_events with
+  executor_id NOT NULL; envelope team_id
+  matches scope. Latest max_capacity and
+  running_count mirror onto executors
+  in the same transaction. Observations
+  never gate discovery, claim, or events.
 end note
 
 note as RegistryContract
-  Registry capacity responses for an otherwise
-  eligible same-team, same-tag task are unchanged:
-    200 approved
-    409 task_already_dispatched
-    non-revealing 404 for unknown/foreign id
-    authorization rejection for invalid identity/tag
-  No 422 executor_at_capacity response exists.
+  Claim responses:
+  - 200 claimed
+  - 409 older_task_must_be_claimed_first
+  - 409 task_already_claimed
+  - same (task_id, command_id) retry is
+    idempotent 200 claimed
+  - non-revealing 404 for unknown/foreign
+  No 422 executor_at_capacity.
+end note
+
+note as ImageSource
+  resolved_image set atomically at the
+  Created transition from four-level
+  precedence. Executor uses it verbatim
+  and refuses the task if it cannot be
+  pulled or started. No local image
+  fallback; no substitution.
+end note
+
+note as Scope
+  scope = team: flowai.team_id = auth team,
+  flowai.executor_scope = team,
+  flowai.command_id = claim command_id.
+  scope = system: flowai.team_id = parent
+  task team_id, flowai.executor_scope = system,
+  flowai.command_id = claim command_id.
 end note
 
 @enduml
