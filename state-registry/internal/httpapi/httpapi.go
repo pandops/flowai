@@ -1,8 +1,10 @@
 // Package httpapi mounts the State Registry HTTP scaffold. The scaffold
 // exposes the platform health probes (/v1/livez, /v1/readyz) and, only in
-// explicit test mode, the temporary header-authenticated Section 3 routes
-// plus test observability. Production business routes remain closed until
-// their mutually authenticated service-identity adapters are implemented.
+// explicit test mode, the temporary header-authenticated Section 3 admin
+// routes, the Section 3b admin/Gateway reads, and the Section 4 listener
+// ingestion route, plus test observability. Production business routes
+// remain closed until their mutually authenticated service-identity
+// adapters are implemented.
 package httpapi
 
 import (
@@ -49,9 +51,13 @@ func Routes(serviceName, executorID string, logger *slog.Logger, checker health.
 }
 
 // RoutesWithKeyring is the explicit constructor that accepts the
-// cursor keyring. When the keyring is nil the admin list handlers are
-// NOT mounted; production startup therefore fails closed (no business
-// routes) when the cursor key configuration is unavailable.
+// cursor keyring. When the keyring is nil the admin list handlers and
+// the trusted-Gateway list adapter are NOT mounted; production startup
+// therefore fails closed (no business routes) when the cursor key
+// configuration is unavailable. The supplied first repository is
+// dynamically asserted against ListRepository and ListenerRepository;
+// neither capability is required, so a caller that only needs the
+// admin onboarding surface keeps working unchanged.
 func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, checker health.ReadinessChecker, ops *DecryptOps, keyring cursorKeyring, testMode bool, adminRepositories ...store.AdminRepository) http.Handler {
 	r := NewRouter(serviceName, logger)
 	r.Route("/v1", func(v1 chi.Router) {
@@ -74,6 +80,17 @@ func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, chec
 	if testMode && keyring != nil && len(adminRepositories) > 0 && adminRepositories[0] != nil {
 		if list, ok := adminRepositories[0].(store.ListRepository); ok {
 			RegisterGatewayList(r, logger, list, keyring)
+		}
+	}
+	// The Section 4 listener ingestion route shares the existing
+	// /v1/tasks path with the trusted-Gateway GET. RegisterListener
+	// internally guards against nil dependencies so callers that
+	// pass a non-listener repository (or nil) keep the prior 404
+	// behavior — the listener adapter is mounted only when the
+	// supplied first repository implements ListenerRepository.
+	if testMode && len(adminRepositories) > 0 && adminRepositories[0] != nil {
+		if listener, ok := adminRepositories[0].(store.ListenerRepository); ok {
+			RegisterListener(r, logger, listener)
 		}
 	}
 	return r
