@@ -11,16 +11,16 @@ For unit tests and per-service integration tests, see each service's own
 `test/` directory:
 
 - `mocked-task-server/test/server_test.go` — server unit tests (in-process)
-- `executor-docker/test/executor_test.go` — executor integration tests (in-process fakes)
-- `executor-docker/test/container_execution_test.go` — container-execution unit tests (in-process fakes)
-- `executor-docker/internal/mocks/docker/` — fake Docker client (in-process)
+- `executor_docker_opehands/test/executor_test.go` — executor integration tests (in-process fakes)
+- `executor_docker_opehands/test/container_execution_test.go` — container-execution unit tests (in-process fakes)
+- `executor_docker_opehands/internal/mocks/docker/` — fake Docker client (in-process)
 
 ## Test files
 
 | File | Tests | Style | What it covers |
 |---|---|---|---|
-| [`docker-executor/tests/executor.spec.ts`](docker-executor/tests/executor.spec.ts) | 8 | Cross-service (real binaries) | Wire-contract e2e: probes, task listing, env, registration, API surface limits |
-| [`docker-executor/tests/container-execution.spec.ts`](docker-executor/tests/container-execution.spec.ts) | 3 | Cross-service (real binaries + real Docker daemon) | Real container execution against the real OpenHands V1 agent-server (health-failure, V1 happy-path with fake LLM, V1 interrupt) |
+| [`executor_docker_opehands/tests/executor.spec.ts`](executor_docker_opehands/tests/executor.spec.ts) | 8 | Cross-service (real binaries) | Wire-contract e2e: probes, task listing, env, registration, API surface limits |
+| [`executor_docker_opehands/tests/container-execution.spec.ts`](executor_docker_opehands/tests/container-execution.spec.ts) | 3 | Cross-service (real binaries + real Docker daemon) | Real container execution against the real OpenHands V1 agent-server (health-failure, V1 happy-path with fake LLM, V1 interrupt) |
 
 **Total: 11 Playwright tests, all passing.**
 
@@ -31,7 +31,7 @@ The two files correspond to two distinct concerns:
 ## Running
 
 ```bash
-cd autotest/docker-executor
+cd autotest/executor_docker_opehands
 npm install          # one-time
 npm test             # runs all 11 tests
 npm run test:report  # opens the HTML report
@@ -52,14 +52,14 @@ The HTML report lives at `playwright-report/index.html` after every run.
 
 ### `executor.spec.ts` — Cross-service wire-contract e2e (8 tests)
 
-These tests spawn the real `mocked-task-server` and `docker-executor` binaries
+These tests spawn the real `mocked-task-server` and `executor_docker_opehands` binaries
 and drive them via Playwright's `request` fixture. The Docker daemon is **not
 required** — these tests verify that the executor talks the right protocol to
 the mocked task server.
 
 #### `mocked-task-server serves /v1/livez`
 
-- **Setup**: spawn `mocked-task-server` (port 18080) + `docker-executor` (port 18020)
+- **Setup**: spawn `mocked-task-server` (port 18080) + `executor_docker_opehands` (port 18020)
 - **Action**: `GET /v1/livez` against the mocked task server
 - **Assert**: response status is 200; `body.status === "ok"`
 - **Purpose**: confirms the executor's helper code can probe the mocked task server
@@ -89,35 +89,35 @@ the mocked task server.
 - **Purpose**: confirms the env endpoint validates required query parameters
   and returns 400 on missing `scope_token`.
 
-#### `docker-executor livez responds on the configured bind`
+#### `executor_docker_opehands livez responds on the configured bind`
 
 - **Setup**: both services spawned
-- **Action**: `GET /v1/livez` against the docker-executor
+- **Action**: `GET /v1/livez` against the executor_docker_opehands
 - **Assert**: response is 200; `body.status === "ok"`; `body.executor_id` is a non-empty string
 - **Purpose**: confirms the executor's platform health API responds on the
   configured bind address and exposes the auto-generated executor_id.
 
-#### `docker-executor readyz endpoint exists`
+#### `executor_docker_opehands readyz endpoint exists`
 
 - **Setup**: both services spawned
-- **Action**: `GET /v1/readyz` against the docker-executor
+- **Action**: `GET /v1/readyz` against the executor_docker_opehands
 - **Assert**: response is 200 or 503 (both are valid readiness states)
 - **Purpose**: confirms the readyz endpoint exists and is reachable; the
   specific status depends on whether the executor has had a chance to
   register yet (200) or is still in startup (503).
 
-#### `docker-executor platform API is limited to health probes only`
+#### `executor_docker_opehands platform API is limited to health probes only`
 
 - **Setup**: both services spawned
 - **Action**: for path in `[/v1/tasks, /v1/tasks/abc-123/events, /v1/executors]`,
-  send `POST` to the docker-executor
+  send `POST` to the executor_docker_opehands
 - **Assert**: response is 404 or 405 for all three paths
 - **Purpose**: enforces the design rule that the executor exposes ONLY
   `/v1/livez` and `/v1/readyz` on its platform health API. Task-control
   endpoints belong to the Router/State Registry surfaces, never the
   executor. A 404 on these paths confirms the surface is restricted.
 
-#### `docker-executor registers with mocked State Registry`
+#### `executor_docker_opehands registers with mocked State Registry`
 
 - **Setup**: both services spawned, executor's mocked State Registry
   endpoint is up
@@ -132,7 +132,7 @@ the mocked task server.
 ### `container-execution.spec.ts` — Real-container e2e (3 tests)
 
 These tests spawn the same services as above, but also configures the
-docker-executor to use the real OpenHands V1 agent-server image
+executor_docker_opehands to use the real OpenHands V1 agent-server image
 (`agent-openhands-image:latest`). A TCP-to-UNIX-socket proxy is set up so
 the test can drive the local podman daemon via Playwright's TCP-only request
 fixture.
@@ -153,7 +153,7 @@ docker-desktop both resolve it to the host's loopback).
 
 - **Setup**:
   - spawn TCP→UNIX proxy on a random local port
-  - spawn `mocked-task-server` (port 18081) and `docker-executor` (port 18021)
+  - spawn `mocked-task-server` (port 18081) and `executor_docker_opehands` (port 18021)
     with `DOCKER_SOCKET_PATH` pointing at the local daemon, `OPENHANDS_IMAGE`
     set to `agent-openhands-image:latest`, and the test-only port range
     20000–20010
@@ -192,7 +192,7 @@ container stays alive until test end and is removed by `stopServices`.
 #### `executor records V1 task events through the real V1 agent-server`
 
 - **Setup**:
-  - spawn `mocked-task-server` (port 18082) and `docker-executor` (port 18022)
+  - spawn `mocked-task-server` (port 18082) and `executor_docker_opehands` (port 18022)
     with the local in-process OpenAI-compatible LLM stub wired in via
     `OPENHANDS_LLM_BASE_URL=http://host.containers.internal:<fake-llm-port>/v1`
   - the executor must satisfy the V1 conversation-start contract: it
@@ -261,7 +261,7 @@ The user-facing rule (recorded in `AGENTS.md`) is:
   `autotest/` and drive real binaries via HTTP.
 
 This split is enforced by Go's `internal/` package rule: a test in
-`executor-docker/test/` cannot import `mocked-task-server/internal/...`
+`executor_docker_opehands/test/` cannot import `mocked-task-server/internal/...`
 because the latter is under a sibling service's `internal/` tree. So tests
 that genuinely need both services running **must** live in `autotest/`,
 where the cross-service import constraint is lifted.
@@ -295,7 +295,7 @@ be archived as a build artifact.
 To view the latest report after a test run:
 
 ```bash
-cd autotest/docker-executor
+cd autotest/executor_docker_opehands
 npm run test:report      # opens playwright-report/index.html in the default browser
 ```
 

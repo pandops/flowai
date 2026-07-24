@@ -1,6 +1,6 @@
-// Cross-service e2e tests where the docker-executor drives a real
-// Docker-compatible daemon (rootless podman in this environment) to
-// create + start a real container.
+// Cross-service e2e tests where the executor_docker_opehands drives a
+// real Docker-compatible daemon (rootless podman in this environment)
+// to create + start a real container.
 //
 // Prerequisites:
 //   - FLOWAI_DOCKER_SOCKET points to a Docker-compatible UNIX socket.

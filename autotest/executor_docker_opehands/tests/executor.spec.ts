@@ -1,8 +1,8 @@
-// Cross-service e2e tests for the Docker Executor.
+// Cross-service e2e tests for the executor_docker_opehands concrete Executor.
 //
-// These tests spawn both the mocked-task-server and the docker-executor as
-// real subprocesses, then drive them via Playwright's `request` fixture.
-// They verify that the executor:
+// These tests spawn both the mocked-task-server and the
+// executor_docker_opehands binary as real subprocesses, then drive them
+// via Playwright's `request` fixture. They verify that the executor:
 //   - exposes only /v1/livez and /v1/readyz on its platform API
 //   - registers with the mocked State Registry on startup
 //   - polls the Router task list and posts executor lifecycle events
@@ -35,7 +35,7 @@ test.afterAll(async () => {
   }
 });
 
-test.describe('Docker Executor cross-service e2e', () => {
+test.describe('executor_docker_opehands cross-service e2e', () => {
   test('mocked-task-server serves /v1/livez', async () => {
     const resp = await handles.api.get('/v1/livez');
     expect(resp.status()).toBe(200);
@@ -63,7 +63,7 @@ test.describe('Docker Executor cross-service e2e', () => {
     expect(resp.status()).toBe(400);
   });
 
-  test('docker-executor livez responds on the configured bind', async ({ request }) => {
+  test('executor_docker_opehands livez responds on the configured bind', async ({ request }) => {
     const resp = await request.get(`${EXECUTOR_BASE}/livez`);
     expect(resp.status()).toBe(200);
     const body = await resp.json();
@@ -72,12 +72,12 @@ test.describe('Docker Executor cross-service e2e', () => {
     expect(body.executor_id.length).toBeGreaterThan(0);
   });
 
-  test('docker-executor readyz endpoint exists', async ({ request }) => {
+  test('executor_docker_opehands readyz endpoint exists', async ({ request }) => {
     const resp = await request.get(`${EXECUTOR_BASE}/readyz`);
     expect([200, 503]).toContain(resp.status());
   });
 
-  test('docker-executor platform API is limited to health probes only', async ({ request }) => {
+  test('executor_docker_opehands platform API is limited to health probes only', async ({ request }) => {
     // Per design, the Executor exposes ONLY /v1/livez and /v1/readyz.
     // Task-control endpoints belong to the Router / State Registry surfaces,
     // never to the Executor. A 404 from any other path confirms the surface
@@ -88,7 +88,7 @@ test.describe('Docker Executor cross-service e2e', () => {
     }
   });
 
-  test('docker-executor registers with mocked State Registry', async ({ request }) => {
+  test('executor_docker_opehands registers with mocked State Registry', async ({ request }) => {
     const livez = await request.get(`${EXECUTOR_BASE}/livez`);
     expect(livez.status()).toBe(200);
     const body = await livez.json();
@@ -97,11 +97,12 @@ test.describe('Docker Executor cross-service e2e', () => {
 
     // Re-register the same executor_id. The first call returns 201 (created);
     // subsequent calls return 200 (idempotent). Either way the registration
-    // is recorded in the State Registry.
+    // is recorded in the State Registry. The concrete executor_type follows
+    // the executor_<runtime>_<tool> convention documented in AGENTS.md.
     const reReg = await handles.api.put(`/v1/executors/${executorId}`, {
       data: {
         executor_id: executorId,
-        executor_type: 'docker-openhands',
+        executor_type: 'executor_docker_opehands',
         routing_target: 'openhands',
         capacity: 2,
         running_child_count: 0,

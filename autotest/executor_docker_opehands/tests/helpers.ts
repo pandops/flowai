@@ -1,11 +1,11 @@
-// Shared helpers for the cross-service Docker Executor e2e tests.
+// Shared helpers for the cross-service executor_docker_opehands e2e tests.
 //
-// Each test spawns both the mocked-task-server and the docker-executor as
-// real subprocesses, then drives them via Playwright's `request` fixture.
-// A tiny in-process OpenAI-compatible LLM server (FakeLLM) is started
-// before each service spawn so the OpenHands V1 agent-server can
-// resolve chat completions during the real-V1 E2E tests without
-// requiring external secrets.
+// Each test spawns both the mocked-task-server and the
+// executor_docker_opehands binary as real subprocesses, then drives them
+// via Playwright's `request` fixture. A tiny in-process OpenAI-compatible
+// LLM server (FakeLLM) is started before each service spawn so the
+// OpenHands V1 agent-server can resolve chat completions during the
+// real-V1 E2E tests without requiring external secrets.
 
 import { request, APIRequestContext } from '@playwright/test';
 import { spawn, ChildProcess } from 'node:child_process';
@@ -125,7 +125,7 @@ export interface ServiceHandles {
 export interface StartOptions {
   /** Path to the mocked-task-server binary. Auto-detected if omitted. */
   mockedBinary?: string;
-  /** Path to the docker-executor binary. Auto-detected if omitted. */
+  /** Path to the executor_docker_opehands binary. Auto-detected if omitted. */
   executorBinary?: string;
   /** Routing target the executor advertises. */
   routingTarget?: string;
@@ -159,15 +159,15 @@ export interface StartOptions {
 
 export function findBinaries(): { mocked: string; executor: string; config: string } {
   const altMocked = '/tmp/mocked-task-server';
-  const altExecutor = '/tmp/docker-executor';
+  const altExecutor = '/tmp/executor_docker_opehands';
   const repo = resolve(__dirname, '..', '..', '..');
-  const config = resolve(repo, 'executor-docker', 'configs', 'docker-executor.yaml');
+  const config = resolve(repo, 'executor_docker_opehands', 'configs', 'executor_docker_opehands.yaml');
   if (existsSync(altMocked) && existsSync(altExecutor)) {
     return { mocked: altMocked, executor: altExecutor, config };
   }
   return {
     mocked: process.env.MOCKED_TASK_SERVER_BIN ?? resolve(repo, 'mocked-task-server', 'cmd', 'mocked-task-server', 'main.go'),
-    executor: process.env.DOCKER_EXECUTOR_BIN ?? resolve(repo, 'executor-docker', 'cmd', 'docker-executor', 'main.go'),
+    executor: process.env.EXECUTOR_DOCKER_OPEHANDS_BIN ?? resolve(repo, 'executor_docker_opehands', 'cmd', 'executor_docker_opehands', 'main.go'),
     config,
   };
 }

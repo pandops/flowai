@@ -1,7 +1,7 @@
 {
-  "name": "docker-executor",
+  "name": "executor_docker_opehands",
   "version": "1.0.0",
-  "description": "Cross-service Playwright e2e tests for the docker-executor.",
+  "description": "Cross-service Playwright e2e tests for the executor_docker_opehands concrete Executor service.",
   "main": "index.js",
   "directories": {
     "test": "tests"
