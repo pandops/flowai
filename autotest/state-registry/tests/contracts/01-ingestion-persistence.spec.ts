@@ -30,7 +30,7 @@ import {
   gatewayFor,
   type IdentityContext,
 } from '../../fixtures/identities';
-import { bootstrapTeam, ingestPendingTask } from './_setup';
+import { bootstrapTeam, ingestPendingTask, retryPendingTask } from './_setup';
 
 let worker: RegistryWorker;
 
@@ -152,7 +152,7 @@ test('v0002.2 listener dedup returns the existing canonical pending task for sam
     });
 
     await test.step('same-team retry returns the same canonical task_id and appends no new event', async () => {
-      const retry = await ingestPendingTask(listener, worker.baseUrl, {
+      const retry = await retryPendingTask(listener, worker.baseUrl, {
         team_id: team.team_id,
         source_system_id: sourceSystem.source_system_id,
         source_id: 'JIRA-142',
@@ -193,7 +193,7 @@ test('v0002.32 team-owned durable state survives restart (ingested_at, claim, ev
   const initialIngestedAt = initialTask.ingested_at;
 
   await test.step('listener retry identifies the canonical task with no event append', async () => {
-    const retry = await ingestPendingTask(listener, worker.baseUrl, {
+    const retry = await retryPendingTask(listener, worker.baseUrl, {
       team_id: team.team_id,
       source_system_id: sourceSystem.source_system_id,
       source_id: 'JIRA-310',

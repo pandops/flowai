@@ -305,6 +305,25 @@ export async function ingestPendingTask(
   }
 }
 
+export async function retryPendingTask(
+  listener: IdentityContext,
+  baseUrl: string,
+  body: TaskIngestionBody,
+): Promise<TaskResource> {
+  const api = await listener.api(baseUrl);
+  try {
+    const resp = await api.post('/v1/tasks', { data: body });
+    if (resp.status() !== 200) {
+      throw new Error(
+        `retryPendingTask expected 200, received ${String(resp.status())}; body=${await resp.text()}`,
+      );
+    }
+    return (await resp.json()) as TaskResource;
+  } finally {
+    await api.dispose();
+  }
+}
+
 export async function registerExecutor(
   executor: IdentityContext,
   baseUrl: string,
