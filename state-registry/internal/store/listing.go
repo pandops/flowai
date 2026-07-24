@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -199,64 +198,9 @@ func (s *Store) ListTasks(ctx context.Context, filter platform.AdminTaskFilter, 
 	out := make([]platform.TaskListEntry, 0, fetchLimit)
 	var last TaskAfter
 	for rows.Next() {
-		var (
-			entry       platform.TaskListEntry
-			payload     []byte
-			owner       sql.NullString
-			exec        sql.NullString
-			projectID   sql.NullString
-			environment sql.NullString
-			image       []byte
-			resolvedImg []byte
-			imageSrc    sql.NullString
-			ingestedAt  time.Time
-			claimedAt   sql.NullTime
-		)
-		if err := rows.Scan(
-			&entry.TaskID, &entry.TeamID, &entry.SourceSystemID, &entry.SourceID, &entry.TaskTypeID,
-			&entry.RequiredTag, &payload, &entry.CurrentState, &owner, &exec,
-			&projectID, &environment,
-			&image, &resolvedImg, &imageSrc,
-			&ingestedAt, &claimedAt,
-		); err != nil {
+		entry, ingestedAt, err := scanTaskRow(rows)
+		if err != nil {
 			return nil, nil, fmt.Errorf("scan task row: %w", err)
-		}
-		// The persisted payload is jsonb. Re-validate the
-		// captured bytes so an unvalidated json.RawMessage never
-		// leaks into the wire response. An empty byte slice is
-		// legal (the column is NULLable); the gateway renders an
-		// explicit null in that case.
-		entry.Payload = normalizeJSONPayload(payload)
-		if owner.Valid {
-			s := owner.String
-			entry.OwnerCommandID = &s
-		}
-		if exec.Valid {
-			s := exec.String
-			entry.ExecutorID = &s
-		}
-		if projectID.Valid {
-			s := projectID.String
-			entry.ProjectID = &s
-		}
-		if environment.Valid {
-			s := environment.String
-			entry.EnvironmentID = &s
-		}
-		if err := decodeNullableImage(image, &entry.Image); err != nil {
-			return nil, nil, fmt.Errorf("decode task image: %w", err)
-		}
-		if err := decodeNullableImage(resolvedImg, &entry.ResolvedImage); err != nil {
-			return nil, nil, fmt.Errorf("decode task resolved_image: %w", err)
-		}
-		if imageSrc.Valid {
-			s := imageSrc.String
-			entry.ImageSource = &s
-		}
-		entry.IngestedAt = formatIngestedAt(ingestedAt)
-		if claimedAt.Valid {
-			formatted := formatIngestedAt(claimedAt.Time)
-			entry.ClaimedAt = &formatted
 		}
 		if len(out) < limit {
 			last.IngestedAtUnixNano = ingestedAt.UnixNano()
