@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -142,6 +144,60 @@ func TestRegisterExecutor(t *testing.T) {
 	}
 	if out.ExecutorID != "exec-test" {
 		t.Fatalf("executor_id mismatch: %s", out.ExecutorID)
+	}
+}
+
+func TestRegisterStateRegistryExecutor(t *testing.T) {
+	teamID := "team-a"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/executors/exec-v2", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Fatalf("method=%s, want PUT", r.Method)
+		}
+		for name, want := range map[string]string{
+			"X-FlowAI-Role":        "team-executor",
+			"X-FlowAI-Team-Id":     teamID,
+			"X-FlowAI-Executor-Id": "exec-v2",
+		} {
+			if got := r.Header.Get(name); got != want {
+				t.Errorf("%s=%q, want %q", name, got, want)
+			}
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		wantFields := []string{"authorized_tag", "executor_type", "identity", "max_capacity", "running_count", "runtime_metadata", "scope", "team_id"}
+		gotFields := make([]string, 0, len(body))
+		for name := range body {
+			gotFields = append(gotFields, name)
+		}
+		sort.Strings(gotFields)
+		if !reflect.DeepEqual(gotFields, wantFields) {
+			t.Fatalf("fields=%v, want %v", gotFields, wantFields)
+		}
+		if body["authorized_tag"] != "openhands" || body["scope"] != "team" || body["team_id"] != teamID {
+			t.Fatalf("unexpected registration body: %+v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"executor_id": "exec-v2", "registered_at": time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := mockedclient.NewStateRegistry(server.URL, nil)
+	_, err := client.RegisterStateRegistryExecutor(context.Background(), "exec-v2", &platform.StateRegistryExecutorRegistration{
+		Scope: "team", TeamID: &teamID, ExecutorType: platform.ExecutorTypeDockerOpenHands,
+		Identity: "exec-v2", AuthorizedTag: "openhands", MaxCapacity: 2,
+		RunningCount: 0, RuntimeMetadata: map[string]interface{}{"runtime": "docker"},
+	})
+	if err != nil {
+		t.Fatalf("register state registry executor: %v", err)
 	}
 }
 

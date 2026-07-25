@@ -40,6 +40,15 @@ func New(baseURL string, httpClient *http.Client) *Client {
 	}
 }
 
+// NewStateRegistry returns a client rooted at the State Registry /v1 API.
+func NewStateRegistry(baseURL string, httpClient *http.Client) *Client {
+	baseURL = strings.TrimRight(baseURL, "/")
+	if !strings.HasSuffix(baseURL, "/v1") {
+		baseURL += "/v1"
+	}
+	return New(baseURL, httpClient)
+}
+
 // ListTasks calls GET /v1/tasks?filter=<routing_target>. If filter is empty,
 // the call is GET /v1/tasks (which returns all tasks per the Router spec).
 func (c *Client) ListTasks(ctx context.Context, routingTarget string) ([]platform.RouterTask, error) {
@@ -61,6 +70,29 @@ func (c *Client) RegisterExecutor(ctx context.Context, rec *platform.ExecutorRec
 	u := fmt.Sprintf("%s/executors/%s", c.baseURL, rec.ExecutorID)
 	var out platform.ExecutorRegistrationResponse
 	if err := c.doJSON(ctx, http.MethodPut, u, rec, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// RegisterStateRegistryExecutor sends the v0002 registration shape and the
+// service-identity metadata consumed by the test-mode transport adapter.
+func (c *Client) RegisterStateRegistryExecutor(ctx context.Context, executorID string, rec *platform.StateRegistryExecutorRegistration) (*platform.ExecutorRegistrationResponse, error) {
+	u := fmt.Sprintf("%s/executors/%s", c.baseURL, executorID)
+	headers := http.Header{
+		"X-FlowAI-Executor-Id": []string{executorID},
+		"X-FlowAI-Request-Id":  []string{uuid.NewString()},
+	}
+	if rec.Scope == "team" {
+		headers.Set("X-FlowAI-Role", "team-executor")
+		if rec.TeamID != nil {
+			headers.Set("X-FlowAI-Team-Id", *rec.TeamID)
+		}
+	} else {
+		headers.Set("X-FlowAI-Role", "system-executor")
+	}
+	var out platform.ExecutorRegistrationResponse
+	if err := c.doJSONHeaders(ctx, http.MethodPut, u, rec, &out, headers); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -122,6 +154,10 @@ func (c *Client) OpenEnv(ctx context.Context, executorID, routingTarget, taskID,
 }
 
 func (c *Client) doJSON(ctx context.Context, method, url string, body interface{}, out interface{}) error {
+	return c.doJSONHeaders(ctx, method, url, body, out, nil)
+}
+
+func (c *Client) doJSONHeaders(ctx context.Context, method, url string, body interface{}, out interface{}, headers http.Header) error {
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)
@@ -137,8 +173,15 @@ func (c *Client) doJSON(ctx context.Context, method, url string, body interface{
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	for name, values := range headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
 	// Generate a fresh request id per outbound call so log correlation is easy.
-	req.Header.Set("X-Request-Id", uuid.NewString())
+	if req.Header.Get("X-FlowAI-Request-Id") == "" {
+		req.Header.Set("X-Request-Id", uuid.NewString())
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err

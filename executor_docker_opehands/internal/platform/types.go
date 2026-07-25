@@ -137,8 +137,30 @@ type Action struct {
 
 // ExecutorRegistrationResponse is returned by PUT /v1/executors/{executor_id}.
 type ExecutorRegistrationResponse struct {
-	ExecutorID   string    `json:"executor_id"`
-	RegisteredAt time.Time `json:"registered_at"`
+	ExecutorID      string                 `json:"executor_id"`
+	Scope           string                 `json:"scope"`
+	TeamID          *string                `json:"team_id"`
+	ExecutorType    string                 `json:"executor_type"`
+	Identity        string                 `json:"identity"`
+	AuthorizedTag   string                 `json:"authorized_tag"`
+	MaxCapacity     int                    `json:"max_capacity"`
+	RunningCount    int                    `json:"running_count"`
+	RuntimeMetadata map[string]interface{} `json:"runtime_metadata"`
+	RegisteredAt    time.Time              `json:"registered_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+}
+
+// StateRegistryExecutorRegistration is the v0002 registration body sent to
+// the durable State Registry.
+type StateRegistryExecutorRegistration struct {
+	Scope           string                 `json:"scope"`
+	TeamID          *string                `json:"team_id"`
+	ExecutorType    string                 `json:"executor_type"`
+	Identity        string                 `json:"identity"`
+	AuthorizedTag   string                 `json:"authorized_tag"`
+	MaxCapacity     int                    `json:"max_capacity"`
+	RunningCount    int                    `json:"running_count"`
+	RuntimeMetadata map[string]interface{} `json:"runtime_metadata"`
 }
 
 // EventAppendResponse is returned by all event-append endpoints.
