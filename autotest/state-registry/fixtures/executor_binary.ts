@@ -122,7 +122,7 @@ export interface ExecutorHandles {
   teardown(): Promise<void>;
 }
 
-const RepoRoot = pathResolve(__dirname, '..', '..', '..', '..');
+const RepoRoot = pathResolve(__dirname, '..', '..', '..');
 const ExecutorBinary = (() => {
   const envOverride = process.env['EXECUTOR_DOCKER_OPEHANDS_BIN'];
   if (envOverride && envOverride.length > 0) {
@@ -137,7 +137,7 @@ const ExecutorBinary = (() => {
   );
 })();
 
-const BindPattern = /bind="127\.0\.0\.1:(\d+)"/;
+const BindPattern = /(?:"bind":"|bind=")127\.0\.0\.1:(\d+)/;
 const DefaultStartupTimeoutMs = 10_000;
 const DefaultExecutorIdTimeoutMs = 5_000;
 const CaptureMaxBytes = 64 * 1024;
@@ -330,11 +330,13 @@ export async function startExecutorBinary(
     ...process.env,
     EXECUTOR_BIND_HOST: bindHost,
     EXECUTOR_BIND_PORT: String(bindPort),
+    EXECUTOR_API_BIND: `${bindHost}:${String(bindPort)}`,
     // v0001 surface that v0001 already honours; preserved so the
     // binary boots with predictable defaults while we wait for v0002.
     ROUTING_TARGET: opts.authorizedTag ?? 'openhands',
     DOCKER_SOCKET_PATH: opts.dockerSocket ?? process.env['FLOWAI_DOCKER_SOCKET'] ?? '',
     OPENHANDS_IMAGE: opts.openHandsImage ?? opts.localImage ?? '',
+    OPENHANDS_AGENT_PROFILE_ID: process.env['OPENHANDS_AGENT_PROFILE_ID'] ?? 'flowai-default',
     EXECUTOR_POLL_INTERVAL: `${opts.pollIntervalMs ?? 1_000}ms`,
     // Surface all future-facing options verbatim so the binary can pick
     // them up once the v0002 client implementation lands.

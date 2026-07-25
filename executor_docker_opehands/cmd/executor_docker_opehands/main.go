@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,6 +48,9 @@ func main() {
 		os.Exit(1)
 	}
 	mocked := mockedclient.New(cfg.MockedServerURL, nil)
+	if cfg.StateRegistryURL != "" {
+		mocked = mockedclient.NewStateRegistry(cfg.StateRegistryURL, nil)
+	}
 
 	exec := executor.New(cfg, docker, mocked, logger)
 
@@ -80,10 +84,17 @@ func main() {
 	// Append initial executor events.
 	exec.Logger().Info("executor_docker_opehands starting", "executor_id", cfg.ExecutorID, "image", cfg.OpenHandsImage)
 
+	listener, err := net.Listen("tcp", httpServer.Addr)
+	if err != nil {
+		logger.Error("platform health API listen failed", "err", err.Error())
+		os.Exit(1)
+	}
+	httpServer.Addr = listener.Addr().String()
+
 	// Run the HTTP server in the background.
 	go func() {
 		exec.Logger().Info("platform health API listening", "bind", httpServer.Addr)
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			exec.Logger().Error("http server exited with error", "err", err.Error())
 			stop()
 		}

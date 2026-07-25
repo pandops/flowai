@@ -87,6 +87,10 @@ type Config struct {
 	ImagePullPolicy      string        `yaml:"image_pull_policy"`
 	LogLevel             string        `yaml:"log_level"`
 	MockedServerURL      string        `yaml:"mocked_server_url"`
+	StateRegistryURL     string        `yaml:"state_registry_url"`
+	Scope                string        `yaml:"scope"`
+	TeamID               string        `yaml:"team_id"`
+	AuthorizedTag        string        `yaml:"authorized_tag"`
 	EnvScopeToken        string        `yaml:"env_scope_token"`
 	PollInterval         time.Duration `yaml:"poll_interval"`
 	WebSocketDialTimeout time.Duration `yaml:"websocket_dial_timeout"`
@@ -167,6 +171,10 @@ func overrideEnv(cfg *Config) {
 	cfg.ImagePullPolicy = envOr("IMAGE_PULL_POLICY", cfg.ImagePullPolicy)
 	cfg.LogLevel = envOr("LOG_LEVEL", cfg.LogLevel)
 	cfg.MockedServerURL = envOr("MOCKED_SERVER_URL", cfg.MockedServerURL)
+	cfg.StateRegistryURL = envOr("EXECUTOR_STATE_REGISTRY_URL", cfg.StateRegistryURL)
+	cfg.Scope = envOr("EXECUTOR_SCOPE", cfg.Scope)
+	cfg.TeamID = envOr("EXECUTOR_TEAM_ID", cfg.TeamID)
+	cfg.AuthorizedTag = envOr("EXECUTOR_AUTHORIZED_TAG", cfg.AuthorizedTag)
 	cfg.EnvScopeToken = envOr("ENV_SCOPE_TOKEN", cfg.EnvScopeToken)
 	cfg.PollInterval = envDur("EXECUTOR_POLL_INTERVAL", cfg.PollInterval)
 	cfg.WebSocketDialTimeout = envDur("OPENHANDS_WS_DIAL_TIMEOUT_SECONDS", cfg.WebSocketDialTimeout)
@@ -194,6 +202,20 @@ func (c *Config) Validate() error {
 	}
 	if c.RoutingTarget == "" {
 		return errors.New("ROUTING_TARGET must be non-empty")
+	}
+	if c.StateRegistryURL != "" {
+		if c.Scope != "team" && c.Scope != "system" {
+			return errors.New("EXECUTOR_SCOPE must be team or system")
+		}
+		if c.Scope == "team" && c.TeamID == "" {
+			return errors.New("EXECUTOR_TEAM_ID is required for team scope")
+		}
+		if c.Scope == "system" && c.TeamID != "" {
+			return errors.New("EXECUTOR_TEAM_ID must be empty for system scope")
+		}
+		if c.AuthorizedTag == "" {
+			return errors.New("EXECUTOR_AUTHORIZED_TAG must be non-empty")
+		}
 	}
 	if c.WebSocketDialTimeout <= 0 {
 		return errors.New("OPENHANDS_WS_DIAL_TIMEOUT_SECONDS must be > 0")
@@ -479,9 +501,11 @@ func (e *Executor) Run(ctx context.Context) error {
 	e.runCancel = runCancel
 	defer runCancel()
 
-	dockerCtx, dockerCancel := context.WithCancel(runCtx)
-	go e.subscribeDockerEvents(dockerCtx)
-	defer dockerCancel()
+	if e.cfg.StateRegistryURL == "" {
+		dockerCtx, dockerCancel := context.WithCancel(runCtx)
+		go e.subscribeDockerEvents(dockerCtx)
+		defer dockerCancel()
+	}
 
 	pollErr := e.pollLoop(runCtx)
 	e.setState(StateStopping)
@@ -521,6 +545,34 @@ func (e *Executor) markFatal(phase string) {
 
 func (e *Executor) register(ctx context.Context) error {
 	e.setState(StateRegistering)
+	if e.cfg.StateRegistryURL != "" {
+		var teamID *string
+		if e.cfg.Scope == "team" {
+			teamID = &e.cfg.TeamID
+		}
+		rec := &platform.StateRegistryExecutorRegistration{
+			Scope: e.cfg.Scope, TeamID: teamID,
+			ExecutorType: platform.ExecutorTypeDockerOpenHands,
+			Identity:     e.cfg.ExecutorID, AuthorizedTag: e.cfg.AuthorizedTag,
+			MaxCapacity: e.cfg.MaxContainers, RunningCount: 0,
+			RuntimeMetadata: map[string]interface{}{
+				"runtime": "docker", "tool": "openhands", "cleanup_id": e.cleanup,
+			},
+		}
+		registered, err := e.mocked.RegisterStateRegistryExecutor(ctx, e.cfg.ExecutorID, rec)
+		if err != nil {
+			return err
+		}
+		if registered.ExecutorID != e.cfg.ExecutorID ||
+			registered.Scope != rec.Scope ||
+			!sameOptionalString(registered.TeamID, rec.TeamID) ||
+			registered.ExecutorType != rec.ExecutorType ||
+			registered.Identity != rec.Identity ||
+			registered.AuthorizedTag != rec.AuthorizedTag {
+			return errors.New("State Registry returned a registration that does not match the configured Executor binding")
+		}
+		return nil
+	}
 	rec := &platform.ExecutorRecord{
 		ExecutorID:        e.cfg.ExecutorID,
 		ExecutorType:      platform.ExecutorTypeDockerOpenHands,
@@ -540,6 +592,10 @@ func (e *Executor) register(ctx context.Context) error {
 	}
 	e.appendExecutorEventBestEffort(ctx, platform.ExecutorEventRegistered, nil)
 	return nil
+}
+
+func sameOptionalString(left, right *string) bool {
+	return (left == nil && right == nil) || (left != nil && right != nil && *left == *right)
 }
 
 func (e *Executor) cleanupLeftover(ctx context.Context) error {
