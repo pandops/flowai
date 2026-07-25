@@ -65,7 +65,11 @@ func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, chec
 		if testMode {
 			v1.Get("/_test/decrypt-ops", ops.Handler())
 			if len(adminRepositories) > 0 && adminRepositories[0] != nil {
-				RegisterExecutorRegistrationGuard(v1, logger, adminRepositories[0])
+				if executorRepo, ok := adminRepositories[0].(store.ExecutorRepository); ok {
+					RegisterExecutor(v1, logger, adminRepositories[0], executorRepo)
+				} else {
+					RegisterExecutorRegistrationGuard(v1, logger, adminRepositories[0])
+				}
 			}
 		}
 	})

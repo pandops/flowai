@@ -289,7 +289,7 @@ test('v0002.63 Executor registration never creates or updates a team; only POST 
       expect(resp.status(), 'admin team create returns 201').toBe(201);
       realTeamId = (await resp.json() as { team_id: string }).team_id;
     });
-    await test.step('known team passes the Section 3 guard and reaches the explicit registration boundary', async () => {
+    await test.step('known team registration succeeds without mutating the team', async () => {
       const executor = teamExecutorFor({ teamId: realTeamId, executorId: uniqueExecutorId() });
       const api = await executor.api(worker.baseUrl);
       try {
@@ -306,7 +306,11 @@ test('v0002.63 Executor registration never creates or updates a team; only POST 
             runtime_metadata: {},
           },
         });
-        expect(resp.status(), 'known team is not rejected as team_unknown; full registration lands in Section 5').toBe(501);
+        expect(resp.status(), 'known team registration succeeds').toBe(200);
+        const body = await resp.json() as { executor_id: string; scope: string; team_id: string | null };
+        expect(body.executor_id).toBe(executorId);
+        expect(body.scope).toBe('team');
+        expect(body.team_id).toBe(realTeamId);
       } finally {
         await api.dispose();
       }
