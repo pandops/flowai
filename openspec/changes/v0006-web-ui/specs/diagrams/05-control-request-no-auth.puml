@@ -1,20 +1,42 @@
 ' diagram-type: sequence
 @startuml
-title v0006-web-ui - configured bootstrap operator + team control request without auth
+title v0006-web-ui - team-owned task control request without auth
 
-participant "Web UI / Browser" as UI
-participant "API Gateway" as GW
-participant "State Registry" as State
+actor "Operator" as operator_actor
+participant "Web UI / Browser" as web_browser
+participant "API Gateway" as api_gateway
+participant "State Registry" as state_registry
+database "PostgreSQL" as state_database
 
-UI -> GW : inject / cancel / rerun request\n(no selected team, no operator)
-GW -> GW : strip client X-FlowAI-* context\nvalidate configured bootstrap operator + team\ngenerate request_id
-alt configured bootstrap operator or team context invalid
-  GW --> UI : reject before control request
-else valid configured bootstrap operator and team
-  GW -> State : POST control record with configured Operator-ID\n(audit attribution only), configured Team-ID,\ndisplay-only Team-Name, Request-ID
-  State -> State : authorize task ownership by team_id\nand record canonical audit/control state\nattributed to operator_id + request_id
-  State --> GW : accepted or ownership denial
-  GW --> UI : status, headers, and body unchanged
+operator_actor -> web_browser : request supported task intervention\n(no selected team or asserted operator)
+activate web_browser
+web_browser -> api_gateway : POST operator control\n(no internal identity headers)
+activate api_gateway
+api_gateway -> api_gateway : strip forged X-FlowAI-* context\nvalidate required operator_id and team_id\nvalidate optional team_name when supplied\ngenerate request_id
+
+alt required context invalid\nor supplied team_name empty/invalid
+  api_gateway --> web_browser : reject before control request
+else target is /admin/*
+  api_gateway --> web_browser : reject before State Registry call
+else valid allowlisted control request
+  api_gateway -> state_registry : POST control with configured Operator-ID, Team-ID,\noptional Team-Name only when present, Request-ID
+  activate state_registry
+  state_registry -> state_registry : authorize task ownership by team_id\nvalidate control and idempotency key\nprepare canonical audit metadata
+  state_registry -> state_database : atomically persist control + audit entry
+  activate state_database
+  state_database --> state_registry : accepted control record
+  deactivate state_database
+  state_registry --> api_gateway : accepted record or ownership denial
+  deactivate state_registry
+  api_gateway --> web_browser : status, headers, body unchanged
 end
+deactivate api_gateway
+web_browser --> operator_actor : render accepted or denied result
+deactivate web_browser
+
+note over api_gateway, state_registry
+  Gateway enriches transport context only.
+  State Registry remains the task/control/audit authority.
+end note
 
 @enduml

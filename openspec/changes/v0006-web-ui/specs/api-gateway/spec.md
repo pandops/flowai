@@ -2,7 +2,17 @@
 
 ### Requirement: Gateway runs configured single-team no-auth proxy mode
 
-The API Gateway SHALL accept Web UI REST requests and WebSocket upgrades without login or bearer-token validation only in a bootstrap mode bound to exactly one deployment-configured non-empty bootstrap `operator_id`, one deployment-configured non-empty stable `team_id`, and one deployment-configured non-empty canonical `team_name`. It SHALL refuse to serve operator proxy traffic when any of the configured `operator_id`, `team_id`, or `team_name` is missing, empty, ambiguous, or otherwise invalid. The configured bootstrap `operator_id` is audit attribution context only and SHALL NOT be treated as an authentication proof. The stable `team_id` SHALL scope access; `team_name` SHALL be display-only and SHALL NOT be used for authorization or ownership decisions.
+The API Gateway SHALL accept Web UI REST requests and WebSocket upgrades
+without login or bearer-token validation only in a bootstrap mode bound to
+exactly one deployment-configured non-empty bootstrap `operator_id`, one
+deployment-configured non-empty stable `team_id`, and at most one optional
+canonical display-only `team_name`. It SHALL refuse to serve operator proxy
+traffic when `operator_id` or `team_id` is missing, empty, ambiguous, or
+otherwise invalid, and when a supplied `team_name` is empty or invalid. An
+omitted `team_name` SHALL remain valid. The configured bootstrap `operator_id`
+is audit attribution context only and SHALL NOT be treated as an authentication
+proof. The stable `team_id` SHALL scope access; `team_name` SHALL be
+display-only and SHALL NOT be used for authorization or ownership decisions.
 
 #### Scenario: Web UI request reaches configured no-auth gateway
 
@@ -19,9 +29,20 @@ The API Gateway SHALL accept Web UI REST requests and WebSocket upgrades without
 - **WHEN** the Gateway has a missing, empty, or ambiguous configured team identity
 - **THEN** it rejects operator proxy traffic before creating a State Registry child request
 
+#### Scenario: Optional team name is absent
+
+- **WHEN** the Gateway has valid configured `operator_id` and `team_id` values
+  and no configured `team_name`
+- **THEN** it serves operator proxy traffic without injecting
+  `X-FlowAI-Team-Name`
+
 ### Requirement: Gateway routes only to allowed backend services
 
-The API Gateway SHALL proxy Web UI requests only to State Registry and SHALL NOT configure or call an Executor or any other platform backend.
+The API Gateway SHALL proxy allowlisted operator requests only to State
+Registry and SHALL NOT configure or call an Executor or any other platform
+backend. Its operator allowlist SHALL exclude every `/admin/*` route,
+including team, source-system, and task-type registration and the global tag
+and task projections reserved for authenticated system administrators.
 
 #### Scenario: Web UI reads task state
 
@@ -33,14 +54,23 @@ The API Gateway SHALL proxy Web UI requests only to State Registry and SHALL NOT
 - **WHEN** the Web UI submits an executor environment or secret write
 - **THEN** the API Gateway creates a child request only to State Registry
 
+#### Scenario: Operator request targets an admin route
+
+- **WHEN** a Web UI client requests any `/admin/*` route through the Gateway
+- **THEN** the Gateway rejects the request before creating a State Registry
+  child request
+
 ### Requirement: Gateway establishes trusted configured-team context
 
-For every proxied REST request and WebSocket subscription, the API Gateway SHALL remove all client-supplied internal identity/context headers, including `X-FlowAI-Operator-ID`, `X-FlowAI-Team-ID`, `X-FlowAI-Team-Name`, and `X-FlowAI-Request-ID`; SHALL inject the configured bootstrap `operator_id`, the configured `team_id`, the configured display-only `team_name`, and a gateway-generated request ID into the State Registry child request; and SHALL treat the configured bootstrap `operator_id` as audit attribution only and not as an authentication proof. Every child request SHALL therefore be attributed to the configured bootstrap operator and scoped to the configured team regardless of browser-supplied values.
+For every proxied REST request and WebSocket subscription, the API Gateway SHALL remove all client-supplied internal identity/context headers, including `X-FlowAI-Operator-ID`, `X-FlowAI-Team-ID`, `X-FlowAI-Team-Name`, and `X-FlowAI-Request-ID`; SHALL inject the configured bootstrap `operator_id`, the configured `team_id`, the optional configured display-only `team_name` only when present, and a gateway-generated request ID into the State Registry child request; and SHALL treat the configured bootstrap `operator_id` as audit attribution only and not as an authentication proof. Every child request SHALL therefore be attributed to the configured bootstrap operator and scoped to the configured team regardless of browser-supplied values.
 
 #### Scenario: Browser spoofs internal identity headers
 
 - **WHEN** a REST request or WebSocket upgrade supplies forged internal operator, team, team-name, or request identifiers
-- **THEN** the Gateway discards those values and sends only gateway-established configured bootstrap operator, configured team, configured display-only team name, and a gateway-generated request ID to State Registry
+- **THEN** the Gateway discards those values and sends only the
+  gateway-established configured bootstrap operator, configured team,
+  optional configured display-only team name when present, and a
+  gateway-generated request ID to State Registry
 
 #### Scenario: Gateway creates WebSocket subscription
 

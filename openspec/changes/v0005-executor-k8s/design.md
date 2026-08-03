@@ -3,25 +3,24 @@
 ## Runtime Shape
 
 - K8s Executor runs inside or against a Kubernetes cluster.
-- On startup it authenticates to the State Registry as one Executor
-  service identity. That identity is bound to one `team_id` by the
-  authentication layer; the Executor never invents or rotates `team_id`
-  itself. The v0005 K8s Executor registers with `scope = team` only;
-  it does not register or operate with `scope = system`. The State
-  Registry's `scope = system` schema option exists for other Executor
-  implementations; v0005 K8s is not one of them.
-- The Executor registers with the State Registry as
-  `executor_type = "k8s"` with `scope = team`, exactly one immutable
-  `team_id` referencing an existing team and matching the team bound
-  to the authenticated Executor service identity, exactly one
-  `authorized_tag`, an optional display-only `team_name`, observed
-  `max_capacity`, observed `running_count`, and runtime metadata. The
-  Registry stores the supplied `team_id` as the Executor's authoritative
-  team; the value is immutable for the lifetime of the Executor record
-  and is never changed by re-registration, restart, or reassignment.
+- On startup it authenticates to the State Registry as one Executor service
+  identity and registers exactly one immutable ownership `scope` from
+  `{team, system}`. Team scope binds the identity to exactly one immutable
+  `team_id`; system scope carries no team binding. The Executor never invents
+  or rotates task ownership.
+- The concrete directory, command, config, binary, import path, wire
+  `executor_type`, slog/probe service name, and regression constant use
+  `executor_k8s_<tool>`, with the agent tool selected before implementation.
+  The OpenSpec change ID remains `v0005-executor-k8s`.
+- Registration supplies exactly one `authorized_tag`, observed
+  `max_capacity`, observed `running_count`, and runtime metadata. Team scope
+  also supplies one identity-bound `team_id` and an optional display-only
+  `team_name`; system scope supplies neither team field. Scope and any team
+  binding are immutable across re-registration and restart.
 - It discovers eligible `pending` tasks only where the task's
-  `required_tag` equals the Executor's single `authorized_tag` AND the
-  task's `team_id` equals the Executor's bound `team_id`. The
+  `required_tag` equals the Executor's single `authorized_tag`; team scope
+  additionally matches the bound `team_id`, while system scope spans teams
+  and receives metadata-only summaries until claim. The
   eligibility predicate is applied BEFORE FIFO ordering
   `(ingested_at ASC, task_id ASC)`, BEFORE pagination, and BEFORE
   counts. Discovery is read-only, SHALL NOT reserve or assign a task,
@@ -58,7 +57,7 @@
   `flowai.resolved_image_source`, and the runtime label
   `flowai.runtime=k8s`. The claim-conflict taxonomy is: unknown or
   foreign `task_id` returns non-revealing `404`; same `(task_id,
-  command_id)` retry by the original Executor returns the original
+command_id)` retry by the original Executor returns the original
   `200 claimed` body with no new event; a different `command_id` for an
   already-claimed task returns `409 task_already_claimed`; an eligible
   non-oldest task returns `409 older_task_must_be_claimed_first`. No
@@ -71,13 +70,13 @@
 - The assigned Executor emits a `running` task event before creating
   the Pod and emits exactly one of `finished` or `failed` at terminal
   state. Every Executor-emitted task or self event carries `task_id`
-  (when applicable), `executor_id`, `team_id` (equal to the v0005
-  team-owned Executor's bound team for every event), `event_id`,
+  (when applicable), `executor_id`, `team_id` (equal to the team-owned
+  Executor's bound team or the system-owned Executor's assigned task team), `event_id`,
   `event_type`, `occurred_at`, and `payload`. The Registry event-denial taxonomy is: an authenticated
   Executor whose envelope `team_id` differs from its immutable service
   binding is rejected with `403 team_mismatch`; a same-team Executor
   that is not the recorded `tasks.executor_id` is rejected with `403
-  not_assigned`; a foreign task or Executor point identifier is rejected
+not_assigned`; a foreign task or Executor point identifier is rejected
   with the same non-revealing `404` shape used for an unknown
   identifier. No `403` response is returned for a foreign-team probe.
 - It decides locally when to discover, claim, and start a Pod based on
@@ -121,15 +120,16 @@
   (including a null `project_id` for a project-scoped environment, or
   a missing `project_id`), `team_id` mismatch, terminal task state, or
   not-assigned caller — returns the same non-revealing `404
-  environment_unknown_or_unavailable` shape with zero provider
+environment_unknown_or_unavailable` shape with zero provider
   decrypt operations and no token plaintext, individual claim values
   beyond identifier-level metadata, MAC bytes, key material, or
   derived key bytes in logs, audit entries, or error responses.
   Plaintext values live in memory only while the response is composed
   and are injected only into that task's Pod.
 - It reads pending operator controls only for tasks assigned to the
-  Executor in the Executor's bound `team_id`. A pending control whose
-  `task_id` belongs to a different team is not read or applied.
+  Executor and uses the claimed task's immutable `team_id` as the envelope.
+  Team scope cannot read a foreign-team task; system scope gains no authority
+  beyond tasks canonically assigned to that Executor.
 - It observes Pods it started and writes running-child-count and
   lifecycle events to State Registry as informational observations only.
   Self events carry `team_id` so the Registry can scope observation
@@ -138,7 +138,7 @@
 - After a restart it reconciles by re-reading its already-claimed,
   non-terminal tasks from durable State Registry state using the
   canonical assignment identity `tasks.executor_id =
-  authenticated_executor_id`. The K8s Executor SHALL NOT filter by
+authenticated_executor_id`. The K8s Executor SHALL NOT filter by
   `tasks.owner_command_id` during reconciliation because `command_id`
   is a claim-time identifier that the Executor uses to identify which
   Pod owns a given task, not a query filter for re-reading assignment.

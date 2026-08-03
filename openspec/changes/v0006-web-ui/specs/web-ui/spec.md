@@ -2,7 +2,14 @@
 
 ### Requirement: Web UI renders the configured-team operator surface
 
-The Web UI SHALL render task lists, task detail views with live event streams, and configuration pages for automations, executors, controls, environments, and secrets in configured single-team no-auth bootstrap mode. It SHALL display the canonical configured `team_name` as presentation context, SHALL NOT use `team_name` for authorization, and SHALL NOT provide a team selector, team CRUD, or team membership UI.
+The Web UI SHALL render task lists, task detail views with live event streams,
+control requests, and team-owned environment and secret configuration in
+configured single-team no-auth bootstrap mode. It SHALL display the optional
+canonical configured `team_name` as presentation context when present, SHALL
+remain functional when it is absent, SHALL NOT use `team_name` for
+authorization, and SHALL NOT provide a team selector, team CRUD, team
+membership UI, source-system registration, task-type registration, or global
+admin projections.
 
 #### Scenario: Operator opens the configured-team dashboard
 
@@ -20,7 +27,18 @@ The Web UI SHALL send all backend HTTP and WebSocket traffic through the API Gat
 
 ### Requirement: Operator actions use configured-team no-auth gateway-mediated APIs
 
-The Web UI SHALL use API Gateway routes for state reads, executor environment writes, secret writes, task intervention requests, and platform configuration changes without implementing login or token handling in this change. Every operator action SHALL remain within the Gateway's deployment-configured team context.
+The Web UI SHALL use API Gateway routes for operator state reads, team-owned
+environment writes, secret writes, and task intervention requests without
+implementing login or token handling in this change. Every operator action
+SHALL remain within the Gateway's deployment-configured team context. It
+SHALL NOT call or expose `/admin/teams`, `/admin/source-systems`,
+`/admin/task-types`, `/admin/tags`, or `/admin/tasks`.
+
+#### Scenario: Operator cannot access system-administrator APIs
+
+- **WHEN** an operator inspects or uses the no-auth bootstrap Web UI
+- **THEN** no system-administrator registration or global projection control
+  is rendered and no browser request targets an `/admin/*` route
 
 #### Scenario: Operator stores executor environment data
 

@@ -4,11 +4,18 @@
 
 - Web UI has one backend base URL: API Gateway.
 - API Gateway runs in no-auth bootstrap mode for exactly one deployment-configured team and exactly one deployment-configured bootstrap operator.
-- Deployment configuration supplies one non-empty stable `team_id`, one non-empty canonical display-only `team_name`, and one non-empty bootstrap `operator_id`. A missing, empty, or ambiguous value for any of the three prevents the Gateway from serving operator proxy traffic.
+- Deployment configuration supplies one non-empty stable `team_id`, one
+  non-empty bootstrap `operator_id`, and MAY supply one canonical display-only
+  `team_name`. A missing, empty, or ambiguous required identity prevents the
+  Gateway from serving operator proxy traffic; an omitted `team_name` is valid,
+  while a supplied empty or invalid name is rejected.
 - `team_id` is the only team value used for scoping and authorization; `team_name` is display-only and never an ownership key.
 - The configured bootstrap `operator_id` is audit attribution only. It is not an authentication proof, is not bound to a session, and does not change the Gateway's no-auth proxy behavior. It is replaced by the authenticated canonical `operator_id` once `v0007-auth` introduces bearer tokens.
 - API Gateway proxies every allowed platform REST request and live-event WebSocket only to State Registry.
 - State Registry remains authoritative for the ownership and visibility of tasks, events, controls, environments, and secrets, and uses trusted `team_id` plus the trusted `operator_id` (bootstrap or authenticated) for audit attribution.
+- The operator Gateway allowlist excludes every `/admin/*` route. Team,
+  source-system, and task-type registration plus global tag/task projections
+  remain direct authenticated system-administrator calls to State Registry.
 
 ## Trusted Downstream Context
 
@@ -17,16 +24,20 @@
 - For every REST child request and WebSocket subscription child request, API Gateway injects:
   - `X-FlowAI-Operator-ID` set to the configured bootstrap `operator_id`;
   - `X-FlowAI-Team-ID` set to the configured `team_id`;
-  - `X-FlowAI-Team-Name` set to the configured display-only `team_name`;
+  - `X-FlowAI-Team-Name` set only when the optional configured display-only
+    `team_name` is present;
   - `X-FlowAI-Request-ID` set to a gateway-generated request identifier.
 - State Registry scopes resource access from the trusted `team_id` and attributes mutations and reads to the trusted `operator_id` plus the generated `request_id`; it may use `team_name` only for display metadata.
 - Header removal and trusted context injection are security transport enrichment, not platform business logic or response transformation.
 
 ## Web UI Behavior
 
-- Web UI displays the configured canonical team name returned through the Gateway as deployment context.
+- Web UI displays the configured canonical team name returned through the
+  Gateway when present and remains functional without it.
 - Web UI does not display, supply, select, or otherwise assert the configured bootstrap `operator_id`.
-- Web UI does not offer a team selector, membership management, or team administration.
+- Web UI does not offer a team selector, membership management, team
+  administration, source-system registration, task-type registration, or
+  global admin projections.
 - Web UI never generates, persists, or relies on `X-FlowAI-Operator-ID` or any other internal identity/context header and never calls State Registry or an Executor directly.
 
 ## Response and Topology Boundaries

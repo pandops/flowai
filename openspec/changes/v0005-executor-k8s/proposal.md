@@ -5,9 +5,10 @@
 After durable State Registry task intake and FIFO claim exist, FlowAI
 needs a cluster Executor that runs claimed tasks as Kubernetes Pods
 without changing State Registry ownership. The platform also needs
-tenant isolation between teams so a K8s Executor registered for one team
-cannot discover, claim, emit events against, open environments for, or
-read controls of tasks that belong to another team.
+tenant isolation between teams while preserving the State Registry's
+registration-time ownership choice: a team-owned K8s Executor is confined
+to one immutable team, while a system-owned K8s Executor may dispatch
+matching work across teams without changing the owning `tasks.team_id`.
 
 This change aligns the K8s Executor with the revised v0002 State
 Registry client contract: pending FIFO discovery, atomic FIFO claim with
@@ -21,15 +22,15 @@ foreign, `409 task_already_claimed` for different command on a claimed
 task, `409 older_task_must_be_claimed_first` for eligible non-oldest,
 `200 claimed` for the same `(task_id, command_id)` retry by the original
 Executor), and the removal of the legacy `created` -> `dispatched`
-state and `dispatched` event. v0005 keeps its team-bound scope; the
-v0002 system-owned scope is preserved as a wire-compatible
-configuration option but is not the v0005 default.
+state and `dispatched` event. The same concrete K8s service supports both
+ownership scopes; scope is chosen at first registration and is immutable.
 
-The change introduces the team binding contract for the K8s Executor:
-one immutable `team_id` per Executor (when `scope = team`), one
-`authorized_tag`, both bound to the authenticated Executor service
-identity. The State Registry treats `team_id` as authoritative for
-matching and authorization; `team_name` is a display-only label.
+The change applies the current Executor ownership contract to the K8s
+implementation: one immutable `scope` from `{team, system}`, one
+`authorized_tag`, and, only for `scope = team`, one immutable `team_id`
+bound to the authenticated Executor service identity. The State Registry
+treats `team_id` as authoritative for task ownership and treats
+`team_name` as a display-only label.
 Cross-team interactions are non-revealing in two distinct ways:
 collection-level discovery (the read-side task list) is filtered by
 `team_id` BEFORE result shaping, so a tag whose matching `pending`
@@ -55,23 +56,24 @@ events.
 
 ## What Changes
 
-- Add the K8s Executor as a separate executor type, registered as
-  `executor_type = "k8s"`.
-- Require every K8s Executor registration to declare `scope = team`,
-  exactly one immutable `team_id` referencing an existing team and
-  matching the team bound to the authenticated Executor service
-  identity, exactly one `authorized_tag`, observed `max_capacity`,
-  observed `running_count`, an optional display-only `team_name`, and
-  runtime metadata, all bound to the authenticated Executor service
-  identity. The v0005 K8s Executor SHALL NOT register with
-  `scope = system`.
-- Make `team_id` authoritative for the team-owned Executor: the value
+- Add a concrete K8s Executor service named `executor_k8s_<tool>`, where
+  the agent tool is selected before implementation. Its directory, binary,
+  config, import path, wire `executor_type`, slog/probe service name, and
+  constant regression test derive from that same concrete identifier. The
+  change ID remains `v0005-executor-k8s`.
+- Require every K8s Executor registration to declare exactly one immutable
+  `scope` from `{team, system}`, exactly one `authorized_tag`, observed
+  `max_capacity`, observed `running_count`, and runtime metadata. Team scope
+  requires exactly one immutable identity-bound `team_id` and permits an
+  optional display-only `team_name`; system scope requires no `team_id` and
+  no team binding.
+- Make `team_id` authoritative for a team-owned Executor: the value
   supplied at registration MUST match the team bound to the
   authenticated identity, MUST be stored on the canonical Executor
   record, and SHALL NOT be changed by any later re-registration,
   restart, or reassignment.
-- Limit discovery, claim, task-event writes, environment opens, and
-  control reads to the Executor's bound `team_id`. Collection-level
+- Apply scope before discovery, claim, task-event writes, environment opens,
+  and control reads. For team scope, collection-level
   discovery SHALL filter by `team_id` BEFORE shaping results so that a
   tag whose matching `pending` tasks all belong to other teams yields
   the NORMAL empty result (`204 No Content` or `200` with an empty
@@ -84,10 +86,13 @@ events.
   SHALL yield a non-revealing `404` indistinguishable from "resource
   does not exist" when the referenced resource belongs to a different
   team. Cross-team interactions never create a Pod and never append an
-  event.
-- Discover only `pending` tasks whose `required_tag` equals the
-  Executor's single `authorized_tag` AND whose `team_id` equals the
-  Executor's bound `team_id`. Discovery results SHALL be ordered
+  event. For system scope, matching is by the registered tag across teams;
+  every claim response and later event/environment/control request derives
+  its immutable `team_id` from the claimed task.
+- Discover only `pending` tasks whose `required_tag` equals the Executor's
+  single `authorized_tag`; team scope additionally requires the task's
+  `team_id` to equal the Executor's bound `team_id`, while system scope spans
+  teams and returns metadata-only summaries until claim. Discovery results SHALL be ordered
   `(ingested_at ASC, task_id ASC)` with the eligibility predicate
   applied first, BEFORE pagination, and BEFORE counts. Discovery is
   read-only, SHALL NOT reserve or assign a task, and SHALL NOT read,
@@ -113,13 +118,13 @@ events.
   maintain a local fallback image and SHALL NOT substitute its own
   image for the Registry-resolved one. The claim-conflict taxonomy is
   non-revealing `404` for unknown or foreign `task_id`, `409
-  task_already_claimed` for a different `command_id` on an
+task_already_claimed` for a different `command_id` on an
   already-claimed task, `409 older_task_must_be_claimed_first` for an
   eligible non-oldest task, and the original `200 claimed` body for
   the same `(task_id, command_id)` retry by the original Executor. The
   K8s Executor SHALL NOT start a Pod before `200 claimed`, SHALL NOT
   start a Pod after `404`, `409 task_already_claimed`, or `409
-  older_task_must_be_claimed_first`, and SHALL return to discovery.
+older_task_must_be_claimed_first`, and SHALL return to discovery.
   No `dispatched` lifecycle state or event exists; no lifecycle event is
   appended at ingestion when the task is `pending`.
 - Run claimed tasks only as Kubernetes Pods after `200 claimed`. The
@@ -136,7 +141,7 @@ events.
   `occurred_at`, and `payload`. The State Registry event-denial
   taxonomy SHALL be: an authenticated Executor whose envelope `team_id`
   differs from its immutable service binding is rejected with `403
-  team_mismatch`; a same-team Executor that is not the recorded
+team_mismatch`; a same-team Executor that is not the recorded
   `tasks.executor_id` is rejected with `403 not_assigned`; a foreign
   task or Executor point identifier is rejected with the same
   non-revealing `404` shape used for an unknown identifier; no `403`
@@ -167,7 +172,7 @@ events.
   server-side key handle and compare it under constant-time comparison,
   SHALL verify the `key_id` against the documented active key window
   (retired keys rejected), SHALL verify `issued_at <= server_now + 30
-  seconds`, SHALL verify the literal audience
+seconds`, SHALL verify the literal audience
   `state-registry.environment.open`, SHALL verify the canonical claim
   shape (including the project-scope rule for `project_id`), SHALL
   verify the authenticated Executor mTLS identity, the Executor's
@@ -218,8 +223,8 @@ events.
 - Affected diagrams:
   - `openspec/changes/v0005-executor-k8s/specs/diagrams/01-k8s-executor-topology.puml`
   - `openspec/changes/v0005-executor-k8s/specs/diagrams/02-k8s-task-lifecycle.puml`
-  Both remain in the `sequence` family; no state-machine, ER, or other
-  restricted diagram family is added.
+    Both remain in the `sequence` family; no state-machine, ER, or other
+    restricted diagram family is added.
 - Affected test cases: `openspec/changes/v0005-executor-k8s/specs/test-cases/`
   (nine E2E definitions, contiguous `v0005.1` through `v0005.9`,
   updated in place to the FIFO claim contract).

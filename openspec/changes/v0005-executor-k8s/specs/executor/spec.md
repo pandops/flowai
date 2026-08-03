@@ -2,17 +2,20 @@
 
 ### Requirement: K8s Executor participates in State Registry FIFO task claims
 
-The K8s Executor SHALL register with the State Registry as a
-team-owned Executor (`scope = team`), submitting exactly one immutable
-`team_id` that references an existing team, exactly one
-`authorized_tag`, observed `max_capacity`, observed `running_count`,
-an optional display-only `team_name`, and runtime metadata, all bound
-to the authenticated Executor service identity. The v0005 K8s Executor
-SHALL NOT register with `scope = system` and SHALL refuse any local
-change to its `team_id` binding. The K8s Executor SHALL discover
-eligible `pending` tasks only when the task's `required_tag` equals its
-single `authorized_tag` AND the task's immutable `team_id` equals its
-bound `team_id`; ordering SHALL be `(ingested_at ASC, task_id ASC)`
+The K8s Executor SHALL register with the State Registry using the concrete
+service and wire identifier `executor_k8s_<tool>`, with the agent tool
+selected before implementation, and exactly one immutable ownership
+`scope` from `{team, system}`. It SHALL submit exactly one
+`authorized_tag`, observed `max_capacity`, observed `running_count`, and
+runtime metadata. Team scope SHALL submit exactly one immutable `team_id`
+that references an existing team and MAY submit a display-only `team_name`;
+system scope SHALL submit no `team_id` or team binding. The K8s Executor
+SHALL refuse any local change to its accepted scope or team binding. It
+SHALL discover eligible `pending` tasks only when the task's `required_tag`
+equals its single `authorized_tag`; team scope SHALL additionally match the
+task's immutable `team_id`, while system scope SHALL match across teams and
+receive metadata-only summaries until successful claim. Ordering SHALL be
+`(ingested_at ASC, task_id ASC)`
 with the eligibility predicate applied BEFORE ordering, BEFORE
 pagination, and BEFORE counts. Discovery is read-only, SHALL NOT
 reserve or assign a task, and SHALL NOT read, compare, or enforce
@@ -48,11 +51,11 @@ emit a capacity-based rejection.
 #### Scenario: K8s Executor starts
 
 - **WHEN** a K8s Executor process starts
-- **THEN** it registers `executor_type = "k8s"`, `scope = team`, exactly
-  one immutable `team_id` (referencing an existing team), exactly one
-  `authorized_tag`, optional display-only `team_name`, observed
-  `max_capacity`, observed `running_count`, and metadata with the State
-  Registry, all bound to the authenticated Executor service identity
+- **THEN** it registers `executor_type = "executor_k8s_<tool>"`, exactly
+  one immutable scope from `{team, system}`, exactly one `authorized_tag`,
+  observed `max_capacity`, observed `running_count`, and metadata; team scope
+  includes exactly one identity-bound `team_id` and optional display-only
+  `team_name`, while system scope includes no team binding
 
 #### Scenario: K8s Executor discovers a same-team pending task
 
@@ -94,7 +97,8 @@ task-scoped inputs, be supervised until terminal task state or Executor
 exit, and produce exactly one of `finished` or `failed` at terminal
 state. Every Executor-emitted task or self event SHALL carry
 `task_id` (when task-scoped), `executor_id`, `team_id` (equal to the
-team-owned Executor's bound team for every v0005 K8s event),
+team-owned Executor's bound team or the system-owned Executor's assigned
+task team),
 `event_id`, `event_type`, `occurred_at`, and `payload`. The State Registry SHALL apply the
 following event-denial taxonomy when it receives a task or self event
 post: an authenticated Executor whose envelope `team_id` differs from
@@ -156,13 +160,13 @@ foreign-team probe.
 - **THEN** the State Registry returns a non-revealing `404`, the
   Executor creates no Pod, and no event is appended
 
-### Requirement: K8s Executor is team-owned and provider-neutral
+### Requirement: K8s Executor is scope-aware and provider-neutral
 
-The K8s Executor v0005 SHALL register with `scope = team` only and
-SHALL NOT register or operate with `scope = system`. The State
-Registry's `scope = system` schema option exists for other Executor
-implementations; the v0005 K8s Executor is not one of them. The K8s
-Executor SHALL treat the State Registry's secret-cryptography
+The K8s Executor SHALL register with exactly one immutable `scope` from
+`{team, system}`. Team scope requires exactly one identity-bound `team_id`;
+system scope requires no `team_id` and derives the event and access envelope
+from the assigned task's immutable `team_id`. Re-registration SHALL NOT
+change scope. The K8s Executor SHALL treat the State Registry's secret-cryptography
 provider as opaque. The State Registry controls the active provider
 behind the same `key_id` / `key_version` envelope; the v0005 K8s
 Executor SHALL NOT call, name, or require any specific provider and
@@ -180,14 +184,13 @@ individual claim values beyond identifier-level metadata, MAC bytes,
 key material, or derived key bytes in logs, audit entries, or error
 responses.
 
-#### Scenario: K8s Executor rejects system scope at registration
+#### Scenario: K8s Executor registers with system scope
 
-- **WHEN** an operator starts a K8s Executor process and supplies
-  `scope = system` (or omits `scope` while supplying `team_id = null`)
-- **THEN** the K8s Executor refuses to register, logs the rejection,
-  and exits without persisting any Executor record or contacting the
-  State Registry for discovery or claim; the State Registry is never
-  asked to record a system-owned K8s Executor
+- **WHEN** an authenticated system-owned K8s Executor registers with
+  `scope = system`, one `authorized_tag`, and no `team_id`
+- **THEN** State Registry accepts the registration, discovery matches the
+  registered tag across teams, and every successful claim returns the
+  claimed task's immutable `team_id` for Pod labels and later envelopes
 
 #### Scenario: K8s Executor treats the cryptography provider as opaque
 
@@ -213,8 +216,8 @@ greater than or equal to `max_capacity`. Capacity enforcement SHALL be
 purely local and SHALL NOT be communicated as a Registry-side
 rejection; the State Registry SHALL still claim a same-team task for
 any eligible Executor when the Executor's `running_count` equals
-`max_capacity`. Self-event writes for those observations SHALL carry
-`team_id` matching the Executor's bound team and SHALL be treated as
+`max_capacity`. Self-event writes for those observations SHALL carry the
+scope-appropriate envelope defined by State Registry and SHALL be treated as
 informational only.
 
 #### Scenario: K8s local capacity is reached
@@ -238,9 +241,9 @@ The K8s Executor SHALL NOT ingest tasks, assign work to other
 Executors, own a database, persist secrets, call Web UI or API Gateway,
 run Docker containers, manage team identity (no team CRUD, no team
 directory), control canonical task state outside State Registry event
-and claim APIs, or read or write tasks, environments, or controls
-belonging to a team other than its bound `team_id`. The K8s Executor
-SHALL NOT mutate its bound `team_id` after first registration.
+and claim APIs, or read or write tasks, environments, or controls outside
+its registered ownership scope. The K8s Executor SHALL NOT mutate its
+accepted `scope` or team binding after first registration.
 
 #### Scenario: K8s Executor restarts
 
@@ -339,7 +342,7 @@ existence of tasks, environments, or controls in other teams.
   belong to a different `team_id`
 - **THEN** the State Registry filters by the Executor's bound `team_id`
   BEFORE shaping results, returns the NORMAL empty result (`204 No
-  Content` or `200` with an empty task list), and the response payload
+Content` or `200` with an empty task list), and the response payload
   contains no count, cursor, total, or pagination metadata that would
   distinguish this outcome from "no tasks match this tag anywhere"; the
   K8s Executor creates no Pod and appends no event
@@ -541,7 +544,7 @@ by the Registry without reassignment.
 - **THEN** the K8s Executor re-registers with the same bound `team_id`
   and `authorized_tag`, re-reads its claimed non-terminal tasks from
   the State Registry by canonical `tasks.executor_id =
-  authenticated_executor_id`, matches each returned task's immutable
+authenticated_executor_id`, matches each returned task's immutable
   `tasks.owner_command_id` to the existing Pod's `flowai.command_id`
   label to identify which in-flight Pod to continue observing,
   re-attaches to the existing Pods in Kubernetes without creating new
