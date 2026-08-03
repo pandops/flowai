@@ -1,0 +1,26 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errorlint
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - nolintlint
+    - staticcheck
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

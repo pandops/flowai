@@ -1,13 +1,20 @@
+' diagram-type: sequence
 @startuml
-title v0006-web-ui - live events without auth
+title v0006-web-ui - configured bootstrap operator + team live events without auth
 
-participant "Web UI" as UI
+participant "Web UI / Browser" as UI
 participant "API Gateway" as GW
 participant "State Registry" as State
 
-UI -> GW : WebSocket upgrade
-GW -> State : subscribe to task events
-State --> GW : task event stream
-GW --> UI : task event stream unchanged
+UI -> GW : WebSocket upgrade\n(possibly forged X-FlowAI-* headers)
+GW -> GW : strip client identity context\nvalidate configured bootstrap operator + team\ngenerate request_id
+alt configured bootstrap operator or team context invalid
+  GW --> UI : reject upgrade before subscription
+else valid configured bootstrap operator and team
+  GW -> State : subscribe with configured Operator-ID\n(audit attribution only), configured Team-ID,\ndisplay-only Team-Name, Request-ID\n(no browser bearer credential)
+  State -> State : filter authorized events by team_id
+  State --> GW : configured-team task event stream
+  GW --> UI : event frames unchanged
+end
 
 @enduml

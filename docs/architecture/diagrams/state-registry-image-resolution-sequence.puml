@@ -1,0 +1,121 @@
+' diagram-type: sequence
+@startuml
+!pragma layout smetana
+title v0002 State Registry - Image Resolution on Task Claim
+
+note over Executor
+  Concrete Executor services follow the platform naming convention
+  documented in AGENTS.md:
+    executor_<runtime>_<tool>
+  Current concrete Executor: executor_docker_opehands
+  (runtime = docker, tool = openhands; "opehands" is the service
+  identifier; the external product spelling "OpenHands" stays
+  unchanged). The diagram below uses the generic "Executor"
+  participant on purpose: it covers every concrete service under
+  the executor_<runtime>_<tool> family.
+end note
+
+participant "Trusted API Gateway\nverified operator team-a" as Gateway
+participant "System Administrator" as Admin
+participant "Listener\nidentity: team-a, source-system-a" as Listener
+participant "Executor\nidentity: team-a, tag: openhands" as Executor
+participant "State Registry" as State
+database "PostgreSQL" as DB
+
+== Admin issues the team's required default image through /admin/teams ==
+Admin -> State : POST /admin/teams\n{team_name=team-a, default_image={repository, digest=sha256:...}}
+State -> State : authenticated system-administrator only\npersists immutable team_id + REQUIRED default_image
+State -> DB : INSERT teams (team_id, team_name, default_image)
+State --> Admin : 201 canonical team record
+note over State,DB
+  default_image is REQUIRED at /admin/teams; the Registry
+  rejects registrations that omit it. default_image is opaque
+  to the Registry and SHALL NEVER participate in authorization.
+  No operator or admin path clears or changes it; corrections
+  require a new team registration.
+end note
+
+== Admin issues task type and source system with their optional defaults ==
+Admin -> State : POST /admin/task-types\n{team_id=team-a, execution_tag=openhands,\ndefault_image={repository, digest=sha256:...}}
+State -> DB : INSERT task_types (task_type_id, team_id, execution_tag, default_image)
+State --> Admin : 201 canonical task type
+
+Admin -> State : POST /admin/source-systems\n{team_id=team-a, listener_identity, default_image}
+State -> DB : INSERT source_systems (source_system_id, team_id, listener_identity, default_image)
+State --> Admin : 201 canonical source system
+
+== Listener ingests task with optional per-task image override ==
+alt task submitted without image
+  Listener -> State : POST /v1/tasks\n{team_id=team-a, source_system_id, source_id,\nREQUIRED task_type_id=tt-a1, payload} (no image)
+else task submitted with image override
+  Listener -> State : POST /v1/tasks\n{team_id=team-a, source_system_id, source_id,\nREQUIRED task_type_id=tt-a1, payload, image: {repository, digest=sha256:...}}
+end
+
+State -> State : authenticate listener; verify submitted team_id and source_system_id\nagainst one-team service binding;\nverify task_type_id references a registered task type whose\nteam_id equals team-a; derive tasks.required_tag from\ntask_types.execution_tag (reject any listener-supplied required_tag)
+State -> DB : BEGIN\nINSERT team-owned task in current_state = pending\n(image = payload.image or NULL)\npersist task_type_id and server-derived required_tag\nSET ingested_at = now() (immutable)\nNO lifecycle event appended\nON CONFLICT (team_id, source_system_id, source_id) RETURN existing\nCOMMIT
+DB --> State : canonical team-a pending task\n(image stored verbatim from first submission;\nlocked for task lifetime on later retries)
+
+note over Listener,DB
+  tasks.image is set in the same ingestion transaction as the
+  pending state with NO event. A later retry of the same
+  (team_id, source_system_id, source_id) SHALL NOT replace or clear it.
+end note
+
+State --> Listener : 201 (new) or 200 (existing canonical pending)
+
+== Executor discovers same-team, same-tag pending task in FIFO order ==
+Executor -> State : GET /v1/executors/{executor_id}/tasks?tag=openhands
+State -> DB : SELECT pending tasks\nWHERE team_id=team-a AND required_tag=openhands\nORDER BY ingested_at ASC, task_id ASC\n(eligibility predicate first; ordering second; pagination third)
+DB --> State : team-a FIFO pending snapshot
+State --> Executor : 200 pending task summary (incl. image override when set)
+
+== Atomic FIFO claim with four-level image resolution ==
+Executor -> State : POST /v1/executors/{executor_id}/claim\n{task_id, command_id=C-1}
+State -> State : verify oldest eligible pending task\nfor this authenticated Executor
+State -> DB : BEGIN
+note over State
+  Resolve effective image with this exact precedence:
+    1. tasks.image            (override)
+    2. task_types.default_image
+    3. source_systems.default_image
+    4. teams.default_image    (always present by registration)
+  Image equality between tasks in different teams grants NO authority.
+end note
+
+alt task override present
+  State -> DB : UPDATE tasks\nSET resolved_image = tasks.image,\n    image_source = 'task_override',\n    owner_command_id = 'C-1',\n    executor_id = executor,\n    claimed_at = now(),\n    current_state = 'created'\nWHERE task_id = ? AND current_state = 'pending'\nAND task.team_id = executor.team_id\nAND required_tag = executor.registered_tag
+else only task-type default present
+  State -> DB : UPDATE tasks\nSET resolved_image = task_types.default_image,\n    image_source = 'task_type_default',\n    owner_command_id = 'C-1',\n    executor_id = executor,\n    claimed_at = now(),\n    current_state = 'created'\nWHERE task_id = ? AND current_state = 'pending'\nAND task.team_id = executor.team_id\nAND required_tag = executor.registered_tag
+else only source-system default present
+  State -> DB : UPDATE tasks\nSET resolved_image = source_systems.default_image,\n    image_source = 'source_system_default',\n    owner_command_id = 'C-1',\n    executor_id = executor,\n    claimed_at = now(),\n    current_state = 'created'\nWHERE task_id = ? AND current_state = 'pending'\nAND task.team_id = executor.team_id\nAND required_tag = executor.registered_tag
+else only team default applies (team default is ALWAYS present)
+  State -> DB : UPDATE tasks\nSET resolved_image = teams.default_image,\n    image_source = 'team_default',\n    owner_command_id = 'C-1',\n    executor_id = executor,\n    claimed_at = now(),\n    current_state = 'created'\nWHERE task_id = ? AND current_state = 'pending'\nAND task.team_id = executor.team_id\nAND required_tag = executor.registered_tag
+end
+
+State -> DB : INSERT FIRST 'created' event with executor_id = claimant\nand payload 'task <task_id> loaded by <executor_id>'\nCOMMIT
+DB --> State : one updated task row + one created event (no dispatched)
+
+State --> Executor : 200 claimed\n{claim: 'claimed', task (incl. resolved_image, image_source),\n environment_id, scope_token, resolved_image, image_source\n in {task_override, task_type_default, source_system_default, team_default},\n claimed_at, owner_command_id, executor_id}
+
+note over Executor,DB
+  resolved_image and image_source are persisted in the same
+  transaction as the first created event, immutable from claim onward.
+  A later admin registration of a new team does not change an
+  already-claimed task's resolved_image.
+end note
+
+== Executor starts the container using resolved_image (no local fallback) ==
+State --> Executor : resolved_image + image_source are verbatim and authoritative
+alt image pull or start fails
+  Executor -> Executor : refuse the task; record image_source for audit
+else image_resolved present
+  Executor -> Executor : start container with resolved_image\n(fail closed if image cannot be pulled or started)
+end
+
+note over Executor
+  The Executor never maintains or substitutes a local fallback image;
+  the four-level precedence plus the always-required teams.default_image
+  guarantees resolution. Image equality across teams grants no authority.
+end note
+
+@enduml

@@ -1,0 +1,85 @@
+' diagram-type: sequence
+@startuml
+!pragma layout smetana
+title v0008 State Registry - Local-to-Transit Migration (Per-Row Durable Checkpoint, (team_id, secret_id, version) Reconciliation Key)
+
+participant "Migration Worker\n(in-process inside state-registry)" as migration_worker_service
+database "State Registry" as state_registry_service
+participant "Local Provider\n(v0002 AES-256-GCM)\n(disabled after cutover)" as local_provider_service
+participant "OpenBao Transit\n(/v1/<mount>/<key_name>)\nmTLS only" as openbao_transit_server
+database "PostgreSQL\n(secret_versions.crypto_provider\n+crypto_migration_checkpoints per-row,\nPRIMARY KEY(migration_name, team_id, secret_id, version))" as state_registry_db
+actor "Deployment Identity\n(state-registry crypto cutover)" as deployment_identity_user
+
+note over migration_worker_service, state_registry_db
+  Worker is in-process; checkpoint is PER-ROW inside PostgreSQL.
+  PRIMARY KEY(migration_name, team_id, secret_id, version) makes
+  the reconciliation key unambiguous even when secret_id is not
+  globally unique across teams. v0008 does NOT introduce a
+  direct team_id column on secret_versions; canonical team_id is
+  derived from the canonical secrets parent row. Idempotent:
+  rows in state=verified are never re-encrypted. Plaintext
+  exists only in State Registry process memory and inside the
+  verified mTLS-protected in-flight request accepted by
+  Transit; never persisted, never logged, never audited,
+  never transmitted without verified TLS. Worker NEVER
+  consults audit_entries as a source of truth.
+end note
+
+== Worker boots and reads per-row checkpoints (no singleton worker-state row) ==
+migration_worker_service -> state_registry_service : load pending rows\nSELECT CHECKPOINTS.team_id,\nCHECKPOINTS.secret_id, CHECKPOINTS.version\nFROM crypto_migration_checkpoints CHECKPOINTS\nJOIN secret_versions SV\n  ON SV.secret_id = CHECKPOINTS.secret_id\n AND SV.version = CHECKPOINTS.version\nJOIN secrets S\n  ON S.secret_id = SV.secret_id\nWHERE CHECKPOINTS.migration_name = 'local_to_transit'\n  AND CHECKPOINTS.state IN ('pending','failed')\n  AND SV.crypto_provider = 'local'\nORDER BY CHECKPOINTS.team_id, CHECKPOINTS.secret_id,\n         CHECKPOINTS.version\nLIMIT $1
+activate state_registry_service
+state_registry_service -> state_registry_db : SELECT (per-row checkpoint join)
+state_registry_db --> state_registry_service : (team_id, secret_id, version) batch
+state_registry_service --> migration_worker_service : checkpoint-per-row batch
+deactivate state_registry_service
+
+== For each row: claim per-row checkpoint, verify secrets parent, local decrypt, Transit encrypt, atomic CAS envelope rewrite ==
+loop per (team_id, secret_id, version) in batch
+  migration_worker_service -> state_registry_service : claim checkpoint under\nrow-level lock keyed by (migration_name, team_id, secret_id, version):\nUPDATE crypto_migration_checkpoints\nSET state = 'in_progress',\n    attempt_count = attempt_count + 1,\n    updated_at = NOW()\nWHERE migration_name = 'local_to_transit'\n  AND team_id = $1 AND secret_id = $2 AND version = $3\n  AND state IN ('pending','failed')\nRETURNING state
+  activate state_registry_service
+  state_registry_service --> migration_worker_service : claimed (state='in_progress')
+  deactivate state_registry_service
+  migration_worker_service -> state_registry_service : verify canonical secrets parent\nrow still exists with the same team_id and\nthe row's persisted (secret_id, version) identity\nstill resolves on the parent.\nDO NOT require version to match a\ncurrent_version field on the parent.
+  activate state_registry_service
+  state_registry_service --> migration_worker_service : canonical confirmed\n(or row removed from batch)
+  deactivate state_registry_service
+  migration_worker_service -> local_provider_service : Decrypt(local_aad)\nlocal_aad = {canonical_team_id}\\x00{secret_id}\\x00{decimal_version}\n(v0002 legacy bytes used at seal time)
+  activate local_provider_service
+  local_provider_service --> migration_worker_service : plaintext in State Registry process memory
+  deactivate local_provider_service
+  migration_worker_service -> openbao_transit_server : Encrypt(transit_aad)\nplaintext=<b64>, associated_data=<b64>\ntransit_aad = team_id=<canonical_team_id>\\nsecret_id=<secret_id>\\nversion=<uint64>\\n\n(v0008 active bytes; NOT byte-equal to local_aad)\n(verified mTLS-protected in-flight request)
+  activate openbao_transit_server
+  openbao_transit_server --> migration_worker_service : 200 ciphertext=vault:v<N>:...\n(opaque key_id, key_version=N)
+  deactivate openbao_transit_server
+  migration_worker_service -> state_registry_service : persist migrated row\n(ONE transaction; row-level lock on both rows;\nmatching transaction-local migration authorization marker;\nenvelope columns only; (secret_id, version) identity unchanged;\ncanonical team_id from secrets parent)\nUPDATE secret_versions\n  SET ciphertext=$1, key_id=$2, key_version=$3,\n      crypto_provider='transit', migrated_at=NOW()\n  WHERE secret_id=$4 AND version=$5\n  AND crypto_provider='local'\n  -- CAS guard: no already-committed 'transit' row\nUPDATE crypto_migration_checkpoints\n  SET state='verified', verified_at=NOW()\n  WHERE migration_name='local_to_transit'\n  AND team_id=$6 AND secret_id=$4 AND version=$5\nINSERT audit (secret_version_migrated, accepted,\nidentifier-level metadata only)
+  activate state_registry_service
+  state_registry_service -> state_registry_db : UPDATE + UPDATE + INSERT\nin one transaction
+  state_registry_db --> state_registry_service : committed atomically
+  state_registry_service --> migration_worker_service : row migrated in one transaction
+  deactivate state_registry_service
+end
+
+== Cutover is ONE transactional consistency scan; no separate report table; no freshness timestamp ==
+deployment_identity_user -> state_registry_service : state-registry crypto cutover\nsigned by deployment identity\n(internal command; NOT a new public HTTP endpoint)
+activate state_registry_service
+state_registry_service -> state_registry_db : consistency scan in one transaction:\n(1) SELECT COUNT(*) FROM secret_versions\n    WHERE crypto_provider='local' = 0\n(2) every migrated row whose\n    migrated_at IS NOT NULL AND\n    crypto_provider='transit' has a\n    matching crypto_migration_checkpoints row\n    keyed by (migration_name, team_id, secret_id, version)\n    in state='verified' with verified_at>=migrated_at\n(3) SELECT COUNT(*) FROM crypto_migration_checkpoints\n    WHERE migration_name='local_to_transit'\n    AND state IN ('pending','in_progress','failed') = 0\n    (absence of in_progress rows is the worker-idle proof)\n(4) GET /v1/<mount>/keys/<key_name> -> 200
+alt any condition fails
+  state_registry_service --> deployment_identity_user : rejection recorded\naudit only identifier-level metadata
+  deactivate state_registry_service
+else verification passes
+  state_registry_service -> state_registry_service : set crypto.local.enabled = false\n+ audit crypto.cutover succeeded\n(identifier-level metadata only)
+  state_registry_service --> deployment_identity_user : accepted\n(identity-signed internal command)
+  deactivate state_registry_service
+end
+
+note over local_provider_service, openbao_transit_server
+  Cutover does NOT decrypt arbitrary Transit rows again and
+  does NOT call POST /v1/<mount>/rewrap/<key_name> as proof;
+  new Transit-native rows (migrated_at IS NULL) are trusted
+  through their successful provider write transaction; they
+  do NOT require a checkpoint row. After cutover, any later
+  row carrying crypto_provider='local' reads fail closed
+  with the non-revealing
+  404 environment_unknown_or_unavailable.
+end note
+@enduml

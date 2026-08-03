@@ -1,0 +1,249 @@
+// Package platform holds cross-cutting types shared by all FlowAI services.
+// Concrete implementations live in service-specific packages.
+package platform
+
+import (
+	"encoding/json"
+	"time"
+)
+
+// Scope discriminates the Executor ownership: team-owned (one immutable
+// team_id) or system-owned (no team binding). The string values match
+// the State Registry `scope` enum documented in the v0002 OpenAPI.
+const (
+	ExecutorScopeTeam   = "team"
+	ExecutorScopeSystem = "system"
+)
+
+// ExecutorType is the canonical concrete executor type identifier.
+//
+// The wire value follows executor_<runtime>_<tool> documented in AGENTS.md
+// and matches the concrete service directory. The Go identifier preserves
+// the runtime/tool axis; both refer to the same concrete Executor.
+const ExecutorTypeDockerOpenHands = "executor_docker_opehands"
+
+// ExecutorRegistrationResponse is returned by PUT /v1/executors/{executor_id}.
+type ExecutorRegistrationResponse struct {
+	ExecutorID      string                 `json:"executor_id"`
+	Scope           string                 `json:"scope"`
+	TeamID          *string                `json:"team_id"`
+	ExecutorType    string                 `json:"executor_type"`
+	Identity        string                 `json:"identity"`
+	AuthorizedTag   string                 `json:"authorized_tag"`
+	MaxCapacity     int                    `json:"max_capacity"`
+	RunningCount    int                    `json:"running_count"`
+	RuntimeMetadata map[string]interface{} `json:"runtime_metadata"`
+	RegisteredAt    time.Time              `json:"registered_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+}
+
+// StateRegistryExecutorRegistration is the v0002 registration body sent to
+// the durable State Registry.
+type StateRegistryExecutorRegistration struct {
+	Scope           string                 `json:"scope"`
+	TeamID          *string                `json:"team_id"`
+	ExecutorType    string                 `json:"executor_type"`
+	Identity        string                 `json:"identity"`
+	AuthorizedTag   string                 `json:"authorized_tag"`
+	MaxCapacity     int                    `json:"max_capacity"`
+	RunningCount    int                    `json:"running_count"`
+	RuntimeMetadata map[string]interface{} `json:"runtime_metadata"`
+}
+
+// v0002 State Registry wire types.
+//
+// Every type in this section is a service-local mirror of the v0002
+// State Registry OpenAPI surface. Service isolation rules forbid the
+// executor_docker_opehands service from importing the State Registry's
+// internal/platform package, so each type is duplicated here verbatim.
+// All field tags MUST stay in lock-step with the State Registry wire
+// contract documented in openspec/changes/v0002-state-registry.
+
+// v0002TaskEventType is the canonical event_type value for an
+// Executor-emitted task lifecycle event. The first lifecycle event
+// (`created`) is Registry-appended on claim and is NEVER sent by
+// Executors.
+const (
+	TaskEventTypeRunning  = "running"
+	TaskEventTypeFinished = "finished"
+	TaskEventTypeFailed   = "failed"
+)
+
+// v0002ExecutorSelfEventType enumerates the Executor self-event
+// envelope values. The Executor never sends `registered` (the
+// Registry already records the registration row); it sends
+// `healthy` on startup, `busy`/`idle` on slot transitions,
+// `stopping`/`stopped` on drain, and `failed` on supervision loss.
+type V0002ExecutorSelfEventType string
+
+const (
+	V0002ExecutorEventHealthy  V0002ExecutorSelfEventType = "healthy"
+	V0002ExecutorEventBusy     V0002ExecutorSelfEventType = "busy"
+	V0002ExecutorEventIdle     V0002ExecutorSelfEventType = "idle"
+	V0002ExecutorEventStopping V0002ExecutorSelfEventType = "stopping"
+	V0002ExecutorEventStopped  V0002ExecutorSelfEventType = "stopped"
+	V0002ExecutorEventFailed   V0002ExecutorSelfEventType = "failed"
+)
+
+// V0002ExecutorIdentityHeader is the documented test-mode transport
+// header carrying the Executor's authenticated identity. The Executor
+// always populates it on every request to the State Registry.
+const (
+	V0002HeaderExecutorID = "X-FlowAI-Executor-Id"
+	V0002HeaderTeamID     = "X-FlowAI-Team-Id"
+	V0002HeaderRole       = "X-FlowAI-Role"
+	V0002HeaderRoleTeam   = "team-executor"
+	V0002HeaderRoleSystem = "system-executor"
+)
+
+// V0002ErrorResponse mirrors the documented error body shape.
+type V0002ErrorResponse struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+// V0002ImageReference mirrors the documented ImageReference.
+type V0002ImageReference struct {
+	Repository string `json:"repository"`
+	Tag        string `json:"tag,omitempty"`
+	Digest     string `json:"digest,omitempty"`
+}
+
+// V0002TaskListEntry mirrors the canonical TaskListEntry.
+type V0002TaskListEntry struct {
+	TaskID         string               `json:"task_id"`
+	TeamID         string               `json:"team_id"`
+	SourceSystemID string               `json:"source_system_id"`
+	SourceID       string               `json:"source_id"`
+	TaskTypeID     string               `json:"task_type_id"`
+	RequiredTag    string               `json:"required_tag"`
+	Payload        json.RawMessage      `json:"payload"`
+	CurrentState   string               `json:"current_state"`
+	OwnerCommandID *string              `json:"owner_command_id"`
+	ExecutorID     *string              `json:"executor_id"`
+	ProjectID      *string              `json:"project_id"`
+	EnvironmentID  *string              `json:"environment_id"`
+	Image          *V0002ImageReference `json:"image"`
+	ResolvedImage  *V0002ImageReference `json:"resolved_image"`
+	ImageSource    *string              `json:"image_source"`
+	IngestedAt     string               `json:"ingested_at"`
+	ClaimedAt      *string              `json:"claimed_at"`
+}
+
+// V0002TaskSummary is the read-only discovery projection.
+type V0002TaskSummary struct {
+	TaskID       string    `json:"task_id"`
+	TeamID       string    `json:"team_id"`
+	RequiredTag  string    `json:"required_tag"`
+	CurrentState string    `json:"current_state"`
+	IngestedAt   time.Time `json:"ingested_at"`
+}
+
+// V0002TaskDiscoveryPage is the documented discovery response.
+type V0002TaskDiscoveryPage struct {
+	Items []V0002TaskSummary `json:"items"`
+}
+
+// V0002ClaimRequest is the documented claim body.
+type V0002ClaimRequest struct {
+	TaskID    string `json:"task_id"`
+	CommandID string `json:"command_id"`
+}
+
+// V0002ClaimResponse is the documented 200 envelope returned by
+// POST /v1/executors/{executor_id}/claim. The State Registry issues
+// the compact three-part scope_token together with the canonical
+// task projection; both are required for the EnvironmentID open path.
+type V0002ClaimResponse struct {
+	Claim         string               `json:"claim"`
+	Task          V0002TaskListEntry   `json:"task"`
+	ResolvedImage *V0002ImageReference `json:"resolved_image"`
+	ImageSource   *string              `json:"image_source"`
+	ClaimedAt     *string              `json:"claimed_at"`
+	EnvironmentID *string              `json:"environment_id"`
+	ScopeToken    *string              `json:"scope_token"`
+}
+
+// V0002TaskEventEnvelope is the closed request body for
+// POST /v1/tasks/{task_id}/events. The envelope carries the full
+// required shape: event_id, team_id, task_id, executor_id,
+// event_type, occurred_at, payload. An identical (task_id, event_id)
+// retry returns the original 202 body without appending a duplicate.
+type V0002TaskEventEnvelope struct {
+	EventID    string          `json:"event_id"`
+	TeamID     string          `json:"team_id"`
+	TaskID     string          `json:"task_id"`
+	ExecutorID string          `json:"executor_id"`
+	EventType  string          `json:"event_type"`
+	OccurredAt string          `json:"occurred_at"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
+// V0002ExecutorEventEnvelope is the closed request body for
+// POST /v1/executors/{executor_id}/events. The envelope team_id
+// is non-null for team-owned Executors and null for system-owned
+// Executors. task_id is optional and never gates the append.
+type V0002ExecutorEventEnvelope struct {
+	EventID    string          `json:"event_id"`
+	TeamID     *string         `json:"team_id"`
+	TaskID     *string         `json:"task_id"`
+	ExecutorID string          `json:"executor_id"`
+	EventType  string          `json:"event_type"`
+	OccurredAt string          `json:"occurred_at"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
+// V0002EventAcceptance is the 202 response for both event routes.
+type V0002EventAcceptance struct {
+	EventID    string `json:"event_id"`
+	TeamID     string `json:"team_id"`
+	AcceptedAt string `json:"accepted_at"`
+}
+
+// V0002OpenEnvironmentResponse is the documented 200 envelope
+// returned by GET /v1/environments/{environment_id}/open. The
+// values map is non-secret env-style entries plus the decrypted
+// plaintext of every secret under that environment (a no-secret
+// environment returns 200 with an empty map).
+type V0002OpenEnvironmentResponse struct {
+	TeamID        string            `json:"team_id"`
+	ProjectID     *string           `json:"project_id"`
+	TaskID        string            `json:"task_id"`
+	EnvironmentID string            `json:"environment_id"`
+	ExecutorID    string            `json:"executor_id"`
+	Values        map[string]string `json:"values"`
+}
+
+// V0002TaskControl is one immutable canonical control record.
+type V0002TaskControl struct {
+	ControlID      string    `json:"control_id"`
+	TeamID         string    `json:"team_id"`
+	TaskID         string    `json:"task_id"`
+	OperatorID     string    `json:"operator_id"`
+	Action         string    `json:"action"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	Status         string    `json:"status"`
+	AuditID        string    `json:"audit_id"`
+	RequestedAt    time.Time `json:"requested_at"`
+}
+
+// V0002TaskControlPage is the response for
+// GET /v1/tasks/{task_id}/controls (Executor-bound reads).
+type V0002TaskControlPage struct {
+	Items []V0002TaskControl `json:"items"`
+}
+
+// LivenessResponse is returned by GET /v1/livez.
+type LivenessResponse struct {
+	Status     string `json:"status"`
+	ExecutorID string `json:"executor_id,omitempty"`
+}
+
+// ReadinessResponse is returned by GET /v1/readyz.
+type ReadinessResponse struct {
+	Status                  string `json:"status"`
+	ExecutorID              string `json:"executor_id,omitempty"`
+	StateRegistryRegistered bool   `json:"state_registry_registered"`
+	OpenHandsReachable      bool   `json:"openhands_reachable"`
+}

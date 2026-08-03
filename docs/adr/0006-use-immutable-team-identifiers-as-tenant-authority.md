@@ -1,0 +1,61 @@
+# ADR: Use immutable team identifiers as the tenant authority
+
+### Status
+
+Accepted
+
+### Context
+
+Listeners submit tasks for teams, Executors consume work for teams, and operators manage team-wide environments and secrets through API Gateway. Human-readable team names can change and can collide. Caller-selected headers and payload fields are untrusted. If authorization uses `team_name`, a client-provided tenant hint, or a resource lookup before tenant filtering, the Registry can expose another team's resource existence, counts, history, or secret metadata.
+
+The platform needs one tenant authority that is stable across display-name changes and is carried consistently through ingestion, service identity, assignment, Gateway requests, storage relationships, scope tokens, audit, pagination, aggregation, and WebSocket delivery.
+
+### Decision
+
+`team_id` SHALL be the canonical immutable tenant identifier and authorization authority. `team_name` SHALL be display and audit context only and SHALL NOT grant, select, or broaden access. Each task and team-owned Executor SHALL belong to exactly one team for its lifetime. Each authenticated operator request context SHALL represent exactly one `operator_id` and one `team_id`. Each system-owned Executor (`scope = system`) SHALL have no team binding; it SHALL use the parent task's immutable `team_id` as the team predicate in per-task checks.
+
+Each listener service identity SHALL be bound to exactly one authorized `team_id` and to exactly one authorized `source_system_id`. Every listener task submission SHALL carry that `team_id`, that immutable `source_system_id`, that immutable `task_type_id`, and the external `source_id`, and State Registry SHALL verify them against the authenticated listener before persistence or acknowledgement. Listener deduplication SHALL use `(team_id, source_system_id, source_id)`. A source-system identity SHALL belong to exactly one team; cross-team claims against one source-system identity are rejected without persistence. The opaque listener identity reference SHALL be globally unique across the `source_systems` table so that one listener principal maps to exactly one `(team_id, source_system_id)` pair; a reuse of the same `listener_identity` value under the same team, a different team, or any other variation SHALL be rejected without mutation. The Registry SHALL enforce `(tasks.task_type_id, tasks.team_id) = (task_types.task_type_id, task_types.team_id)` as a database composite foreign key on every task row so a foreign-team task type cannot be cited.
+
+Each Executor service identity SHALL be bound to either exactly one authorized `team_id` (`scope = team`) or to no `team_id` at all (`scope = system`); this choice is registration-time, immutable from registration onward, and recorded on the Executor row. A team-owned Executor SHALL submit its `team_id` on registration, discovery, claim, task events, and self events; State Registry SHALL verify the submitted `team_id` against the authenticated Executor identity, SHALL reject a registration whose `team_id` does not reference an existing team, and SHALL reject a re-registration that omits the team, supplies a different team, or changes the scope. A system-owned Executor SHALL submit `team_id = null` on registration and SHALL set the envelope `team_id` field on every task event and self event to the parent task's `team_id` (the envelope is still required and non-null per task event; the Executor's own `team_id` is null by construction). State Registry SHALL verify the system-owned Executor's task-event envelope `team_id` against the parent task's `team_id` rather than against an Executor's immutable service binding (which is null), and SHALL reject an envelope with a non-null `team_id` for a self event from a system-owned Executor.
+
+Every Executor-emitted task event (`running`, `finished`, `failed`) and Executor self event envelope SHALL carry a non-null `team_id`. State Registry SHALL reject any event whose envelope `team_id` differs from the authenticated Executor's immutable `team_id` with `403 team_mismatch`, SHALL persist the verified `team_id` on the event row alongside the authenticated `executor_id`, and SHALL reject a same-team Executor that is not the current `tasks.executor_id` with `403 not_assigned`. A foreign task or Executor point identifier SHALL receive the same non-revealing `404` shape used for an unknown identifier. The Registry-emitted first `created` event on a successful claim SHALL inherit the parent task's immutable `team_id` and SHALL be appended in the same transaction that sets `tasks.executor_id` and `tasks.owner_command_id`; its `executor_id` SHALL be non-null and equal to the claiming Executor, and the Executor SHALL NOT separately emit a `created` event.
+
+Operator State Registry requests SHALL require a trusted API Gateway service identity and Gateway-verified context containing `operator_id`, `team_id`, and `request_id`. The optional display-only `team_name` SHALL be forwarded only when the verified operator team carries one. State Registry SHALL authorize only with `team_id`; the absence of `team_name` SHALL NOT weaken authorization anchored to `team_id`. Direct clients and caller-supplied tenant headers SHALL NOT establish operator context. Admin endpoints under `/admin/*` SHALL require an authenticated system-administrator identity and SHALL NEVER be reachable through a listener, Executor, or operator path; the Registry does not define the mechanism for that authentication beyond requiring the identity.
+
+The `teams` table SHALL own immutable `team_id`, a REQUIRED opaque `default_image` (set at registration and immutable thereafter through any admin or operator path), and display metadata. `tasks`, `executors`, `environment_definitions`, `secrets`, `source_systems`, and `task_types` SHALL each reference one team when team-owned. Child records SHALL inherit and enforce parent team ownership through matching composite foreign keys or an equivalent database-enforced relationship when `team_id` is non-null. `secret_versions` SHALL reference `secrets`; it SHALL NOT duplicate logical secret identity or permit cross-team reparenting.
+
+Environments and secrets SHALL be managed by same-team operators. Project and task scopes SHALL narrow applicability only within the owning team and SHALL NOT act as project RBAC or cross-team authority. A scope token used by an assigned Executor SHALL bind `team_id`, `project_id` (required claim; nullable only when the canonical environment has no project scope), `task_id`, `environment_id`, `executor_id`, `audience` (literal `state-registry.environment.open`), `issued_at`, `expiry`, and `key_id`, and every claim SHALL be checked against canonical records before any decrypt operation.
+
+Every team-scoped collection or history query SHALL apply the trusted `team_id` predicate before pagination, cursor construction, totals, counts, grouping, aggregation, or serialization. Every WebSocket connection SHALL be bound to one trusted Gateway `team_id` at upgrade; replay, filtering, live fan-out, and every frame SHALL remain in that team. Any cross-team WebSocket frame, count, cursor, or existence signal SHALL block review and release. Every cursor emitted for a Gateway paginated read or an admin paginated read SHALL be integrity-protected under a State Registry-controlled HMAC keyed by `key_id`, SHALL be bound to the originating endpoint, the authenticated authorization scope at the time of issue (the trusted Gateway `team_id` plus verified `operator_id` for Gateway cursors; the authenticated system-administrator role for admin cursors), the complete active filter tuple, the deterministic resource-appropriate ordering rule, and the forward page direction. State Registry SHALL verify the cursor integrity and SHALL reject tampered, cross-endpoint, cross-scope, changed-filter, or wrong-direction cursors with the same non-revealing `400 invalid_pagination` response shape before any protected query runs. `limit` values below 1, above the documented maximum (200), non-integer, or otherwise malformed SHALL be rejected with the same `400 invalid_pagination` shape before any protected query runs.
+
+An authenticated caller that names a task, Executor, event, control, environment, secret, secret version, audit, source system, or task type resource owned by another team SHALL receive the same non-revealing `404` used for an unknown identifier. The request SHALL append no domain event, mutate no canonical resource, create no control, disclose no audit row, and perform no decrypt operation.
+
+Audit entries SHALL include `team_id`, actor identity and type, action, resource type and identifier, `request_id`, outcome, and timestamp without plaintext secret or decrypted environment values, without nonce bytes, without ciphertext bytes, without authentication tag bytes, without key material, without derived key bytes, and without individual claim values beyond identifier-level metadata.
+
+Team provisioning and membership resolution SHALL be split between admin and runtime. Only authenticated system administrators SHALL create teams, source systems, or task types through `/admin/*`; no other path creates or updates these records. This change SHALL NOT add team CRUD, a membership-management UI, multi-team Executor or operator contexts, cross-team sharing, task movement between teams, or project-level RBAC. `v0006-web-ui` may bootstrap one team initially, and `v0007-auth` may supply operator team claims, without weakening State Registry's requirement to validate trusted context and authorize by immutable `team_id`.
+
+Open-environment scope tokens SHALL be signed and verified per the "Sign scope tokens with an allow-listed HMAC and rotate server-controlled keys" ADR. State Registry SHALL be the sole issuer and verifier of those tokens, SHALL verify that the protected-header `kid` equals the payload `key_id` before any MAC computation, SHALL recompute the signature under the declared allow-listed HMAC algorithm, SHALL compare it under constant-time comparison, SHALL reject tokens outside the documented active `key_id` window, SHALL reject tokens whose `issued_at` is premature beyond 30 seconds of clock skew, whose `expiry` is not strictly later than `issued_at`, whose `expiry - issued_at` exceeds five minutes, or whose `audience` does not match the expected literal identifier, and SHALL deny tokens presented by an Executor other than the currently assigned Executor for a non-terminal referenced task before any decrypt operation.
+
+### Consequences
+
+Positive consequences:
+
+- Display-name changes cannot change tenant authority or ownership.
+- Listener retries deduplicate inside one team without colliding with another team's source identifiers.
+- The same team invariant protects REST point reads, collections, audit, controls, environments, secrets, and WebSocket frames.
+- Same-tag Executors in different teams cannot discover or claim each other's tasks.
+- Database-enforced parent/child ownership reduces the chance that an application query creates a cross-team association.
+- Team-bound scope tokens prevent a valid token for one team, task, environment, or Executor from being replayed in another context.
+- Required `default_image` at team registration guarantees image resolution at claim.
+
+Negative consequences:
+
+- Every tenant-owned query and relationship must carry or derive `team_id`, which adds composite indexes, foreign-key constraints, and test cases.
+- Non-revealing `404` semantics reduce diagnostic detail for callers; trusted operational logs and plaintext-free audit context must carry enough request information for support.
+- Team, source-system, and task-type CRUD are exclusively admin endpoints; runtime cannot create these records. Admin onboarding requires system-administrator credentials, which the contract requires but does not specify how to obtain.
+- WebSocket isolation requires connection-bound authorization and per-frame safeguards, not only an upgrade-time check.
+- Shared image strings across teams are allowed but explicitly carry no authority, so application code must not interpret image equality as team ownership.
+
+## More Information
+
+Supersedes: `v0002-state-registry`

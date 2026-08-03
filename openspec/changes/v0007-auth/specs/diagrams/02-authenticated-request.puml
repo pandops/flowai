@@ -1,14 +1,27 @@
+' diagram-type: sequence
 @startuml
-title v0007-auth - authenticated REST request
+title v0007-auth - authenticated team-scoped REST request
 
-participant "Web UI" as UI
+participant "Web UI / Browser" as UI
 participant "API Gateway" as GW
-participant "State or Env Registry" as Backend
+participant "Canonical Auth State" as Auth
+participant "State Registry\nresource + audit authority" as State
 
-UI -> GW : request with bearer token
-GW -> GW : validate token
-GW -> Backend : proxy allowed request
-Backend --> GW : response
-GW --> UI : response unchanged
+UI -> GW : REST + bearer token\n(possibly forged X-FlowAI-* headers)
+GW -> GW : validate signature/issuer, audience, expiry,\noperator_id, exactly one team_id
+GW -> Auth : confirm active team assignment is current
+Auth --> GW : current / stale
+alt missing, ambiguous, invalid, expired, or stale context
+  GW --> UI : reject before proxying
+else valid canonical context
+  GW -> GW : strip browser identity headers + Authorization\ngenerate request_id
+  GW -> State : child request with canonical Operator-ID, Team-ID,\noptional display-only Team-Name, Request-ID\n(no browser bearer credential)
+  State -> State : authorize resource by stable team_id
+  opt operator mutation
+    State -> State : persist canonical audit using\noperator_id + team_id + request_id
+  end
+  State --> GW : backend response
+  GW --> UI : status, headers, and body unchanged
+end
 
 @enduml

@@ -1,0 +1,80 @@
+' diagram-type: sequence
+@startuml
+!pragma layout smetana
+title v0008 State Registry - Transit rotate (internal command only; AAD-bound ciphertext is never rewrap'd)
+
+actor "Deployment Identity\n(state-registry crypto rotate)" as deployment_identity_user
+database "State Registry" as state_registry_service
+participant "OpenBao Transit" as openbao_transit_server
+database "PostgreSQL\n(secret_versions.crypto_provider\n+crypto_migration_checkpoints per-row)" as state_registry_db
+
+note over deployment_identity_user, state_registry_db
+  rotate is the internal state-registry crypto rotate command
+  authenticated by the deployment identity. NO new public HTTP
+  endpoint. rotate creates a new latest key version; it does
+  NOT raise min_encryption_version. AAD-bound ciphertext rows
+  are NEVER rewrap'd because the documented
+  /v1/<mount>/rewrap/<key_name> endpoint has no
+  associated_data parameter. Historical rows remain bound to
+  their embedded older key version. key_id is a deployment-time
+  stable identifier mapped to (mount_path, key_name) through
+  the secure runtime configuration; rotate does NOT change
+  key_id.
+end note
+
+== rotate: create a new latest key version (no body, no documented response body) ==
+deployment_identity_user -> state_registry_service : state-registry crypto rotate --key-name <key_name>
+activate state_registry_service
+state_registry_service -> openbao_transit_server : POST /v1/<mount>/keys/<key_name>/rotate
+activate openbao_transit_server
+openbao_transit_server --> state_registry_service : 204 No Content\n(no documented success body)
+deactivate openbao_transit_server
+state_registry_service -> openbao_transit_server : GET /v1/<mount>/keys/<key_name>\n(read the new latest version; do not log response body)
+activate openbao_transit_server
+openbao_transit_server --> state_registry_service : 200 {"data":{"keys":{"<old>":ts,"<new>":ts},\n"min_decryption_version":1,"min_encryption_version":1,...}}
+deactivate openbao_transit_server
+state_registry_service -> state_registry_service : audit crypto.rotate accepted\n(identifier-level metadata only:\nopaque key_id, previous_latest_version,\nnew_latest_version, request_id,\noutcome status class)
+state_registry_service --> deployment_identity_user : accepted\n(identity-signed internal command)
+deactivate state_registry_service
+
+note over state_registry_service, openbao_transit_server
+  rotate does NOT raise min_encryption_version or
+  min_encryption_version. v0008 SHALL NOT advance
+  min_decryption_version past any still-referenced key
+  version; retiring historical versions requires an explicit
+  future migration change.
+end note
+
+== Effect on historical AAD-bound ciphertext rows ==
+state_registry_service -> state_registry_service : historical rows with embedded\nolder key version remain unchanged\nin secret_versions
+
+note over state_registry_service, openbao_transit_server
+  - new writes that do not specify key_version use the new
+  latest version; their ciphertext embeds the new key version.
+  - historical AAD-bound rows remain bound to their embedded
+  older key version; they decrypt through the active provider
+  using their original AAD byte string and the older key
+  version.
+  - the State Registry NEVER calls
+  POST /v1/<mount>/rewrap/<key_name> for any row, because the
+  documented rewrap endpoint has no associated_data parameter.
+end note
+
+== failure injection: ACL denial or sealed server ==
+deployment_identity_user -> state_registry_service : internal command signed by\ndeployment identity\n(unauthorized / wrong-signed)
+activate state_registry_service
+state_registry_service -> state_registry_service : audit crypto.rotate rejected
+state_registry_service --> deployment_identity_user : rejection recorded
+deactivate state_registry_service
+
+state_registry_service -> openbao_transit_server : POST /v1/<mount>/keys/<key_name>/rotate
+activate openbao_transit_server
+alt ACL denial
+  openbao_transit_server --> state_registry_service : 403 {"errors":["permission denied"]}
+else sealed server
+  openbao_transit_server --> state_registry_service : 503 (sealed)
+end
+deactivate openbao_transit_server
+state_registry_service -> state_registry_service : audit with provider_forbidden /\nprovider_unavailable outcome status class
+state_registry_service --> deployment_identity_user : rotation failure recorded\n(no Transit detail; no plaintext disclosure)
+@enduml

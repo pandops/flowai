@@ -1,0 +1,3536 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+
+info:
+  title: FlowAI State Registry API
+  version: v0002-proposed
+  summary: Normative tenant-aware contract for the v0002 State Registry.
+  description: |
+    The State Registry is the durable source of truth for team-owned tasks,
+    Executors, assignments, immutable events, controls, environments, logical
+    secrets, immutable encrypted secret versions, and audit entries.
+
+    Every caller is authenticated with mutually authenticated TLS. Listener
+    identities are bound to exactly one immutable team and one immutable
+    source system. Executor identities register `scope = team` (bound to
+    exactly one immutable team_id referencing an existing team) OR
+    `scope = system` (no team binding; cross-team dispatch by tag). No
+    Executor identity is implicitly team-bound; the team-predicate is
+    conditional on `scope`. `team_name` is display and audit context only
+    and never authorizes. `image` strings are not team-owned resources and
+    image equality carries no authority. Operator operations are accepted
+    only from the trusted API Gateway service identity together with the
+    internal context headers defined by this contract. `X-FlowAI-Team-ID`
+    is the sole tenant authority and is required on every Gateway-mediated
+    request. `X-FlowAI-Team-Name` is optional display and audit context;
+    when present it is never trusted to grant, select, or broaden access,
+    and when absent the Registry still authorizes solely by
+    `X-FlowAI-Team-ID`. Admin operations for team, source-system, and
+    task-type creation (`POST /admin/teams`, `POST /admin/source-systems`,
+    `POST /admin/task-types`) require an authenticated mutual-TLS
+    transport identity that the deployment has authorized as a system
+    administrator. The rule that maps an authenticated transport
+    identity to the system-administrator role is deployment-defined and
+    outside this contract; the contract does not define a
+    caller-supplied admin header, token shape, certificate subject,
+    claim, or role mapping. `/admin/*` is never reachable through a
+    listener, Executor, or Gateway transport identity; only a
+    system-administrator-authorized mTLS identity may reach it. The
+    team resource is create-only: there is no `PUT`, `PATCH`, or
+    `DELETE` team endpoint. Read-only system-admin-only projections
+    are also exposed through `/admin/*`: `GET /admin/tags` returns a
+    global projection of canonical task types and `GET /admin/tasks`
+    returns a global read-only task-summary projection. Both reads are
+    rejected before any row is read or returned when the authenticated
+    identity is not a system administrator; neither endpoint mutates
+    any team, source system, task type, task, assignment, event,
+    environment, secret, control, or audit row; neither endpoint
+    returns payload values, decrypted environment values, secret
+    material, or event history; neither endpoint grants authority from
+    cross-team tag equality; there is no `tags` table, no tag
+    create/update/delete API, and no system-admin
+    authentication-mechanism definition. Listener ingestion
+    (`POST /v1/tasks`) is task-type-driven: `task_type_id` is REQUIRED
+    and `required_tag` is derived server-side from the referenced task
+    type's `execution_tag`; the listener SHALL NOT submit an
+    independently authoritative `required_tag`.
+
+    All point lookups treat a resource owned by another team exactly like an
+    unknown identifier and return the same closed `ErrorResponse` shape. All
+    collection filters, pagination, totals, cursors, aggregations, WebSocket
+    replay, and live fan-out are applied after the authenticated team predicate.
+    A foreign-only collection is therefore empty (or `204` where explicitly
+    defined), with no metadata that reveals foreign rows.
+
+    At-rest secret values are protected with local AES-256-GCM authenticated
+    encryption (256-bit data key, fresh random 96-bit nonce per encryption,
+    128-bit authentication tag, authenticated associated data binding team
+    identifier, logical secret identifier, and version) keyed by an opaque
+    provider-neutral `key_id` / `key_version` pair recorded on every
+    `secret_versions` row. Plaintext, nonce bytes, ciphertext bytes,
+    authentication tag bytes, key material, and individual associated-data
+    values beyond identifier-level metadata SHALL NEVER appear in application
+    logs, audit records, or error responses. The Registry fails closed at
+    startup when the data key is missing.
+  license:
+    name: Internal planning artifact
+    identifier: LicenseRef-Internal-Planning
+
+servers:
+  - url: https://state-registry.internal
+    description: Mutually authenticated internal service endpoint
+
+security: []
+
+tags:
+  - name: Admin
+  - name: Listener tasks
+  - name: Executor identity
+  - name: Executor discovery
+  - name: Executor events
+  - name: Gateway reads
+  - name: Controls
+  - name: Environments
+  - name: Secrets
+  - name: Audit
+  - name: Subscriptions
+  - name: Teams
+
+paths:
+  /admin/teams:
+    post:
+      tags: [Admin]
+      summary: Create a team (admin-only)
+      operationId: adminCreateTeam
+      description: |
+        Accepted only from an authenticated system-administrator identity. The
+        request body must include a unique `team_name` (display-only) and a
+        required opaque `default_image`. The Registry generates an
+        immutable `team_id`, persists it along with `team_name` and the
+        required `default_image`, and returns the canonical team record.
+        No listener, Executor, or Gateway path may create or update a team.
+        The team resource is create-only: there is no `PUT`, `PATCH`, or
+        `DELETE` team endpoint, and no path may alter `team_name`,
+        `default_image`, or any other team field after creation.
+      security:
+        - SystemAdministratorMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminTeamCreateRequest"
+      responses:
+        "201":
+          description: Canonical team record created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTeam"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /admin/source-systems:
+    post:
+      tags: [Admin]
+      summary: Register a team-owned source system (admin-only)
+      operationId: adminCreateSourceSystem
+      description: |
+        Accepted only from an authenticated system-administrator identity.
+        The body requires a `team_id` that references an existing team and a
+        listener identity reference; the Registry persists an immutable
+        `source_system_id` and the optional `default_image`. A
+        source-system identity belongs to exactly one team and cannot be
+        reattached to another team. The opaque `listener_identity`
+        reference is constrained by a database-enforced global uniqueness
+        index so one listener principal maps to exactly one
+        `(team_id, source_system_id)` pair; a second registration under the
+        same team, a different team, or any other variation that reuses
+        the same `listener_identity` value SHALL be rejected without
+        persistence.
+      security:
+        - SystemAdministratorMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminSourceSystemCreateRequest"
+      responses:
+        "201":
+          description: Canonical source system record created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceSystem"
+        "400":
+          description: |
+            Validation failure including an unknown `team_id`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "409":
+          description: |
+            The `listener_identity` is already bound to an existing
+            `(team_id, source_system_id)` row. The global uniqueness
+            conflict creates no partial source-system row.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /admin/task-types:
+    post:
+      tags: [Admin]
+      summary: Register a team-owned task type (admin-only)
+      operationId: adminCreateTaskType
+      description: |
+        Accepted only from an authenticated system-administrator identity.
+        The body requires a `team_id` that references an existing team and a
+        required `execution_tag`; the Registry persists an immutable
+        `task_type_id` and the optional `default_image`.
+      security:
+        - SystemAdministratorMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminTaskTypeCreateRequest"
+      responses:
+        "201":
+          description: Canonical task type record created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskType"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /admin/tags:
+    get:
+      tags: [Admin]
+      summary: List canonical task-configuration-derived tags (admin-only)
+      operationId: adminListTags
+      description: |
+        Accepted only from an authenticated system-administrator identity.
+        Returns a global read-only projection of every registered
+        `task_types` row. The Registry rejects every other identity before
+        reading any row. Each entry contains EXACTLY `team_id`,
+        `task_type_id`, and `execution_tag` (no `default_image`, no
+        other columns). Entries are ordered deterministically by
+        `(team_id ASC, execution_tag ASC, task_type_id ASC)`. Cursor
+        pagination defaults to 50 entries per page and caps at 200; an
+        out-of-range or malformed `limit` is rejected before any row is
+        read. Optional exact-match `team_id` and `tag` filters narrow
+        the global collection. The endpoint never creates, updates,
+        deletes, or mutates any team, source system, task type, task,
+        assignment, event, environment, secret, control, or audit row;
+        never returns task payload values, decrypted environment values,
+        secret material, nonce bytes, ciphertext bytes, authentication
+        tag bytes, key material, or event history; and never grants,
+        broadens, selects, or weakens any tenant authorization. Equal
+        `execution_tag` strings appearing under different `team_id`s
+        SHALL NOT grant cross-team authority.
+      security:
+        - SystemAdministratorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/AdminTagTeamIdFilter"
+        - $ref: "#/components/parameters/AdminTagTagFilter"
+        - $ref: "#/components/parameters/AdminCursor"
+        - $ref: "#/components/parameters/AdminLimit"
+      responses:
+        "200":
+          description: |
+            Tag page ordered by `(team_id ASC, execution_tag ASC,
+            task_type_id ASC)`. The page MAY be empty when no canonical
+            task type matches the filters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTagPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /admin/tasks:
+    get:
+      tags: [Admin]
+      summary: List canonical task summaries across teams (admin-only)
+      operationId: adminListTasks
+      description: |
+        Accepted only from an authenticated system-administrator identity.
+        Returns a global read-only projection of canonical task
+        summaries across every team. The Registry rejects every other
+        identity before reading any row. Each entry contains EXACTLY
+        `task_id`, `team_id`, `task_type_id`, `source_system_id`,
+        `source_id`, `required_tag`, `current_state`, `owner_command_id`,
+        `executor_id`, `ingested_at`, and `claimed_at` (no `image`, no
+        `resolved_image`, no `image_source`, no `project_id`, no
+        `environment_id`, no task payload). Entries are ordered
+        deterministically by `(ingested_at DESC, task_id DESC)`. Cursor
+        pagination defaults to 50 entries per page and caps at 200; an
+        out-of-range or malformed `limit` is rejected before any row is
+        read. Optional exact-match `team_id`, `state`, `tag`, and
+        `task_type_id` filters narrow the global collection. "All" tasks
+        means a traversable, paginated global collection; the response
+        SHALL NOT be unbounded. The endpoint never creates, updates,
+        deletes, or mutates any team, source system, task type, task,
+        assignment, event, environment, secret, secret version, control,
+        or audit row; never returns task payload values, decrypted
+        environment values, secret material, nonce bytes, ciphertext
+        bytes, authentication tag bytes, key material, or event
+        history; and never grants, broadens, selects, or weakens any
+        tenant authorization. Equal `required_tag` strings appearing
+        under different `team_id`s SHALL NOT grant cross-team
+        authority.
+      security:
+        - SystemAdministratorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/AdminTaskTeamIdFilter"
+        - $ref: "#/components/parameters/AdminTaskStateFilter"
+        - $ref: "#/components/parameters/AdminTaskTagFilter"
+        - $ref: "#/components/parameters/AdminTaskTypeIdFilter"
+        - $ref: "#/components/parameters/AdminCursor"
+        - $ref: "#/components/parameters/AdminLimit"
+      responses:
+        "200":
+          description: |
+            Task page ordered by `(ingested_at DESC, task_id DESC)`. The
+            page MAY be empty when no canonical task matches the
+            filters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminTaskPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /v1/tasks:
+    post:
+      tags: [Listener tasks]
+      summary: Persist or deduplicate a listener task
+      operationId: ingestTask
+      description: |
+        The authenticated listener identity is bound to one team and one
+        source system. The body `team_id` must equal that team binding,
+        `source_system_id` must equal that source-system binding, and
+        the body SHALL carry a REQUIRED `task_type_id` referencing a
+        registered task type whose immutable `team_id` equals the
+        authenticated listener's team. The Registry enforces a database
+        composite
+        `(tasks.task_type_id, tasks.team_id) = (task_types.task_type_id, task_types.team_id)`
+        constraint on every write; a missing or foreign-team
+        `task_type_id` is rejected without persistence, without event
+        append, and without listener acknowledgement. The Registry
+        derives `required_tag` from the referenced task type's
+        `execution_tag` and SHALL NOT accept an independently
+        authoritative `required_tag` from the listener. A new `pending`
+        task row with no lifecycle event is committed in one transaction
+        before `201` is returned; `ingested_at` is set once and is
+        immutable. A retry of `(team_id, source_system_id, source_id)`
+        returns the existing canonical task with `200` and appends no
+        event.
+      security:
+        - ListenerMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskIngestionRequest"
+      responses:
+        "201":
+          description: New canonical `pending` task committed with no event.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "200":
+          description: Existing canonical task returned for an idempotent team-scoped retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+    get:
+      tags: [Gateway reads]
+      summary: List tasks in the operator team
+      operationId: listTasks
+      description: |
+        Team filtering occurs before every filter, total, cursor, and page is
+        computed. Foreign rows cannot affect an empty result, count, or cursor.
+        Entries are deterministically ordered `(ingested_at DESC, task_id DESC)`
+        after the trusted `team_id` predicate and before pagination. Each
+        `next_cursor` is opaque, integrity-protected, and bound to this
+        endpoint, the trusted Gateway `team_id` plus verified `operator_id`,
+        every supplied filter, the `(ingested_at DESC, task_id DESC)`
+        ordering, and the forward page direction; the Registry rejects
+        tampered, cross-endpoint, cross-scope, or changed-filter cursors
+        with the same non-revealing `400 invalid_pagination` shape before
+        any protected query runs.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - $ref: "#/components/parameters/TaskStateFilter"
+        - $ref: "#/components/parameters/TagFilter"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Team-filtered task page, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /v1/tasks/{task_id}:
+    get:
+      tags: [Gateway reads]
+      summary: Read a canonical task
+      operationId: getTask
+      description: A foreign-team task identifier returns the same `404 task_unknown` response as an unknown identifier.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "200":
+          description: Team-owned canonical task without plaintext secret values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/TaskNotFound"
+
+  /v1/tasks/{task_id}/events:
+    post:
+      tags: [Executor events]
+      summary: Append an assigned-Executor lifecycle event
+      operationId: appendTaskEvent
+      description: |
+        Accepts `running`, `finished`, or `failed` from the authenticated
+        Executor currently assigned to the task. The complete envelope
+        includes `team_id`. An identical `(task_id, event_id)` retry returns
+        the original `202` result. New events must follow the lifecycle and
+        have an `(occurred_at, event_id)` tuple strictly greater than the
+        latest accepted tuple. `accepted_sequence` and other recovery
+        overrides are not accepted.
+      security:
+        - ExecutorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskEventAppendRequest"
+      responses:
+        "202":
+          description: Event accepted, or original acceptance returned for an identical retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventAcceptance"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            The authenticated Executor is on the same team but is not the
+            assigned Executor (`not_assigned`) or its envelope `team_id`
+            does not match its immutable service binding (`team_mismatch`).
+            No event is appended and no projection changes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/TaskNotFound"
+        "409":
+          $ref: "#/components/responses/InvalidTaskTransition"
+    get:
+      tags: [Gateway reads]
+      summary: Read ordered task event history
+      operationId: listTaskEvents
+      description: |
+        Returns only events inherited from the trusted Gateway team, ordered
+        by `(occurred_at ASC, event_id ASC)`. Team filtering is applied
+        before the cursor and page are computed. The first lifecycle event on
+        any claimed task is `created` and carries a non-null `executor_id`
+        that identifies the claiming Executor; Executor-emitted events have
+        non-null `executor_id` and required `team_id`.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Deterministically ordered, team-filtered event page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskEventPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/TaskNotFound"
+
+  /v1/executors:
+    get:
+      tags: [Gateway reads]
+      summary: List Executors in the operator team
+      operationId: listExecutors
+      description: Team filtering precedes tag, type, cursor, total, and page shaping.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - $ref: "#/components/parameters/TagFilter"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Team-filtered Executor page, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /v1/executors/{executor_id}:
+    put:
+      tags: [Executor identity]
+      summary: Register or refresh one team-bound or system-bound Executor
+      operationId: registerExecutor
+      description: |
+        The Executor body supplies a `scope` of `team` or `system`. When
+        `scope = team`, `team_id` is required and must equal the immutable
+        team bound to the authenticated Executor identity, and the team
+        must already exist. When `scope = system`, `team_id` is required to
+        be null. `authorized_tag` is one required scalar tag; zero-tag and
+        multi-tag representations are rejected with `400
+        invalid_tag_count`. `max_capacity` and `running_count` are
+        observations only and never gate discovery, claim, or
+        lifecycle-event acceptance. Executor registration never creates or
+        updates a team.
+      security:
+        - ExecutorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/ExecutorId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutorRegistrationRequest"
+      responses:
+        "200":
+          description: Canonical Executor record registered or refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Executor"
+        "400":
+          description: Invalid registration, including `invalid_tag_count`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+    get:
+      tags: [Gateway reads]
+      summary: Read a canonical Executor
+      operationId: getExecutor
+      description: A foreign-team Executor identifier returns the same `404 executor_unknown` response as an unknown identifier.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/ExecutorId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "200":
+          description: Team-owned Executor record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Executor"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ExecutorNotFound"
+
+  /v1/executors/{executor_id}/tasks:
+    get:
+      tags: [Executor discovery]
+      summary: Discover pending tasks by the exact registered tag in FIFO order
+      operationId: discoverExecutorTasks
+      description: |
+        The authenticated Executor may request only its one registered tag.
+        Eligibility precedes ordering; ordering precedes pagination; counts
+        apply only after both filters. Selection first applies the
+        Executor's scope-conditional eligibility predicate (`tasks.team_id
+        = executor.team_id` when `scope = team`; tag-match only when
+        `scope = system`), then orders results `(ingested_at ASC, task_id
+        ASC)`, where `ingested_at` is immutable per task and `task_id` is
+        the deterministic tie-breaker. Discovery is read-only; it never
+        reserves or assigns a task and never reads or enforces capacity.
+        If only foreign-team tasks match, the result is `204` (or an empty
+        `200` page) without count, cursor, or timing disclosure.
+      security:
+        - ExecutorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/ExecutorId"
+        - name: tag
+          in: query
+          required: true
+          description: Must exactly equal the authenticated Executor's single registered tag.
+          schema:
+            $ref: "#/components/schemas/Tag"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One or more eligible `pending` task summaries ordered `(ingested_at ASC, task_id ASC)`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskDiscoveryPage"
+        "204":
+          description: No eligible `pending` task is visible; no pagination metadata is returned.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ExecutorNotFound"
+
+  /v1/executors/{executor_id}/claim:
+    post:
+      tags: [Executor discovery]
+      summary: Atomically claim the oldest eligible pending task
+      operationId: claimTask
+      description: |
+        The request body carries `task_id` and the immutable `command_id`.
+        The Registry claims only when ALL of: the task is `pending`; the
+        task's required tag equals the Executor's single registered tag;
+        the Executor's scope-conditional eligibility predicate holds
+        (`tasks.team_id = executor.team_id` when `scope = team`); AND the
+        requested task is the OLDEST currently eligible `pending` task
+        for that authenticated Executor. Eligibility precedes FIFO
+        ordering. In one transaction, claim sets immutable
+        `tasks.owner_command_id` and `tasks.executor_id`, persists
+        `tasks.resolved_image` and `tasks.image_source` from the
+        four-level precedence, sets `tasks.claimed_at`, appends the FIRST
+        lifecycle event `created` with `executor_id = claiming_executor`
+        and a payload meaning `task <task_id> loaded by <executor_id>`,
+        projects the task to `created`, removes the task from this
+        Executor's scope of discovery, and returns `200 claimed`. The
+        complete claim-conflict taxonomy is: (a) unknown or foreign
+        `task_id` returns non-revealing `404 task_unknown`; (b) eligible
+        `task_id` already claimed under a different `command_id` returns
+        `409 task_already_claimed`; (c) the same `(task_id, command_id)`
+        by the original claiming Executor returns the original `200
+        claimed` body with no new event; (d) eligible but non-oldest
+        `pending` `task_id` returns `409
+        older_task_must_be_claimed_first`; (e) `task_id` whose current
+        state is not `pending` (and is not the same `(task_id,
+        command_id)` of an existing claim) returns non-revealing `404
+        task_unknown`. Capacity observations are not read or evaluated.
+        Image strings are not team-owned resources and never authorize.
+      security:
+        - ExecutorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/ExecutorId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClaimRequest"
+      responses:
+        "200":
+          description: Oldest eligible task claimed and the first `created` event committed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/TaskNotFound"
+        "409":
+          $ref: "#/components/responses/TaskAlreadyClaimed"
+
+  /v1/executors/{executor_id}/events:
+    post:
+      tags: [Executor events]
+      summary: Append an Executor self event
+      operationId: appendExecutorEvent
+      description: |
+        The complete self-event envelope includes the authenticated
+        Executor's `team_id` (null when `scope = system`), non-null
+        `executor_id`, nullable `task_id`, stable `event_id`, `event_type`,
+        `occurred_at`, and `payload`. Capacity values in a
+        `capacity_observed` payload are mirrored to the Executor row in
+        the same transaction but never gate work. An identical retry
+        returns the original `202` result without duplication.
+      security:
+        - ExecutorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/ExecutorId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutorEventAppendRequest"
+      responses:
+        "202":
+          description: Event accepted, or original acceptance returned for an identical retry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventAcceptance"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: |
+            The authenticated Executor's envelope `team_id` does not match
+            its immutable service binding (`team_mismatch`); same-team
+            executors are the only writers and no event is appended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/ExecutorNotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    get:
+      tags: [Gateway reads]
+      summary: Read ordered Executor self-event history
+      operationId: listExecutorEvents
+      description: Team filtering is applied before event pagination and serialization.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/ExecutorId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Team-filtered Executor event page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutorEventPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ExecutorNotFound"
+
+  /v1/tasks/{task_id}/controls:
+    post:
+      tags: [Controls]
+      summary: Create an audit-backed operator control
+      operationId: createTaskControl
+      description: |
+        Accepted only from trusted Gateway context for a task in the same
+        team. The idempotency key is scoped to `(team_id, task_id,
+        operator_id, action)`. A foreign task returns the same `404
+        task_unknown` response as unknown and creates neither a control
+        nor a domain event.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ControlCreateRequest"
+      responses:
+        "202":
+          description: Control and plaintext-free audit entry accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Control"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/TaskNotFound"
+    get:
+      tags: [Controls]
+      summary: Read pending controls for an assigned task
+      operationId: listAssignedTaskControls
+      description: |
+        Executor-only read. The authenticated Executor must be the immutable
+        assignee of the task. A foreign task is indistinguishable from
+        unknown. An unassigned same-team Executor receives `403
+        not_assigned`. The task's `team_id` carries immutable ownership;
+        the same-team check applies to the envelope `team_id` when
+        `scope = team`.
+      security:
+        - ExecutorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Pending controls for the assigned task, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ControlPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAssigned"
+        "404":
+          $ref: "#/components/responses/TaskNotFound"
+
+  /v1/tasks/{task_id}/controls/{control_id}:
+    get:
+      tags: [Controls]
+      summary: Read one control through API Gateway
+      operationId: getTaskControl
+      description: Foreign task or control identifiers return the same non-revealing `404` shape as unknown identifiers.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+        - $ref: "#/components/parameters/ControlId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "200":
+          description: Team-owned control record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Control"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+  /v1/environments:
+    post:
+      tags: [Environments]
+      summary: Create a team-owned environment definition
+      operationId: createEnvironment
+      description: |
+        Stores non-secret `KEY=value` entries and optional project/task
+        applicability in the trusted Gateway team. The body cannot select a
+        tenant. The write appends a plaintext-free audit entry.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnvironmentWriteRequest"
+      responses:
+        "201":
+          description: Environment definition created and audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+    get:
+      tags: [Environments]
+      summary: List team-owned environment definitions
+      operationId: listEnvironments
+      description: Team filtering occurs before project/task filters, totals, cursors, and pages.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - $ref: "#/components/parameters/ProjectIdFilter"
+        - $ref: "#/components/parameters/TaskIdFilter"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Team-filtered environment page, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvironmentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /v1/environments/{environment_id}:
+    get:
+      tags: [Environments]
+      summary: Read environment metadata and non-secret values
+      operationId: getEnvironment
+      description: |
+        Returns team-owned metadata, non-secret values, and logical secret
+        references only. It never returns secret plaintext, decrypted values,
+        ciphertext, authentication tag bytes, or decryption material. A
+        foreign identifier is the same `404` shape as unknown.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "200":
+          description: Team-owned environment without secret plaintext.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+    put:
+      tags: [Environments]
+      summary: Replace a team-owned non-secret environment definition
+      operationId: replaceEnvironment
+      description: A foreign environment returns non-revealing `404` and causes no decrypt operation.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnvironmentWriteRequest"
+      responses:
+        "200":
+          description: New environment revision stored and audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Environment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+    delete:
+      tags: [Environments]
+      summary: Delete a team-owned environment definition
+      operationId: deleteEnvironment
+      description: Marks the definition deleted and appends an audit entry; foreign is indistinguishable from unknown.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "204":
+          description: Environment marked deleted; no response body.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+  /v1/environments/{environment_id}/secrets:
+    post:
+      tags: [Secrets]
+      summary: Create a logical secret and immutable AES-256-GCM version
+      operationId: createEnvironmentSecret
+      description: |
+        Accepted only for a same-team environment. State Registry verifies
+        team ownership and applicability before encrypting the plaintext
+        with local AES-256-GCM authenticated encryption (256-bit data key,
+        fresh 96-bit nonce per encryption, 128-bit tag, associated data
+        binding team identifier, logical secret identifier, and version).
+        It stores a logical secret plus an immutable ciphertext version
+        with opaque provider-neutral `key_id` and `key_version` metadata
+        and returns only identifiers and non-sensitive version metadata. A
+        foreign environment returns non-revealing `404` before any
+        encrypt operation.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecretCreateRequest"
+      responses:
+        "201":
+          description: Logical secret and first immutable encrypted version created and audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretWriteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+    get:
+      tags: [Secrets]
+      summary: List logical secret metadata for an environment
+      operationId: listEnvironmentSecrets
+      description: Returns references and version metadata only; no plaintext, ciphertext, nonce, or tag.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Team-filtered logical-secret page, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogicalSecretPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+  /v1/environments/{environment_id}/secrets/{secret_id}:
+    get:
+      tags: [Secrets]
+      summary: Read logical secret metadata
+      operationId: getEnvironmentSecret
+      description: Returns no plaintext, decrypted value, ciphertext, nonce, tag, or decryption material.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/SecretId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "200":
+          description: Team-owned logical secret metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogicalSecret"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+    put:
+      tags: [Secrets]
+      summary: Append an immutable replacement secret version
+      operationId: replaceEnvironmentSecretValue
+      description: |
+        The logical secret remains stable; State Registry encrypts the new
+        value with local AES-256-GCM and appends a new immutable
+        ciphertext `secret_versions` row carrying opaque `key_id` and
+        `key_version` metadata, and returns version metadata only.
+        Foreign parent or secret identifiers return `404` before any
+        encrypt operation.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/SecretId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecretReplaceRequest"
+      responses:
+        "200":
+          description: New immutable encrypted version appended and audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretWriteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+    delete:
+      tags: [Secrets]
+      summary: Revoke a logical secret reference
+      operationId: revokeEnvironmentSecret
+      description: Retains immutable version history, stores no plaintext, and appends a plaintext-free audit entry.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/SecretId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "204":
+          description: Logical secret revoked; immutable history retained.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+  /v1/environments/{environment_id}/secrets/{secret_id}/versions:
+    get:
+      tags: [Secrets]
+      summary: List immutable secret-version metadata
+      operationId: listSecretVersions
+      description: Version metadata is team-filtered and contains no plaintext, ciphertext, nonce, or tag.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/SecretId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Team-filtered immutable version page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretVersionPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+  /v1/environments/{environment_id}/secrets/{secret_id}/versions/{version}:
+    get:
+      tags: [Secrets]
+      summary: Read immutable secret-version metadata
+      operationId: getSecretVersion
+      description: A foreign version identifier returns the same `404` shape as unknown and never exposes plaintext or ciphertext.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - $ref: "#/components/parameters/SecretId"
+        - $ref: "#/components/parameters/SecretVersionNumber"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "200":
+          description: Team-owned immutable version metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecretVersion"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+  /v1/environments/{environment_id}/open:
+    get:
+      tags: [Environments]
+      summary: Open task-scoped environment values for the assigned Executor
+      operationId: openAssignedEnvironment
+      description: |
+        This is the only public operation that returns decrypted secret
+        values. The caller must be the authenticated Executor currently
+        assigned to the referenced task in the same immutable team, and
+        the task must still be in a non-terminal state
+        (`created` or `running`).
+
+        The required `X-FlowAI-Scope-Token` header carries the compact
+        three-part scope token issued with the original successful claim
+        response in the documented
+        `<header>.<payload>.<signature>` shape. The `<header>` segment
+        declares the allowed `alg` (the allow-listed HMAC set
+        `HS256`/`HS384`/`HS512` only — matching the "HMAC-SHA-256 or a
+        stronger HMAC" model), the active `kid`, and the token `typ`.
+        The `<payload>` segment carries every bound claim: `team_id`,
+        `project_id`, `task_id`, `environment_id`, `executor_id`,
+        `audience` (`state-registry.environment.open`), `key_id`,
+        `issued_at`, and `expiry`. `project_id` is a required claim but
+        its value is nullable only when the canonical environment has no
+        project scope; a missing `project_id` claim is malformed, while
+        a null value for a project-scoped environment or any non-null
+        mismatch is invalid. `issued_at` MUST be a moment not in the
+        future beyond the tolerated clock-skew window of 30 seconds
+        (`issued_at <= server_now + 30s`), `expiry` MUST be strictly
+        later than `issued_at`, and `expiry - issued_at` MUST be no more
+        than five minutes; tokens whose lifetime exceeds that bound, are
+        expired, or are premature beyond the skew window are rejected
+        together with all other invalid cases.
+
+        State Registry recomputes the signature using the declared
+        allow-listed `alg`, the server-side HMAC key handle identified
+        by `key_id` (loaded once per process from a sealed source and
+        held in protected memory), and compares the result with the
+        supplied `<signature>` using a constant-time comparison before
+        any other check and before any decrypt operation. Before
+        recomputing, State Registry verifies that the protected-header
+        `kid` equals the payload `key_id`; any mismatch is rejected
+        without performing the MAC comparison or any decrypt operation.
+        The active `key_id` is rotated independently of any token
+        lifetime; retired or unknown `key_id` values are rejected before
+        decryption.
+
+        To prevent an oracle that would otherwise distinguish the
+        failure reason, every invalid or unavailable case returns one
+        closed, non-revealing `404 environment_unknown_or_unavailable`
+        response. This covers a tampered signature, an algorithm outside
+        the allow-listed `HS256`/`HS384`/`HS512` HMAC set, a
+        protected-header `kid` that does not equal the payload
+        `key_id`, a bad HMAC, a wrong or retired `key_id`, an expired,
+        premature-beyond-skew, or over-five-minute token, an unexpected
+        audience, a missing or mismatched claim (including a
+        project-scoped environment with a null `project_id`), a wrong
+        authenticated Executor identity, an unassigned or
+        already-replaced Executor, a terminal task state, and a foreign
+        or unknown environment or task identifier. No decrypt operation
+        is started before every check has passed. The local AES-256-GCM
+        decrypt runs with associated-data binding team identifier,
+        logical secret identifier, and version, and only on the
+        successful path; no decrypt operation runs for any invalid or
+        unavailable case.
+
+        On success, State Registry returns env-style values and appends
+        a plaintext-free audit entry. Plaintext remains in memory only.
+      security:
+        - ExecutorMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/EnvironmentId"
+        - name: X-FlowAI-Scope-Token
+          in: header
+          required: true
+          description: |
+            Compact three-part scope token
+            `<header>.<payload>.<signature>` from the successful claim
+            response. The header segment carries `alg` (allow-listed
+            `HS256`/`HS384`/`HS512`), `kid`, and `typ`; the payload
+            segment carries every bound claim (`team_id`, `project_id`,
+            `task_id`, `environment_id`, `executor_id`, `audience`,
+            `key_id`, `issued_at`, `expiry`). Treat as confidential and
+            never log it. Any invalid or unavailable case returns a
+            single closed `404 environment_unknown_or_unavailable`
+            response without revealing which check failed.
+          schema:
+            $ref: "#/components/schemas/CompactScopeToken"
+        - name: task_id
+          in: query
+          required: true
+          description: Identifier of the assigned task; the path `environment_id` is resolved against the canonical environment row.
+          schema:
+            $ref: "#/components/schemas/Identifier"
+      responses:
+        "200":
+          description: Authorized non-secret and decrypted env-style values for the assigned, non-terminal task only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenEnvironmentResponse"
+        "204":
+          description: The authorized environment has no values to return.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/EnvironmentUnknownOrUnavailable"
+
+  /v1/audit:
+    get:
+      tags: [Audit]
+      summary: List plaintext-free audit entries in the operator team
+      operationId: listAuditEntries
+      description: Team filtering occurs before actor/resource/time filters, totals, cursors, aggregation, or serialization.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - name: resource_type
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+        - name: resource_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Identifier"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Team-filtered audit page, possibly empty.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+
+  /v1/audit/{audit_id}:
+    get:
+      tags: [Audit]
+      summary: Read one plaintext-free audit entry
+      operationId: getAuditEntry
+      description: A foreign audit identifier returns the same `404` shape as unknown and discloses no entry.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/AuditId"
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+      responses:
+        "200":
+          description: Team-owned plaintext-free audit entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEntry"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+  /v1/events/stream:
+    get:
+      tags: [Subscriptions]
+      summary: Upgrade to a team-bound event WebSocket
+      operationId: streamTeamEvents
+      description: |
+        Accepted only from the trusted API Gateway service identity. The
+        `X-FlowAI-Operator-ID`, `X-FlowAI-Team-ID`, and `X-FlowAI-Request-ID`
+        headers are required at upgrade; the connection is permanently
+        bound to `X-FlowAI-Team-ID`. `X-FlowAI-Team-Name` is optional and,
+        when present, is display-only; its absence never affects
+        authorization or frame filtering. The immutable team predicate is
+        applied before replay selection, cursor handling, filters, live
+        fan-out, and every frame. Each `WebSocketEventFrame` requires the
+        same `team_id`. A filter naming a foreign resource is treated as
+        unknown and emits no existence signal or foreign frame.
+      security:
+        - GatewayMTLS: []
+      parameters:
+        - $ref: "#/components/parameters/GatewayOperatorId"
+        - $ref: "#/components/parameters/GatewayTeamId"
+        - $ref: "#/components/parameters/GatewayTeamName"
+        - $ref: "#/components/parameters/GatewayRequestId"
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque team-scoped replay cursor. A cursor from another team is invalid.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: event_kind
+          in: query
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/StreamEventKind"
+          style: form
+          explode: false
+        - name: resource_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Identifier"
+      responses:
+        "101":
+          description: |
+            WebSocket upgrade accepted. Every text frame is JSON matching
+            `WebSocketEventFrame` and belongs to the team fixed at upgrade.
+          headers:
+            Upgrade:
+              required: true
+              schema:
+                const: websocket
+            Connection:
+              required: true
+              schema:
+                const: Upgrade
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ResourceNotFound"
+
+components:
+  securitySchemes:
+    SystemAdministratorMTLS:
+      type: mutualTLS
+      description: |
+        Mutual TLS transport identity used to reach `/admin/*` endpoints
+        (team, source-system, task-type creation). The State Registry
+        requires that the authenticated transport identity be the one
+        deployment has authorized as a system administrator; HOW that
+        authenticated transport identity is mapped/authorized to the
+        system-administrator role (subject, SAN, claim, group, header,
+        token shape, or any other rule) is deployment-defined and outside
+        this contract. The contract does not define a caller-supplied
+        admin header, token shape, certificate subject, claim, or role
+        mapping. Only an authenticated system-administrator transport
+        identity may reach `/admin/*`; no listener, Executor, or Gateway
+        path may create or update a team, source system, or task type.
+    ListenerMTLS:
+      type: mutualTLS
+      description: Trusted listener certificate bound to exactly one immutable team and one immutable source system.
+    ExecutorMTLS:
+      type: mutualTLS
+      description: Trusted Executor certificate. A team-owned Executor is bound to exactly one immutable team_id referencing an existing team; a system-owned Executor has no team binding and is filtered by the single registered tag only.
+    GatewayMTLS:
+      type: mutualTLS
+      description: Trusted API Gateway certificate. Internal context headers are trusted only with this identity.
+
+  parameters:
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    ExecutorId:
+      name: executor_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    EnvironmentId:
+      name: environment_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    SecretId:
+      name: secret_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    ControlId:
+      name: control_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    AuditId:
+      name: audit_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    SecretVersionNumber:
+      name: version
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    GatewayOperatorId:
+      name: X-FlowAI-Operator-ID
+      in: header
+      required: true
+      description: Gateway-verified operator identifier. Trusted only with `GatewayMTLS`; one operator context has exactly one team.
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    GatewayTeamId:
+      name: X-FlowAI-Team-ID
+      in: header
+      required: true
+      description: Immutable authoritative tenant identifier injected by the trusted Gateway. This is the only Gateway tenant authorization input.
+      schema:
+        $ref: "#/components/schemas/TeamId"
+    GatewayTeamName:
+      name: X-FlowAI-Team-Name
+      in: header
+      required: false
+      description: |
+        Optional Gateway-verified display and audit label. When present the
+        Registry retains it for display and audit context only. It must
+        never select, grant, or broaden tenant access, and its absence never
+        weakens authorization anchored to `X-FlowAI-Team-ID`.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+    GatewayRequestId:
+      name: X-FlowAI-Request-ID
+      in: header
+      required: true
+      description: Gateway-generated request correlation identifier included in audit and errors; it conveys no authorization.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Opaque cursor computed only after the authenticated team predicate,
+        integrity-protected under a server-controlled HMAC keyed by
+        `key_id`, and bound to this endpoint, the trusted Gateway
+        `team_id` plus verified `operator_id`, the complete filter
+        tuple, the deterministic ordering, and the forward page
+        direction. A tampered, cross-endpoint, cross-scope,
+        changed-filter, or wrong-direction cursor is rejected with the
+        same non-revealing `400 invalid_pagination` response shape
+        before any protected query runs.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 1536
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Page size; default 50, maximum 200. Out-of-range, non-integer,
+        or otherwise malformed values are rejected with `400
+        invalid_pagination` before any protected query runs.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    TagFilter:
+      name: tag
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Tag"
+    TaskStateFilter:
+      name: state
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/TaskState"
+    ProjectIdFilter:
+      name: project_id
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    TaskIdFilter:
+      name: task_id
+      in: query
+      required: false
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    AdminCursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Opaque cursor for `/admin/tags` and `/admin/tasks` pagination.
+        Cursors are computed only from canonical rows visible to the
+        authenticated system-administrator role. Each cursor is
+        integrity-protected under a server-controlled HMAC keyed by
+        `key_id`, bound to the originating endpoint, the
+        authenticated system-administrator role, the complete filter
+        tuple, the deterministic endpoint ordering, and the forward
+        page direction; a tampered, cross-endpoint, cross-role,
+        changed-filter, or wrong-direction cursor is rejected with the
+        same non-revealing `400 invalid_pagination` shape before any
+        protected query runs.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 1536
+    AdminLimit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Page size for `/admin/tags` and `/admin/tasks`. Default 50,
+        maximum 200. Out-of-range, non-integer, or otherwise malformed
+        values are rejected with `400 invalid_pagination` before any
+        row is read; the response carries no payload, secret,
+        decrypted environment value, or event history.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    AdminTagTeamIdFilter:
+      name: team_id
+      in: query
+      required: false
+      description: |
+        Optional exact-match filter for `GET /admin/tags`; restricts the
+        tag page to a single team.
+      schema:
+        $ref: "#/components/schemas/TeamId"
+    AdminTagTagFilter:
+      name: tag
+      in: query
+      required: false
+      description: |
+        Optional exact-match `execution_tag` filter for `GET
+        /admin/tags`. Equal tag strings appearing under different
+        `team_id`s SHALL NOT grant cross-team authority.
+      schema:
+        $ref: "#/components/schemas/Tag"
+    AdminTaskTeamIdFilter:
+      name: team_id
+      in: query
+      required: false
+      description: |
+        Optional exact-match filter for `GET /admin/tasks`; restricts
+        the task page to a single team.
+      schema:
+        $ref: "#/components/schemas/TeamId"
+    AdminTaskStateFilter:
+      name: state
+      in: query
+      required: false
+      description: |
+        Optional exact-match filter for `GET /admin/tasks`; restricts
+        the task page to one canonical `current_state`.
+      schema:
+        $ref: "#/components/schemas/TaskState"
+    AdminTaskTagFilter:
+      name: tag
+      in: query
+      required: false
+      description: |
+        Optional exact-match `required_tag` filter for `GET
+        /admin/tasks`. Equal tag strings across teams SHALL NOT grant
+        cross-team authority.
+      schema:
+        $ref: "#/components/schemas/Tag"
+    AdminTaskTypeIdFilter:
+      name: task_type_id
+      in: query
+      required: false
+      description: |
+        Optional exact-match filter for `GET /admin/tasks`; restricts
+        the task page to a single registered task type.
+      schema:
+        $ref: "#/components/schemas/TaskTypeId"
+
+  responses:
+    BadRequest:
+      description: Request path, query, headers, or body are invalid. No sensitive free-form detail is returned.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthenticated:
+      description: A trusted mutually authenticated service identity was not established.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotAuthorized:
+      description: The authenticated service role, team binding, tag, or scope is not authorized.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotAssigned:
+      description: The authenticated same-team Executor is not the immutable task assignee.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TaskNotFound:
+      description: Unknown or foreign-team task. Both cases use exactly the same status and closed response shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: task_unknown
+            message: Task was not found.
+            request_id: req-redacted
+    ExecutorNotFound:
+      description: Unknown or foreign-team Executor. Both cases use exactly the same status and closed response shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: executor_unknown
+            message: Executor was not found.
+            request_id: req-redacted
+    ResourceNotFound:
+      description: Unknown or foreign-team resource. Both cases use exactly the same status and closed response shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: resource_unknown
+            message: Resource was not found.
+            request_id: req-redacted
+    TaskAlreadyClaimed:
+      description: |
+        The task is no longer `pending` for the requester's scope; no
+        assignment or event is changed. The same body covers both the
+        non-oldest eligible FIFO conflict (`older_task_must_be_claimed_first`)
+        and the stale-claim conflict (`task_already_claimed`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: older_task_must_be_claimed_first
+            message: An older eligible pending task exists for this Executor; claim the oldest one first.
+            request_id: req-redacted
+    InvalidTaskTransition:
+      description: Lifecycle transition or ordering tuple is invalid; no event or projection change occurs.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: invalid_task_transition
+            message: Task event cannot be accepted in the current state.
+            request_id: req-redacted
+    Conflict:
+      description: The request conflicts with immutable or current resource state; no partial mutation occurs.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    EnvironmentUnknownOrUnavailable:
+      description: |
+        Single closed non-revealing `404` response used for every invalid
+        or unavailable case at
+        `GET /v1/environments/{environment_id}/open`, including tampered
+        signature, an algorithm outside the allow-listed `HS256`/`HS384`/`HS512`
+        HMAC set, a protected-header `kid` that does not equal the payload
+        `key_id`, bad HMAC, wrong or retired `key_id`, expired,
+        premature-beyond-skew, or over-five-minute token, unexpected
+        audience, missing or mismatched claim (including a project-scoped
+        environment with a null `project_id`), wrong authenticated
+        Executor identity, unassigned or already-replaced Executor,
+        terminal task state, and a foreign or unknown environment or
+        task identifier. The response shape and `code` are identical for
+        every case so the endpoint cannot be used as a validation
+        oracle. No decrypt operation is started before every check has
+        passed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: environment_unknown_or_unavailable
+            message: Environment was not found or is not available.
+            request_id: req-redacted
+
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+
+    TeamId:
+      allOf:
+        - $ref: "#/components/schemas/Identifier"
+      description: Immutable tenant identifier and sole team authorization authority.
+
+    SourceSystemId:
+      allOf:
+        - $ref: "#/components/schemas/Identifier"
+      description: Immutable server-assigned source-system identifier; one source-system identity belongs to exactly one team.
+
+    TaskTypeId:
+      allOf:
+        - $ref: "#/components/schemas/Identifier"
+      description: Immutable server-assigned task-type identifier; one task type belongs to exactly one team.
+
+    CommandId:
+      allOf:
+        - $ref: "#/components/schemas/Identifier"
+      description: Immutable command identifier supplied by the Executor at claim; one command MAY own multiple tasks while each task is limited to one command.
+
+    Tag:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+
+    ImageReference:
+      type: object
+      additionalProperties: false
+      required: [repository, digest]
+      properties:
+        repository:
+          type: string
+          minLength: 1
+          maxLength: 512
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._/-]*(:[A-Za-z0-9._-]+)?$"
+          description: |
+            Opaque container image repository path (registry host,
+            namespace, image name, optional tag suffix). State Registry
+            does not resolve, pull, verify, mutate, or interpret this
+            string. Image strings are not team-owned resources; image
+            equality or reuse SHALL NOT grant, select, or broaden access.
+        digest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: "^sha256:[A-Fa-f0-9]{64}$"
+          description: |
+            Immutable OCI digest (`sha256:` followed by 64 lowercase or
+            uppercase hex characters). State Registry stores the value
+            verbatim and does not compute, verify, or interpret the
+            digest.
+      description: |
+        Opaque container image reference. The reference identifies an
+        image by repository path plus immutable digest; State Registry
+        stores and returns the value verbatim and never uses it to
+        select, prioritize, schedule, or reject work.
+
+    ImageSource:
+      type: string
+      enum:
+        [task_override, task_type_default, source_system_default, team_default]
+      description: |
+        Origin of `tasks.resolved_image`. The Registry persists the
+        value in `image_source` and exposes it in the claim response so
+        the Executor never has to consult any other source.
+
+    JsonPayload:
+      type: object
+      additionalProperties: true
+      description: Domain payload. Secret plaintext and decrypted environment values are forbidden.
+
+    AdminTeamCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [team_name, default_image]
+      properties:
+        team_name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            Display-only label, unique across teams. Always
+            non-authoritative. State Registry SHALL NOT use `team_name`
+            for any authorization decision.
+        default_image:
+          $ref: "#/components/schemas/ImageReference"
+
+    AdminTeam:
+      type: object
+      additionalProperties: false
+      required: [team_id, team_name, default_image, created_at, updated_at]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        team_name:
+          type: string
+        default_image:
+          $ref: "#/components/schemas/ImageReference"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AdminSourceSystemCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, listener_identity]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+          description: |
+            Required reference to an existing immutable `team_id`. The
+            Registry rejects submissions whose `team_id` does not
+            already exist.
+        listener_identity:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: |
+            Opaque listener identity reference bound to exactly one team
+            and this source system. Globally unique across the
+            `source_systems` table; one listener principal maps to
+            exactly one `(team_id, source_system_id)` pair. Re-registration
+            under the same team or any different team that reuses the
+            same `listener_identity` value is rejected without mutation.
+        default_image:
+          anyOf:
+            - $ref: "#/components/schemas/ImageReference"
+            - type: "null"
+
+    SourceSystem:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          source_system_id,
+          team_id,
+          listener_identity,
+          default_image,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        source_system_id:
+          $ref: "#/components/schemas/SourceSystemId"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        listener_identity:
+          type: string
+        default_image:
+          anyOf:
+            - $ref: "#/components/schemas/ImageReference"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AdminTaskTypeCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, execution_tag]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+          description: |
+            Required reference to an existing immutable `team_id`. The
+            Registry rejects submissions whose `team_id` does not
+            already exist.
+        execution_tag:
+          $ref: "#/components/schemas/Tag"
+          description: |
+            Required execution tag. Tasks of this type declare this
+            required tag; Executors must declare the same tag to be
+            eligible.
+        default_image:
+          anyOf:
+            - $ref: "#/components/schemas/ImageReference"
+            - type: "null"
+
+    TaskType:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          task_type_id,
+          team_id,
+          execution_tag,
+          default_image,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        task_type_id:
+          $ref: "#/components/schemas/TaskTypeId"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        execution_tag:
+          $ref: "#/components/schemas/Tag"
+        default_image:
+          anyOf:
+            - $ref: "#/components/schemas/ImageReference"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TaskState:
+      type: string
+      enum: [pending, created, running, finished, failed]
+      description: |
+        `pending` is the projected unclaimed state with no lifecycle
+        event; `created` is the first lifecycle state after a successful
+        claim; `running`, `finished`, and `failed` follow. The
+        `dispatched` state is removed from this revision.
+
+    TaskIngestionRequest:
+      type: object
+      additionalProperties: false
+      required: [team_id, source_system_id, source_id, task_type_id, payload]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        source_system_id:
+          $ref: "#/components/schemas/SourceSystemId"
+          description: |
+            Immutable `source_system_id` registered by an authenticated
+            system administrator through `POST /admin/source-systems`.
+            The source system belongs to exactly one team; the listener
+            must be authenticated for that team.
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            External task identifier within the registered source
+            system. Dedupe uses `(team_id, source_system_id, source_id)`.
+        task_type_id:
+          $ref: "#/components/schemas/TaskTypeId"
+          description: |
+            REQUIRED reference to a registered task type whose
+            immutable `team_id` equals the authenticated listener's
+            team. The Registry derives `required_tag` from the
+            referenced task type's `execution_tag` and SHALL reject the
+            submission when the task type does not exist, does not
+            belong to the listener's team, or is otherwise invalid.
+            The listener SHALL NOT submit an independently
+            authoritative `required_tag`.
+        project_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        environment_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+        image:
+          anyOf:
+            - $ref: "#/components/schemas/ImageReference"
+            - type: "null"
+          description: |
+            Optional per-task image override. Opaque to State Registry;
+            the registry SHALL NOT resolve, pull, verify, or interpret
+            the reference. Once set on the canonical task it is
+            immutable for the task's lifetime, so a later listener retry
+            of the same `(team_id, source_system_id, source_id)` SHALL
+            NOT replace or clear it.
+
+    Task:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - team_id
+        - source_system_id
+        - source_id
+        - task_type_id
+        - required_tag
+        - payload
+        - current_state
+        - owner_command_id
+        - executor_id
+        - project_id
+        - environment_id
+        - image
+        - resolved_image
+        - image_source
+        - ingested_at
+        - claimed_at
+      properties:
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        source_system_id:
+          $ref: "#/components/schemas/SourceSystemId"
+        source_id:
+          type: string
+        task_type_id:
+          $ref: "#/components/schemas/TaskTypeId"
+          description: |
+            REQUIRED non-null reference to a registered task type whose
+            immutable `team_id` equals `tasks.team_id`. The Registry
+            enforces the composite
+            `(tasks.task_type_id, tasks.team_id) = (task_types.task_type_id, task_types.team_id)`
+            constraint on every write; a foreign-team `task_type_id`
+            is rejected at ingestion time and the row never lands.
+        required_tag:
+          $ref: "#/components/schemas/Tag"
+          description: |
+            Server-derived from the referenced `task_type.execution_tag`
+            at ingestion. The listener SHALL NOT submit an
+            independently authoritative `required_tag`.
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+        current_state:
+          $ref: "#/components/schemas/TaskState"
+        owner_command_id:
+          anyOf:
+            - $ref: "#/components/schemas/CommandId"
+            - type: "null"
+          description: |
+            Immutable `command_id` of the claiming Executor; null
+            before claim, set once on successful claim, immutable
+            thereafter.
+        executor_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+          description: |
+            Null before claim, set on successful claim, immutable
+            thereafter.
+        project_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        environment_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+          description: Reference only; no environment or secret values are embedded.
+        image:
+          anyOf:
+            - $ref: "#/components/schemas/ImageReference"
+            - type: "null"
+          description: |
+            Per-task image override if the listener supplied one at
+            ingestion. Immutable for the task's lifetime. Opaque to
+            State Registry.
+        resolved_image:
+          anyOf:
+            - $ref: "#/components/schemas/ImageReference"
+            - type: "null"
+          description: |
+            Image resolved at claim from the four-level precedence
+            `tasks.image` -> `task_types.default_image` ->
+            `source_systems.default_image` -> `teams.default_image`.
+            Null while the task is `pending`; non-null and
+            immutable from successful claim onward because the team
+            default is required at registration. Persisted in the same
+            transaction that appends the first `created` event.
+        image_source:
+          anyOf:
+            - $ref: "#/components/schemas/ImageSource"
+            - type: "null"
+          description: |
+            Origin of `resolved_image`. Null while the task is
+            `pending`; non-null and immutable from successful claim
+            onward; one of `task_override`, `task_type_default`,
+            `source_system_default`, or `team_default`.
+        ingested_at:
+          type: string
+          format: date-time
+          description: |
+            Immutable ingestion instant used as the FIFO primary sort
+            key for the same-team / same-tag eligible queue.
+        claimed_at:
+          anyOf:
+            - type: string
+            - type: "null"
+          format: date-time
+          description: Null before claim; set once at successful claim.
+
+    TaskSummary:
+      type: object
+      additionalProperties: false
+      required: [task_id, team_id, required_tag, current_state, ingested_at]
+      properties:
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        required_tag:
+          $ref: "#/components/schemas/Tag"
+        current_state:
+          const: pending
+        ingested_at:
+          type: string
+          format: date-time
+
+    PageInfo:
+      type: object
+      additionalProperties: false
+      required: [next_cursor, count]
+      properties:
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 1536
+          description: Opaque cursor derived only from rows in the authenticated team.
+        count:
+          type: integer
+          minimum: 0
+          description: Number of rows in this team-filtered page; foreign rows never contribute.
+
+    TaskPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Task"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    TaskDiscoveryPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TaskSummary"
+      description: |
+        Present only when at least one eligible `pending` match exists;
+        otherwise discovery may return `204`. Items are ordered
+        `(ingested_at ASC, task_id ASC)` after the eligibility predicate.
+
+    TaskEventType:
+      type: string
+      enum: [created, running, finished, failed]
+      description: |
+        The first lifecycle event appended on a successful claim is
+        `created`. The contract removes `dispatched`; no event of that
+        name exists.
+
+    TaskEvent:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          event_id,
+          team_id,
+          task_id,
+          executor_id,
+          event_type,
+          occurred_at,
+          payload,
+        ]
+      properties:
+        event_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        executor_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+          description: |
+            Non-null for the first `created` event on claim (the
+            claiming Executor) and for every Executor-emitted event.
+        event_type:
+          $ref: "#/components/schemas/TaskEventType"
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+
+    TaskEventAppendRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          event_id,
+          team_id,
+          task_id,
+          executor_id,
+          event_type,
+          occurred_at,
+          payload,
+        ]
+      properties:
+        event_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        executor_id:
+          $ref: "#/components/schemas/Identifier"
+        event_type:
+          type: string
+          enum: [running, finished, failed]
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+
+    EventAcceptance:
+      type: object
+      additionalProperties: false
+      required: [event_id, team_id, accepted_at]
+      properties:
+        event_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        accepted_at:
+          type: string
+          format: date-time
+
+    TaskEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskEvent"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    ExecutorScope:
+      type: string
+      enum: [team, system]
+      description: |
+        Registration-time ownership scope of an Executor. `team` means
+        the Executor is bound to exactly one immutable `team_id` that
+        references an existing team; discovery, claim, and task-event
+        envelope verification require same-team ownership. `system`
+        means the Executor has no team binding; discovery, claim, and
+        task-event envelope verification match the Executor's single
+        registered tag across every team, and the task-event envelope
+        `team_id` is verified against the parent task's `team_id`
+        rather than against an Executor's immutable service binding
+        (which is null). The scope is immutable from registration
+        onward; re-registration that names a different scope is
+        rejected without mutation. Executor registration never creates
+        or updates a team.
+
+    ExecutorRegistrationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          scope,
+          team_id,
+          executor_type,
+          identity,
+          authorized_tag,
+          max_capacity,
+          running_count,
+          runtime_metadata,
+        ]
+      properties:
+        scope:
+          $ref: "#/components/schemas/ExecutorScope"
+        team_id:
+          anyOf:
+            - $ref: "#/components/schemas/TeamId"
+            - type: "null"
+          description: |
+            Required when `scope = team` and SHALL equal an existing
+            immutable `team_id`; must be null when `scope = system`.
+            State Registry SHALL verify the submitted `team_id` matches
+            the authenticated Executor service identity when `scope =
+            team`, SHALL reject a submission whose `team_id` does not
+            reference an existing team, SHALL persist the value on the
+            Executor row when `scope = team`, and SHALL persist NULL
+            when `scope = system`. Submitting a non-null `team_id` with
+            `scope = system` is rejected without persistence.
+        executor_type:
+          type: string
+          minLength: 1
+          maxLength: 128
+        identity:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Claimed identity metadata verified against the authenticated mTLS Executor identity.
+        authorized_tag:
+          $ref: "#/components/schemas/Tag"
+        max_capacity:
+          type: integer
+          minimum: 0
+          description: Informational observation only.
+        running_count:
+          type: integer
+          minimum: 0
+          description: Informational observation only.
+        runtime_metadata:
+          type: object
+          additionalProperties: true
+
+    Executor:
+      type: object
+      additionalProperties: false
+      required:
+        - executor_id
+        - scope
+        - team_id
+        - executor_type
+        - identity
+        - authorized_tag
+        - max_capacity
+        - running_count
+        - runtime_metadata
+        - registered_at
+        - updated_at
+      properties:
+        executor_id:
+          $ref: "#/components/schemas/Identifier"
+        scope:
+          $ref: "#/components/schemas/ExecutorScope"
+        team_id:
+          anyOf:
+            - $ref: "#/components/schemas/TeamId"
+            - type: "null"
+          description: |
+            Immutable when `scope = team`; NULL when `scope = system`.
+        executor_type:
+          type: string
+        identity:
+          type: string
+        authorized_tag:
+          $ref: "#/components/schemas/Tag"
+        max_capacity:
+          type: integer
+          minimum: 0
+          description: Latest observation; never a Registry scheduling gate.
+        running_count:
+          type: integer
+          minimum: 0
+          description: Latest observation; never a Registry scheduling gate.
+        runtime_metadata:
+          type: object
+          additionalProperties: true
+        registered_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ExecutorPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Executor"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    ExecutorEventType:
+      type: string
+      enum:
+        - registered
+        - started
+        - healthy
+        - busy
+        - idle
+        - stopping
+        - stopped
+        - failed
+        - capacity_observed
+        - running_count_observed
+
+    ExecutorEventAppendRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          event_id,
+          team_id,
+          task_id,
+          executor_id,
+          event_type,
+          occurred_at,
+          payload,
+        ]
+      properties:
+        event_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          anyOf:
+            - $ref: "#/components/schemas/TeamId"
+            - type: "null"
+          description: |
+            Required for a team-owned Executor and SHALL equal the
+            Executor's immutable `team_id`. Required to be null for a
+            system-owned Executor; supplying a non-null value for a
+            system-owned Executor is rejected with `403 team_mismatch`.
+        task_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        executor_id:
+          $ref: "#/components/schemas/Identifier"
+        event_type:
+          $ref: "#/components/schemas/ExecutorEventType"
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+
+    ExecutorEvent:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          event_id,
+          team_id,
+          task_id,
+          executor_id,
+          event_type,
+          occurred_at,
+          payload,
+        ]
+      properties:
+        event_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          anyOf:
+            - $ref: "#/components/schemas/TeamId"
+            - type: "null"
+          description: |
+            `team_id` is non-null for every row inherited from a
+            team-owned Executor and equals the Executor's immutable
+            `team_id`. `team_id` is NULL for every row inherited from a
+            system-owned Executor.
+        task_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        executor_id:
+          $ref: "#/components/schemas/Identifier"
+        event_type:
+          $ref: "#/components/schemas/ExecutorEventType"
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+
+    ExecutorEventPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExecutorEvent"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    ClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [task_id, command_id]
+      properties:
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        command_id:
+          $ref: "#/components/schemas/CommandId"
+
+    ClaimResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          claim,
+          task,
+          environment_id,
+          scope_token,
+          resolved_image,
+          image_source,
+          claimed_at,
+        ]
+      properties:
+        claim:
+          const: claimed
+        task:
+          $ref: "#/components/schemas/Task"
+        environment_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        scope_token:
+          anyOf:
+            - $ref: "#/components/schemas/CompactScopeToken"
+            - type: "null"
+          description: |
+            Compact scope token (single string of the form
+            `<header>.<payload>.<signature>`) issued by State Registry
+            and signed with an allow-listed HMAC algorithm
+            (`HS256`/`HS384`/`HS512`) under a server-controlled
+            rotating key. The Executor must carry it in the
+            `X-FlowAI-Scope-Token` header of
+            `GET /v1/environments/{environment_id}/open`. Present only
+            when the claimed task references an applicable environment.
+            Treat as confidential and never log it.
+        resolved_image:
+          $ref: "#/components/schemas/ImageReference"
+          description: |
+            Authoritative image resolved at claim from `tasks.image` ->
+            `task_types.default_image` -> `source_systems.default_image`
+            -> `teams.default_image` (always present because the team
+            default is required at registration). Present and
+            non-empty on every successful claim.
+        image_source:
+          $ref: "#/components/schemas/ImageSource"
+        claimed_at:
+          type: string
+          format: date-time
+
+    ScopeTokenAlgorithm:
+      type: string
+      enum: [HS256, HS384, HS512]
+      description: |
+        Allow-listed HMAC algorithm for the open-environment scope
+        token. The contract accepts only `HS256`, `HS384`, or `HS512` —
+        the "HMAC-SHA-256 or a stronger HMAC" family. Any other value,
+        including asymmetric algorithms and non-allow-listed HMAC
+        variants, is rejected by the same non-revealing `404
+        environment_unknown_or_unavailable` response as every other
+        invalid case. The Registry recomputes the signature using
+        exactly the algorithm declared by the protected header.
+
+    ScopeTokenType:
+      type: string
+      const: scope-token+json
+      description: Required token media type; any other value is rejected.
+
+    ScopeTokenHeader:
+      type: object
+      additionalProperties: false
+      required: [alg, kid, typ]
+      properties:
+        alg:
+          $ref: "#/components/schemas/ScopeTokenAlgorithm"
+        kid:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          description: Active signing-key identifier used by the server-side key handle; never returned to callers in plan or logs.
+        typ:
+          $ref: "#/components/schemas/ScopeTokenType"
+
+    ScopeTokenAudience:
+      type: string
+      const: state-registry.environment.open
+
+    ScopeTokenClaims:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          team_id,
+          project_id,
+          task_id,
+          environment_id,
+          executor_id,
+          audience,
+          key_id,
+          issued_at,
+          expiry,
+        ]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        project_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+          description: |
+            Required claim. The value is nullable only when the
+            canonical environment has no project scope; a missing
+            `project_id` claim is rejected as malformed, and a null
+            value for a project-scoped environment or any non-null
+            mismatch with canonical records is rejected as invalid.
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        environment_id:
+          $ref: "#/components/schemas/Identifier"
+        executor_id:
+          $ref: "#/components/schemas/Identifier"
+        audience:
+          $ref: "#/components/schemas/ScopeTokenAudience"
+        key_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          description: |
+            Active signing-key identifier carried in the payload. The
+            Registry verifies that this value equals the
+            protected-header `kid` before recomputing the MAC; a
+            mismatch is rejected by the same non-revealing `404
+            environment_unknown_or_unavailable` response before any
+            other check and before any decrypt operation.
+        issued_at:
+          type: string
+          format: date-time
+          description: |
+            Server-side issuance instant. `issued_at` MUST satisfy
+            `issued_at <= server_now + 30s` (tolerated clock-skew
+            window of 30 seconds) and `expiry` MUST be strictly later
+            than `issued_at`.
+        expiry:
+          type: string
+          format: date-time
+          description: |
+            Absolute expiry instant. The Registry rejects any token
+            whose lifetime exceeds five minutes (`expiry - issued_at <=
+            5 minutes`), whose `expiry` is not strictly later than
+            `issued_at`, or whose `issued_at` is premature beyond 30
+            seconds of clock skew. Token refresh requires a new
+            successful claim rather than a new token over the same
+            task.
+
+    CompactScopeToken:
+      type: string
+      minLength: 32
+      maxLength: 8192
+      pattern: '^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
+      description: |
+        Compact three-part scope token
+        `<header>.<payload>.<signature>` carried in the
+        `X-FlowAI-Scope-Token` header. The header segment must decode
+        to `ScopeTokenHeader` (`alg` allow-listed to
+        `HS256`/`HS384`/`HS512`, `kid`, `typ = scope-token+json`) and
+        the payload segment must decode to `ScopeTokenClaims` with
+        every bound claim (`team_id`, `project_id`, `task_id`,
+        `environment_id`, `executor_id`, `audience =
+        state-registry.environment.open`, `key_id`, `issued_at`,
+        `expiry`) and `issued_at <= server_now + 30s`, `expiry >
+        issued_at`, `expiry - issued_at <= 5 minutes`. The Registry
+        first verifies that the protected-header `kid` equals the
+        payload `key_id`; any mismatch is rejected before MAC
+        recomputation and before any decrypt operation. The
+        `<signature>` segment is then recomputed under the declared
+        allow-listed HMAC algorithm and the server-side key handle
+        identified by `key_id`; it is compared with constant-time
+        equality before any decrypt operation. Treat the value as
+        confidential and never log it.
+
+    ControlAction:
+      type: string
+      enum: [cancel, interrupt]
+
+    ControlStatus:
+      type: string
+      enum: [pending, acknowledged, completed, failed]
+
+    ControlCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [action, idempotency_key]
+      properties:
+        action:
+          $ref: "#/components/schemas/ControlAction"
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 128
+        reason:
+          type: string
+          maxLength: 500
+          description: Non-sensitive operator rationale; must not contain secrets or decrypted values.
+
+    Control:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          control_id,
+          team_id,
+          task_id,
+          operator_id,
+          action,
+          idempotency_key,
+          status,
+          audit_id,
+          requested_at,
+        ]
+      properties:
+        control_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        operator_id:
+          $ref: "#/components/schemas/Identifier"
+        action:
+          $ref: "#/components/schemas/ControlAction"
+        idempotency_key:
+          type: string
+        status:
+          $ref: "#/components/schemas/ControlStatus"
+        audit_id:
+          $ref: "#/components/schemas/Identifier"
+        requested_at:
+          type: string
+          format: date-time
+
+    ControlPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Control"
+
+    EnvironmentScope:
+      type: object
+      additionalProperties: false
+      required: [project_id, task_id, parent_task_id]
+      properties:
+        project_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        task_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        parent_task_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+          description: |
+            Optional parent `task_id` for task-owned environment
+            definitions and the secrets under them. When set, the row
+            is task-owned: its `team_id` is immutable, the parent
+            `task_id` SHALL reference a task with the same `team_id`,
+            and only the parent task in the same team may use the
+            definition. When null, the row is team-wide. Setting
+            `parent_task_id` to a foreign-team `task_id` returns the
+            same non-revealing `404 environment_unknown_or_unavailable`
+            shape and performs no decrypt operation.
+      description: Applicability inside the owning team only; this is not RBAC and never grants cross-team access.
+
+    NonSecretValues:
+      type: object
+      propertyNames:
+        pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+      additionalProperties:
+        type: string
+        maxLength: 65536
+      description: Explicitly non-secret environment values. Secret values use the logical-secret endpoints.
+
+    EnvironmentWriteRequest:
+      type: object
+      additionalProperties: false
+      required: [name, scope, values]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        scope:
+          $ref: "#/components/schemas/EnvironmentScope"
+        values:
+          $ref: "#/components/schemas/NonSecretValues"
+
+    Environment:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          environment_id,
+          team_id,
+          revision,
+          name,
+          scope,
+          values,
+          secrets,
+          deleted,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        environment_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        revision:
+          type: integer
+          minimum: 1
+        name:
+          type: string
+        scope:
+          $ref: "#/components/schemas/EnvironmentScope"
+        values:
+          $ref: "#/components/schemas/NonSecretValues"
+        secrets:
+          type: array
+          description: Logical references and non-sensitive metadata only.
+          items:
+            $ref: "#/components/schemas/LogicalSecretSummary"
+        deleted:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    EnvironmentPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Environment"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    SecretCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name, value, scope]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        value:
+          type: string
+          minLength: 1
+          maxLength: 1048576
+          writeOnly: true
+          description: |
+            Plaintext accepted only for immediate local AES-256-GCM
+            authenticated encryption; never persisted, logged,
+            audited, or returned in plaintext.
+        scope:
+          $ref: "#/components/schemas/EnvironmentScope"
+
+    SecretReplaceRequest:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value:
+          type: string
+          minLength: 1
+          maxLength: 1048576
+          writeOnly: true
+          description: |
+            Replacement plaintext accepted only for immediate local
+            AES-256-GCM authenticated encryption.
+
+    LogicalSecretSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [secret_id, team_id, environment_id, name, latest_version, revoked]
+      properties:
+        secret_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        environment_id:
+          $ref: "#/components/schemas/Identifier"
+        name:
+          type: string
+        latest_version:
+          type: integer
+          minimum: 1
+        revoked:
+          type: boolean
+
+    LogicalSecret:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          secret_id,
+          team_id,
+          environment_id,
+          name,
+          scope,
+          latest_version,
+          revoked,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        secret_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        environment_id:
+          $ref: "#/components/schemas/Identifier"
+        name:
+          type: string
+        scope:
+          $ref: "#/components/schemas/EnvironmentScope"
+        latest_version:
+          type: integer
+          minimum: 1
+        revoked:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      description: |
+        Logical secret metadata only; no plaintext, ciphertext,
+        nonce, tag, or decryption material.
+
+    SecretVersion:
+      type: object
+      additionalProperties: false
+      required: [secret_id, team_id, version, key_id, key_version, created_at]
+      properties:
+        secret_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        version:
+          type: integer
+          minimum: 1
+        key_id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          description: |
+            Opaque provider-neutral key identifier of the AES-256-GCM
+            data key used to encrypt this version. The opaque value
+            allows a future change to swap the cryptographic provider
+            without changing this contract surface.
+        key_version:
+          type: integer
+          minimum: 1
+          description: |
+            Opaque provider-neutral key version of the AES-256-GCM
+            data key used to encrypt this version. The opaque value
+            allows a future change to swap the cryptographic provider
+            without changing this contract surface.
+        created_at:
+          type: string
+          format: date-time
+      description: |
+        Immutable metadata for an encrypted version; never contains
+        plaintext, ciphertext, nonce, tag, or associated-data values.
+
+    SecretWriteResponse:
+      type: object
+      additionalProperties: false
+      required: [secret, version]
+      properties:
+        secret:
+          $ref: "#/components/schemas/LogicalSecret"
+        version:
+          $ref: "#/components/schemas/SecretVersion"
+
+    LogicalSecretPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogicalSecret"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    SecretVersionPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SecretVersion"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    OpenEnvironmentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [team_id, project_id, task_id, environment_id, executor_id, values]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        project_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        environment_id:
+          $ref: "#/components/schemas/Identifier"
+        executor_id:
+          $ref: "#/components/schemas/Identifier"
+        values:
+          type: object
+          propertyNames:
+            pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+          additionalProperties:
+            type: string
+          description: |
+            Env-style values, including authorized decrypted secrets,
+            returned only to the assigned Executor after a successful
+            AES-256-GCM authenticated decryption. The application
+            receives plaintext in memory only.
+
+    AuditActorType:
+      type: string
+      enum: [operator, executor, listener, system_administrator, state_registry]
+
+    AuditOutcome:
+      type: string
+      enum: [accepted, rejected, succeeded, failed]
+
+    AuditEntry:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          audit_id,
+          team_id,
+          actor_id,
+          actor_type,
+          action,
+          resource_type,
+          resource_id,
+          request_id,
+          outcome,
+          occurred_at,
+        ]
+      properties:
+        audit_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        actor_id:
+          $ref: "#/components/schemas/Identifier"
+        actor_type:
+          $ref: "#/components/schemas/AuditActorType"
+        action:
+          type: string
+          minLength: 1
+          maxLength: 128
+        resource_type:
+          type: string
+          minLength: 1
+          maxLength: 64
+        resource_id:
+          $ref: "#/components/schemas/Identifier"
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        outcome:
+          $ref: "#/components/schemas/AuditOutcome"
+        occurred_at:
+          type: string
+          format: date-time
+      description: |
+        Plaintext-free immutable audit record; no secret, nonce,
+        ciphertext, tag, key material, or decrypted value is permitted.
+
+    AuditPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        page:
+          $ref: "#/components/schemas/PageInfo"
+
+    StreamEventKind:
+      type: string
+      enum: [task_event, executor_event, control, audit]
+
+    WebSocketEventFrame:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          cursor,
+          team_id,
+          event_kind,
+          resource_type,
+          resource_id,
+          occurred_at,
+          payload,
+        ]
+      properties:
+        cursor:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Opaque cursor scoped to the bound WebSocket team.
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        event_kind:
+          $ref: "#/components/schemas/StreamEventKind"
+        resource_type:
+          type: string
+          enum: [task, executor, control, audit]
+        resource_id:
+          $ref: "#/components/schemas/Identifier"
+        occurred_at:
+          type: string
+          format: date-time
+        payload:
+          oneOf:
+            - $ref: "#/components/schemas/TaskEvent"
+            - $ref: "#/components/schemas/ExecutorEvent"
+            - $ref: "#/components/schemas/Control"
+            - $ref: "#/components/schemas/AuditEntry"
+      description: Every frame's `team_id` must equal the immutable Gateway team bound at upgrade.
+
+    AdminTagEntry:
+      type: object
+      additionalProperties: false
+      required: [team_id, task_type_id, execution_tag]
+      properties:
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        task_type_id:
+          $ref: "#/components/schemas/TaskTypeId"
+        execution_tag:
+          $ref: "#/components/schemas/Tag"
+      description: |
+        Exact allowlist projection of a registered task type for `GET
+        /admin/tags`. Each entry contains EXACTLY three fields:
+        `team_id`, `task_type_id`, and `execution_tag`. The Registry
+        SHALL NOT add, omit, rename, or re-order these fields; SHALL
+        NOT include `default_image`; and SHALL NOT include any other
+        column from any table. Image strings are not team-owned
+        resources and equal `execution_tag` values across teams grant
+        no cross-team authority.
+
+    AdminTagPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminTagEntry"
+        page:
+          $ref: "#/components/schemas/AdminPageInfo"
+      description: |
+        Tag page ordered by `(team_id ASC, execution_tag ASC,
+        task_type_id ASC)`. The page MAY be empty.
+
+    AdminTaskEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - team_id
+        - task_type_id
+        - source_system_id
+        - source_id
+        - required_tag
+        - current_state
+        - owner_command_id
+        - executor_id
+        - ingested_at
+        - claimed_at
+      properties:
+        task_id:
+          $ref: "#/components/schemas/Identifier"
+        team_id:
+          $ref: "#/components/schemas/TeamId"
+        task_type_id:
+          $ref: "#/components/schemas/TaskTypeId"
+        source_system_id:
+          $ref: "#/components/schemas/SourceSystemId"
+        source_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+        required_tag:
+          $ref: "#/components/schemas/Tag"
+        current_state:
+          $ref: "#/components/schemas/TaskState"
+        owner_command_id:
+          anyOf:
+            - $ref: "#/components/schemas/CommandId"
+            - type: "null"
+        executor_id:
+          anyOf:
+            - $ref: "#/components/schemas/Identifier"
+            - type: "null"
+        ingested_at:
+          type: string
+          format: date-time
+        claimed_at:
+          anyOf:
+            - type: string
+            - type: "null"
+          format: date-time
+      description: |
+        Exact allowlist read-only task summary for `GET /admin/tasks`.
+        Each entry contains EXACTLY eleven fields: `task_id`,
+        `team_id`, `task_type_id`, `source_system_id`, `source_id`,
+        `required_tag`, `current_state`, `owner_command_id`,
+        `executor_id`, `ingested_at`, and `claimed_at`. The Registry
+        SHALL NOT add, omit, rename, or re-order these fields; SHALL
+        NOT include `image`, `resolved_image`, `image_source`,
+        `project_id`, `environment_id`, or task payload values; and
+        SHALL NOT include any other column from any table. This admin
+        projection does NOT change the canonical `Task` resource
+        returned by claim, by same-team Gateway reads, by same-team
+        Executor discovery, or by any other non-admin endpoint. Equal
+        `required_tag` strings across teams SHALL NOT grant
+        cross-team authority. Every canonical task has a non-null
+        `task_type_id` because listener ingestion now requires it;
+        `required_tag` is always derived from that task type. Pending
+        unclaimed tasks report null `owner_command_id`, `executor_id`,
+        and `claimed_at`; all other required fields remain stable
+        across the task lifetime.
+
+    AdminTaskPage:
+      type: object
+      additionalProperties: false
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminTaskEntry"
+        page:
+          $ref: "#/components/schemas/AdminPageInfo"
+      description: |
+        Task page ordered by `(ingested_at DESC, task_id DESC)`. The
+        page MAY be empty; the response SHALL always be paginated and
+        SHALL NOT be unbounded.
+
+    AdminPageInfo:
+      type: object
+      additionalProperties: false
+      required: [next_cursor, count]
+      properties:
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 1536
+          description: |
+            Opaque cursor derived only from rows in the global
+            `/admin/tags` or `/admin/tasks` collection visible to the
+            authenticated system-administrator identity. When null,
+            the page is the final page.
+        count:
+          type: integer
+          minimum: 0
+          description: Number of rows in this page.
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: "^[a-z][a-z0-9_]*$"
+        message:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Stable non-sensitive summary only; no database, stack, tenant, secret, nonce, ciphertext, tag, key material, or decrypted-value detail.
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+      description: Closed error envelope. Free-form details and sensitive context are forbidden.

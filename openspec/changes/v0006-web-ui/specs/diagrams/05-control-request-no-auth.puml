@@ -1,13 +1,20 @@
+' diagram-type: sequence
 @startuml
-title v0006-web-ui - control request without auth
+title v0006-web-ui - configured bootstrap operator + team control request without auth
 
-participant "Web UI" as UI
+participant "Web UI / Browser" as UI
 participant "API Gateway" as GW
 participant "State Registry" as State
 
-UI -> GW : inject / cancel / rerun request
-GW -> State : POST control-request record
-State --> GW : accepted
-GW --> UI : accepted
+UI -> GW : inject / cancel / rerun request\n(no selected team, no operator)
+GW -> GW : strip client X-FlowAI-* context\nvalidate configured bootstrap operator + team\ngenerate request_id
+alt configured bootstrap operator or team context invalid
+  GW --> UI : reject before control request
+else valid configured bootstrap operator and team
+  GW -> State : POST control record with configured Operator-ID\n(audit attribution only), configured Team-ID,\ndisplay-only Team-Name, Request-ID
+  State -> State : authorize task ownership by team_id\nand record canonical audit/control state\nattributed to operator_id + request_id
+  State --> GW : accepted or ownership denial
+  GW --> UI : status, headers, and body unchanged
+end
 
 @enduml

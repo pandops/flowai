@@ -1,13 +1,13 @@
 # agent-openhands-image
 
-Real OpenHands V1 agent-server image used by the docker-executor Playwright
-e2e tests. Built from the official
+Real OpenHands V1 agent-server image used by the executor_docker_opehands
+Playwright e2e tests. Built from the official
 [ghcr.io/openhands/agent-server:latest-python](https://github.com/OpenHands/software-agent-sdk)
 release.
 
 ## Endpoints exposed
 
-| Method | Path | Purpose (used by docker-executor) |
+| Method | Path | Purpose (used by executor_docker_opehands) |
 |---|---|---|
 | GET | /health | Health probe before submitting the prompt |
 | POST | /api/conversations | Submit the task prompt; returns conversation_id |
@@ -29,9 +29,9 @@ Offline variant (pre-loaded image):
 
 ## Use in autotest
 
-The docker-executor Playwright e2e tests configure the executor to use
-this image by default. With this image, the executor's full code path runs
-against a real V1 agent-server:
+The executor_docker_opehands Playwright e2e tests configure the executor to
+use this image by default. With this image, the executor's full code path
+runs against a real V1 agent-server:
 
 1. Image pull
 2. Container create + start

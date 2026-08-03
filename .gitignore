@@ -14,13 +14,22 @@
 .opencode/
 
 # Local agent skill symlinks; canonical skills live outside this repo.
-.agents/skills/
+.agents/skills
 
 # Local OpenSpec CLI/runtime cache. Persist only openspec/ source artifacts.
-.tools/openspec/
+.tools/openspec
 openspec/.cache/
 openspec/tmp/
 openspec/temp/
+
+# Per-diagram rendered artifacts left by `puml-verify` without `--png`.
+# Previews belong only under `.preview/` (already gitignored). The
+# puml source under openspec/changes/*/specs/diagrams/ is the contract;
+# the rendered .svg/.png siblings are regenerated on demand.
+openspec/changes/**/specs/diagrams/*.svg
+openspec/changes/**/specs/diagrams/*.png
+docs/architecture/diagrams/*.svg
+docs/architecture/diagrams/*.png
 
 # Local environment and secret files. Commit examples/templates instead.
 .env
@@ -38,3 +47,4 @@ node_modules/
 .idea
 .vscode
 .omo/run-continuation
+.preview/

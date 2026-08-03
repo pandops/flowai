@@ -1,0 +1,42 @@
+' diagram-type: c4-container
+@startuml
+!pragma layout smetana
+!include <c4/C4_Container>
+
+title v0008 State Registry - OpenBao Transit Crypto-Provider Container View
+
+Person(system_admin_user, "System Administrator", "Creates teams, source systems, task types through /admin/*")
+Person(operator_user, "Operator", "Manages secrets through the Web UI under a team-scoped Gateway context")
+Person(executor_user, "Executor", "Claims and processes tasks through authenticated identity and scope tokens")
+Person(deployment_identity, "Deployment Identity", "Invokes internal state-registry crypto commands under the deployment identity")
+
+System_Boundary(flowai_platform, "FlowAI Platform") {
+    Container(web_ui, "Web UI", "Operator-facing UI; sole frontend")
+    Container(gateway, "Trusted API Gateway", "Auth-aware reverse proxy; one-team operator context")
+    Container(listeners, "Listeners", "Jira / webhook / CI integrations bound to one team + one source system")
+    ContainerDb(state_registry_db, "State Registry PostgreSQL", "3NF durable state; secret_versions + per-row crypto_migration_checkpoints")
+
+    System_Boundary(state_registry, "State Registry service (state-registry)") {
+        Container(state_registry_app, "State Registry Application", "Routes writes through SecretCryptoProvider; in-process migration worker; internal crypto commands under deployment identity")
+        ContainerDb(crypto_migration_checkpoints_db, "crypto_migration_checkpoints table", "Per-row durable checkpoint keyed by (migration_name, team_id, secret_id, version)")
+    }
+
+    ContainerDb(secure_runtime_config, "Secure Runtime Configuration", "key_id -> (mount_path, key_name) mapping; Transit endpoint, mount, token, mTLS trust anchors")
+}
+
+System_Ext(openbao_transit, "OpenBao Transit", "Hosted at /v1/<mount>/* ; mTLS-only; emits ciphertext with documented default shape vault:v<N>:...")
+
+Rel(system_admin_user, state_registry_app, "POST /admin/teams, /admin/source-systems, /admin/task-types", "system-administrator identity")
+Rel(operator_user, web_ui, "Uses", "Operator browser session")
+Rel(web_ui, gateway, "HTTPS / WS", "Sole operator backend")
+Rel(gateway, state_registry_app, "REST + WS", "trusted one-team context (operator_id, team_id, request_id)")
+Rel(listeners, state_registry_app, "REST POST tasks", "team_id, source_system_id, source_id")
+Rel(executor_user, state_registry_app, "REST claim / events / open", "authenticated identity; scope-token in X-FlowAI-Scope-Token")
+Rel(state_registry_app, state_registry_db, "3NF persistence", "TCP/TLS")
+Rel(state_registry_app, openbao_transit, "POST /v1/<mount>/encrypt/<key_name>; POST /v1/<mount>/decrypt/<key_name>; POST /v1/<mount>/keys/<key_name>/rotate; GET /v1/<mount>/keys/<key_name>", "mTLS; X-Vault-Token")
+Rel(state_registry_app, crypto_migration_checkpoints_db, "Per-row CAS checkpoint advance", "row-level lock; one transaction")
+Rel(state_registry_app, secure_runtime_config, "Reads at startup", "key_id -> (mount_path, key_name); Transit endpoint, mount, token, mTLS trust anchors")
+Rel(deployment_identity, state_registry_app, "state-registry crypto cutover; state-registry crypto rotate", "Internal commands signed by deployment identity; NOT new public HTTP endpoints")
+
+SHOW_LEGEND()
+@enduml

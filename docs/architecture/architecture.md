@@ -6,15 +6,17 @@
 Because the current accepted system has no runtime capabilities yet, there is no
 current service topology to document here.
 
+The implemented v0001 bootstrap contract is preserved in the archived change:
+
+- `openspec/changes/archive/2026-07-12-v0001-executor-docker/`
+
 Planned architecture lives in active numbered OpenSpec changes:
 
-- `openspec/changes/v0001-executor-docker/`
 - `openspec/changes/v0002-state-registry/`
-- `openspec/changes/v0003-env-registry/`
-- `openspec/changes/v0004-router/`
 - `openspec/changes/v0005-executor-k8s/`
 - `openspec/changes/v0006-web-ui/`
 - `openspec/changes/v0007-auth/`
+- `openspec/changes/v0008-use-openbao-transit/`
 
 After a change is implemented, verified, accepted, and synced into
 `openspec/specs/`, copy or redraw the relevant implemented `.puml` diagrams into
