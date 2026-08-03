@@ -1,10 +1,21 @@
-// Package httpapi mounts the State Registry HTTP scaffold. The scaffold
-// exposes the platform health probes (/v1/livez, /v1/readyz) and, only in
-// explicit test mode, the temporary header-authenticated Section 3 admin
-// routes, the Section 3b admin/Gateway reads, and the Section 4 listener
-// ingestion route, plus test observability. Production business routes
-// remain closed until their mutually authenticated service-identity
-// adapters are implemented.
+// Package httpapi mounts the State Registry HTTP scaffold. The
+// scaffold exposes the platform health probes (/v1/livez,
+// /v1/readyz), the v0002.20 events-stream transport probe (always
+// mounted behind the verified peer-identity middleware so
+// production traffic on /v1/events/stream only reaches a verified
+// Gateway cert), every documented business surface (admin
+// onboarding + read projections, listener ingestion, Executor
+// registration + discovery + claim, task point read + lifecycle
+// events + Executor self events, trusted-Gateway controls,
+// trusted-Gateway environments + secrets + open environment +
+// audit), and, only in explicit test mode, the temporary
+// observability counter. Production security comes from the
+// verified peer-cert identity adapter in
+// cmd/state-registry/main.go (`withPeerIdentity`), which strips
+// caller-supplied X-FlowAI-* headers and maps only verified peer
+// claims; the per-surface authentication middleware then rejects
+// every request that lacks the documented identity before any
+// repository call is made.
 package httpapi
 
 import (
@@ -41,39 +52,46 @@ func NewRouter(serviceName string, logger *slog.Logger) *chi.Mux {
 	return r
 }
 
-// Routes wires the scaffold probes and conditionally mounts test-only
-// surfaces. Header-derived identities are deliberately confined to test mode:
-// production startup therefore fails closed until mutually authenticated
-// service identity is wired by the transport implementation slice. The caller
-// passes the process logger so requests share the same slog handler.
+// Routes wires probes, business routes, and the optional test-only decrypt
+// counter. The caller passes the process logger so requests share the same
+// slog handler.
 func Routes(serviceName, executorID string, logger *slog.Logger, checker health.ReadinessChecker, ops *DecryptOps, testMode bool, adminRepositories ...store.AdminRepository) http.Handler {
 	return RoutesWithKeyring(serviceName, executorID, logger, checker, ops, nil, testMode, adminRepositories...)
 }
 
 // RoutesWithKeyring is the explicit constructor that accepts the
-// cursor keyring. When the keyring is nil the admin list handlers and
-// the trusted-Gateway list adapter are NOT mounted; production startup
-// therefore fails closed (no business routes) when the cursor key
-// configuration is unavailable. The supplied first repository is
-// dynamically asserted against ListRepository and ListenerRepository;
-// neither capability is required, so a caller that only needs the
-// admin onboarding surface keeps working unchanged.
+// cursor keyring. Every documented business surface is mounted on
+// every router (production + test mode) when the supplied first
+// repository implements the relevant capability. Production
+// security comes from cmd/state-registry/main.go's `withPeerIdentity`
+// middleware, which strips caller-supplied X-FlowAI-* headers and
+// maps only verified peer-cert claims; the per-surface
+// authentication middleware then rejects every request that lacks
+// the documented identity before any repository call is made.
+//
+// The cursor keyring gates ONLY the cursor-encrypted collection
+// reads (admin /admin/tags, /admin/tasks; trusted-Gateway
+// GET /v1/tasks; GET /v1/audit). When the keyring is nil those
+// handlers refuse to mount, so a misconfigured production binary
+// that lost its keyring configuration fails closed for the
+// paginated reads. The /v1/_test/decrypt-ops counter route is the
+// ONLY surface still gated on testMode.
 func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, checker health.ReadinessChecker, ops *DecryptOps, keyring cursorKeyring, testMode bool, adminRepositories ...store.AdminRepository) http.Handler {
 	r := NewRouter(serviceName, logger)
 	r.Route("/v1", func(v1 chi.Router) {
 		RegisterProbes(v1, serviceName, executorID, checker)
 		if testMode {
 			v1.Get("/_test/decrypt-ops", ops.Handler())
-			if len(adminRepositories) > 0 && adminRepositories[0] != nil {
-				if executorRepo, ok := adminRepositories[0].(store.ExecutorRepository); ok {
-					RegisterExecutor(v1, logger, adminRepositories[0], executorRepo)
-				} else {
-					RegisterExecutorRegistrationGuard(v1, logger, adminRepositories[0])
-				}
+		}
+		if len(adminRepositories) > 0 && adminRepositories[0] != nil {
+			if executorRepo, ok := adminRepositories[0].(store.ExecutorRepository); ok {
+				RegisterExecutor(v1, logger, adminRepositories[0], executorRepo)
+			} else {
+				RegisterExecutorRegistrationGuard(v1, logger, adminRepositories[0])
 			}
 		}
 	})
-	if testMode && len(adminRepositories) > 0 && adminRepositories[0] != nil {
+	if len(adminRepositories) > 0 && adminRepositories[0] != nil {
 		RegisterAdmin(r, logger, adminRepositories[0])
 		if keyring != nil {
 			if list, ok := adminRepositories[0].(store.ListRepository); ok {
@@ -81,9 +99,47 @@ func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, chec
 			}
 		}
 	}
-	if testMode && keyring != nil && len(adminRepositories) > 0 && adminRepositories[0] != nil {
+	if keyring != nil && len(adminRepositories) > 0 && adminRepositories[0] != nil {
 		if list, ok := adminRepositories[0].(store.ListRepository); ok {
 			RegisterGatewayList(r, logger, list, keyring)
+		}
+	}
+	// Section 7 read surfaces (GET /v1/tasks/{task_id}/events and
+	// GET /v1/executors/{executor_id}/events) do not depend on cursor
+	// encryption, so they are mounted outside the keyring-gated block
+	// alongside the Section 7 write surfaces. The capability check is
+	// the only requirement.
+	if len(adminRepositories) > 0 && adminRepositories[0] != nil {
+		if events, ok := adminRepositories[0].(store.TaskEventRepository); ok {
+			RegisterTaskEventReads(r, logger, events)
+			RegisterTaskEventWrites(r, logger, events)
+		}
+		if execEvents, ok := adminRepositories[0].(store.ExecutorEventRepository); ok {
+			RegisterExecutorSelfEventReads(r, logger, execEvents)
+			RegisterExecutorSelfEvents(r, logger, execEvents)
+		}
+	}
+	// Section 6 trusted-Gateway task point read surface
+	// (GET /v1/tasks/{task_id}). The handler does not depend on
+	// the cursor keyring, so it sits outside the keyring gate.
+	if len(adminRepositories) > 0 && adminRepositories[0] != nil {
+		if taskReader, ok := adminRepositories[0].(store.TaskPointReadRepository); ok {
+			RegisterGatewayTaskPointRead(r, logger, taskReader)
+		}
+		if controls, ok := adminRepositories[0].(store.ControlRepository); ok {
+			RegisterTaskControls(r, logger, controls)
+		}
+		if audit, ok := adminRepositories[0].(store.AuditRepository); ok && keyring != nil {
+			RegisterAudit(r, logger, audit, keyring)
+		}
+		if environments, ok := adminRepositories[0].(store.EnvironmentRepository); ok {
+			RegisterEnvironments(r, logger, environments, keyring)
+		}
+		if secrets, ok := adminRepositories[0].(store.SecretRepository); ok {
+			RegisterSecrets(r, logger, secrets, keyring)
+		}
+		if environmentOpen, ok := adminRepositories[0].(store.OpenEnvironmentRepository); ok {
+			RegisterEnvironmentOpen(r, logger, environmentOpen, ops)
 		}
 	}
 	// The Section 4 listener ingestion route shares the existing
@@ -92,11 +148,24 @@ func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, chec
 	// pass a non-listener repository (or nil) keep the prior 404
 	// behavior — the listener adapter is mounted only when the
 	// supplied first repository implements ListenerRepository.
-	if testMode && len(adminRepositories) > 0 && adminRepositories[0] != nil {
+	if len(adminRepositories) > 0 && adminRepositories[0] != nil {
 		if listener, ok := adminRepositories[0].(store.ListenerRepository); ok {
 			RegisterListener(r, logger, listener)
 		}
 	}
+	// The v0002.20 transport probe mounts GET /v1/events/stream on
+	// every production router. Production security comes from the
+	// verified peer-identity middleware in cmd/state-registry/main.go
+	// — only a cert whose subject parses into a strict claims shape
+	// with role=gateway (and a verified team_id + operator_id CN)
+	// reaches the trusted-Gateway middleware mounted by
+	// RegisterEventsStream. The route is a minimal transport probe;
+	// no replay or fan-out is implemented here.
+	var streamRepo store.StreamRepository
+	if len(adminRepositories) > 0 && adminRepositories[0] != nil {
+		streamRepo, _ = adminRepositories[0].(store.StreamRepository)
+	}
+	RegisterEventsStream(r, logger, streamRepo)
 	return r
 }
 

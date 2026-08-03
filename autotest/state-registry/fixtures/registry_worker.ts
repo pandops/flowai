@@ -27,14 +27,24 @@
 //     process; callers never cache the URL across restart
 //   - external process and container cleanup in finally ensures no
 //     stale artifact remains even on a failed test
-import { randomBytes } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve as pathResolve } from 'node:path';
-import { StartPostgresContainer, StopPostgresContainer, type PostgresContainer } from './postgres_container';
-import { sanitize, truncateTail } from './redact';
+import { randomBytes } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
+import { resolve as pathResolve } from "node:path";
+import {
+  StartPostgresContainer,
+  StopPostgresContainer,
+  type PostgresContainer,
+} from "./postgres_container";
+import { sanitize, truncateTail } from "./redact";
 
 export interface RegistryWorkerOptions {
   binary?: string;
+  /**
+   * Launch the normal untagged binary with test mode unset. Production mode
+   * requires HTTPS+mTLS; it exists so transport tests exercise the real
+   * production route graph instead of the header-authenticated harness.
+   */
+  productionMode?: boolean;
   postgresImage?: string;
   removeFailureCount?: number;
   processKillFailureCount?: number;
@@ -62,8 +72,19 @@ export interface RegistryWorkerOptions {
    * unverifiable.
    */
   tlsPostgresCaPath?: string;
+  /**
+   * v0002.20 opt-in: the postgres SERVER cert + key the fixture
+   * stages into the ephemeral postgres:16 container so the
+   * container presents a verifiable server chain. When ANY
+   * postgres-TLS option is set, the worker forwards BOTH cert
+   * and key to StartPostgresContainer and the postgres
+   * container starts with `ssl=on` against the staged files.
+   * The cert must be signed by a CA the State Registry's Go
+   * client also trusts (e.g. tlsPostgresCaPath).
+   */
   tlsPostgresServerCertPath?: string;
-  tlsPostgresVerifyMode?: 'verify-ca' | 'verify-full';
+  tlsPostgresServerKeyPath?: string;
+  tlsPostgresVerifyMode?: "verify-ca" | "verify-full";
   /**
    * Trusted client cert/key used by the readiness probe to verify
    * the HTTPS+mTLS listener. Required when tlsServerCertPath is
@@ -102,23 +123,23 @@ export interface RegistryRestartResult {
 }
 
 const DefaultBinary = (() => {
-  const envOverride = process.env['STATE_REGISTRY_BINARY'];
+  const envOverride = process.env["STATE_REGISTRY_BINARY"];
   if (envOverride && envOverride.length > 0) {
     return envOverride;
   }
   return pathResolve(
     __dirname,
-    '..',
-    '..',
-    '..',
-    'state-registry',
-    'cmd',
-    'state-registry',
-    'main.go',
+    "..",
+    "..",
+    "..",
+    "state-registry",
+    "cmd",
+    "state-registry",
+    "main.go",
   );
 })();
 
-const BindHost = '127.0.0.1';
+const BindHost = "127.0.0.1";
 const RequestPort = 0;
 const ReadinessTimeoutMs = 15_000;
 const BindDiscoveryTimeoutMs = 5_000;
@@ -158,16 +179,16 @@ class FixtureLifecycleError extends Error {
   ) {
     const primaryError = sanitizeError(primary);
     const cleanupSummary = cleanup.length
-      ? `; cleanup_errors=${cleanup.map((c) => c.message).join(', ')}`
-      : '';
+      ? `; cleanup_errors=${cleanup.map((c) => c.message).join(", ")}`
+      : "";
     super(
       `state-registry worker failed during ${phase}: ${primaryError.message}${cleanupSummary}`,
     );
     this.phase = phase;
-    this.diagnostics = diagnostics;
+    this.diagnostics = sanitize(diagnostics);
     this.primary = primaryError;
     this.cleanup = cleanup;
-    this.name = 'FixtureLifecycleError';
+    this.name = "FixtureLifecycleError";
     this.aggregate = new AggregateError(
       [primaryError, ...cleanup],
       `state-registry worker failed during ${phase}`,
@@ -175,12 +196,15 @@ class FixtureLifecycleError extends Error {
   }
 }
 
-export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Promise<RegistryWorker> {
+export async function startRegistryWorker(
+  opts: RegistryWorkerOptions = {},
+): Promise<RegistryWorker> {
   const binary = opts.binary ?? DefaultBinary;
   const lifecycle = new LifecycleQueue();
   const diagnostics = new BoundedCapture(CaptureMaxBytes);
-  const aesKey = opts.omitAesKey ? '' : randomBytes(32).toString('hex');
-  const cursorKey = randomBytes(32).toString('hex');
+  const aesKey = opts.omitAesKey ? "" : randomBytes(32).toString("hex");
+  const cursorKey = randomBytes(32).toString("hex");
+  const scopeTokenKey = randomBytes(32).toString("hex");
   const killFailuresRef = { count: opts.processKillFailureCount ?? 0 };
 
   async function terminateOrThrow(
@@ -189,7 +213,7 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
   ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
     if (killFailuresRef.count > 0) {
       killFailuresRef.count -= 1;
-      throw new Error('injected process kill failure');
+      throw new Error("injected process kill failure");
     }
     return await terminateOrThrowCore(proc, deadlineMs);
   }
@@ -201,18 +225,24 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
   let bindCapture: BoundedCapture = new BoundedCapture(CaptureMaxBytes);
   let restartCount = 0;
 
-  const tlsMode = opts.tlsServerCertPath !== undefined
-    || opts.tlsServerKeyPath !== undefined
-    || opts.tlsClientCaPath !== undefined
-    || opts.tlsRequireClientCert !== undefined
-    || opts.tlsPostgresCaPath !== undefined
-    || opts.tlsPostgresServerCertPath !== undefined
-    || opts.tlsPostgresVerifyMode !== undefined;
+  const tlsMode =
+    opts.tlsServerCertPath !== undefined ||
+    opts.tlsServerKeyPath !== undefined ||
+    opts.tlsClientCaPath !== undefined ||
+    opts.tlsRequireClientCert !== undefined ||
+    opts.tlsPostgresCaPath !== undefined ||
+    opts.tlsPostgresServerCertPath !== undefined ||
+    opts.tlsPostgresServerKeyPath !== undefined ||
+    opts.tlsPostgresVerifyMode !== undefined;
+
+  if (opts.productionMode && !tlsMode) {
+    throw new Error(
+      "startRegistryWorker productionMode requires complete TLS configuration",
+    );
+  }
 
   const readyUrl = (port: number): string =>
-    tlsMode
-      ? `https://${BindHost}:${port}`
-      : `http://${BindHost}:${port}`;
+    tlsMode ? `https://${BindHost}:${port}` : `http://${BindHost}:${port}`;
 
   // The probe materials the readiness check uses. The TLS-mode
   // worker refuses to start when these are missing or when the
@@ -222,7 +252,7 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
   const tlsProbeCertPath = opts.tlsClientCertPath ?? null;
   const tlsProbeKeyPath = opts.tlsClientKeyPath ?? null;
   const tlsProbeCaPath = opts.tlsClientCaPath ?? null;
-  const tlsProbeServername = opts.tlsServername ?? 'localhost';
+  const tlsProbeServername = opts.tlsServername ?? "localhost";
 
   // The TLS-mode startup contract is fail-closed: a worker that
   // is asked to serve mTLS must (a) receive every required file
@@ -233,36 +263,53 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
     if (tlsMode || tlsProbeCertPath || tlsProbeKeyPath || tlsProbeCaPath) {
       const required: string[] = [];
       if (tlsMode) {
-        if (!opts.tlsServerCertPath) required.push('tlsServerCertPath');
-        if (!opts.tlsServerKeyPath) required.push('tlsServerKeyPath');
-        if (!opts.tlsClientCaPath) required.push('tlsClientCaPath');
+        if (!opts.tlsServerCertPath) required.push("tlsServerCertPath");
+        if (!opts.tlsServerKeyPath) required.push("tlsServerKeyPath");
+        if (!opts.tlsClientCaPath) required.push("tlsClientCaPath");
       }
       if (tlsMode || tlsProbeCertPath || tlsProbeKeyPath) {
-        if (!tlsProbeCertPath) required.push('tlsClientCertPath');
-        if (!tlsProbeKeyPath) required.push('tlsClientKeyPath');
-        if (!tlsProbeCaPath) required.push('tlsClientCaPath');
+        if (!tlsProbeCertPath) required.push("tlsClientCertPath");
+        if (!tlsProbeKeyPath) required.push("tlsClientKeyPath");
+        if (!tlsProbeCaPath) required.push("tlsClientCaPath");
+      }
+      // Postgres-TLS opt-in: when ANY postgres-TLS knob is set
+      // (CA, server-cert, server-key, or verify-mode), the
+      // server-cert + key must be supplied together so the
+      // fixture can stage them into the postgres container.
+      if (
+        opts.tlsPostgresCaPath !== undefined ||
+        opts.tlsPostgresServerCertPath !== undefined ||
+        opts.tlsPostgresServerKeyPath !== undefined ||
+        opts.tlsPostgresVerifyMode !== undefined
+      ) {
+        if (!opts.tlsPostgresServerCertPath)
+          required.push("tlsPostgresServerCertPath");
+        if (!opts.tlsPostgresServerKeyPath)
+          required.push("tlsPostgresServerKeyPath");
       }
       if (required.length > 0) {
         throw new Error(
-          `startRegistryWorker TLS-mode contract is incomplete: missing ${required.join(', ')}; ` +
-          'supplying the file-path is required to opt in',
+          `startRegistryWorker TLS-mode contract is incomplete: missing ${required.join(", ")}; ` +
+            "supplying the file-path is required to opt in",
         );
       }
       const pathsToCheck: Array<[string, string | null | undefined]> = [
-        ['tlsServerCertPath', opts.tlsServerCertPath],
-        ['tlsServerKeyPath', opts.tlsServerKeyPath],
-        ['tlsClientCaPath', opts.tlsClientCaPath],
-        ['tlsClientCertPath', tlsProbeCertPath],
-        ['tlsClientKeyPath', tlsProbeKeyPath],
+        ["tlsServerCertPath", opts.tlsServerCertPath],
+        ["tlsServerKeyPath", opts.tlsServerKeyPath],
+        ["tlsClientCaPath", opts.tlsClientCaPath],
+        ["tlsClientCertPath", tlsProbeCertPath],
+        ["tlsClientKeyPath", tlsProbeKeyPath],
+        ["tlsPostgresServerCertPath", opts.tlsPostgresServerCertPath],
+        ["tlsPostgresServerKeyPath", opts.tlsPostgresServerKeyPath],
       ];
-      const { existsSync } = require('node:fs') as typeof import('node:fs');
+      const { existsSync } = require("node:fs") as typeof import("node:fs");
       const missing: string[] = [];
       for (const [name, path] of pathsToCheck) {
         if (path && !existsSync(path)) missing.push(`${name}=${path}`);
       }
       if (missing.length > 0) {
         throw new Error(
-          `startRegistryWorker TLS-mode paths do not exist on disk: ${missing.join(', ')}`,
+          `startRegistryWorker TLS-mode paths do not exist on disk: ${missing.join(", ")}`,
         );
       }
     }
@@ -271,25 +318,24 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
   const tlsEnv = (): Record<string, string> => {
     const out: Record<string, string> = {};
     if (opts.tlsServerCertPath) {
-      out['STATE_REGISTRY_TLS_SERVER_CERT'] = opts.tlsServerCertPath;
+      out["STATE_REGISTRY_TLS_SERVER_CERT"] = opts.tlsServerCertPath;
     }
     if (opts.tlsServerKeyPath) {
-      out['STATE_REGISTRY_TLS_SERVER_KEY'] = opts.tlsServerKeyPath;
+      out["STATE_REGISTRY_TLS_SERVER_KEY"] = opts.tlsServerKeyPath;
     }
     if (opts.tlsClientCaPath) {
-      out['STATE_REGISTRY_TLS_CLIENT_CA'] = opts.tlsClientCaPath;
+      out["STATE_REGISTRY_TLS_CLIENT_CA"] = opts.tlsClientCaPath;
     }
     if (opts.tlsRequireClientCert !== undefined) {
-      out['STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT'] = opts.tlsRequireClientCert ? 'true' : 'false';
+      out["STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT"] = opts.tlsRequireClientCert
+        ? "true"
+        : "false";
     }
     if (opts.tlsPostgresCaPath) {
-      out['STATE_REGISTRY_POSTGRES_TLS_CA'] = opts.tlsPostgresCaPath;
-    }
-    if (opts.tlsPostgresServerCertPath) {
-      out['STATE_REGISTRY_POSTGRES_TLS_SERVER_CERT'] = opts.tlsPostgresServerCertPath;
+      out["STATE_REGISTRY_POSTGRES_TLS_CA"] = opts.tlsPostgresCaPath;
     }
     if (opts.tlsPostgresVerifyMode) {
-      out['STATE_REGISTRY_POSTGRES_TLS_MODE'] = opts.tlsPostgresVerifyMode;
+      out["STATE_REGISTRY_POSTGRES_TLS_MODE"] = opts.tlsPostgresVerifyMode;
     }
     return out;
   };
@@ -301,18 +347,27 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
     STATE_REGISTRY_POSTGRES_URL: postgres!.dsn,
     STATE_REGISTRY_AES_KEY_HEX: aesKey,
     STATE_REGISTRY_CURSOR_KEY_HEX: cursorKey,
-    STATE_REGISTRY_TEST_MODE: 'true',
+    STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX: scopeTokenKey,
+    ...(opts.productionMode ? {} : { STATE_REGISTRY_TEST_MODE: "true" }),
     ...tlsEnv(),
   });
 
   const startProcess = (): ChildProcess => {
-    const isGoSource = binary.endsWith('.go');
-    const cmd = isGoSource ? 'go' : binary;
-    const args = isGoSource ? ['run', binary] : [];
+    const isGoSource = binary.endsWith(".go");
+    const cmd = isGoSource ? "go" : binary;
+    // The state_registry_test_harness tag is the only path that
+    // opts into header-trusting test mode; a normal production
+    // binary rejects STATE_REGISTRY_TEST_MODE=true outright.
+    const harnessBuildTag = "state_registry_test_harness";
+    const args = isGoSource
+      ? opts.productionMode
+        ? ["run", binary]
+        : ["run", "-tags", harnessBuildTag, binary]
+      : [];
     if (!isGoSource) {
       const exists = (() => {
         try {
-          const stat = require('node:fs').statSync(cmd);
+          const stat = require("node:fs").statSync(cmd);
           return stat.isFile();
         } catch {
           return false;
@@ -320,18 +375,21 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
       })();
       if (!exists) {
         const err = new Error(`spawn ${cmd} ENOENT`);
-        (err as NodeJS.ErrnoException).code = 'ENOENT';
+        (err as NodeJS.ErrnoException).code = "ENOENT";
         throw err;
       }
     }
     return spawn(cmd, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
       env: env(),
       detached: true,
     });
   };
 
-  async function discoverBindPort(child: ChildProcess, deadlineMs: number): Promise<number> {
+  async function discoverBindPort(
+    child: ChildProcess,
+    deadlineMs: number,
+  ): Promise<number> {
     bindCapture = new BoundedCapture(CaptureMaxBytes);
     bindCapture.child(child);
     return await new Promise<number>((resolve, reject) => {
@@ -340,13 +398,15 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
         if (settled) return;
         settled = true;
         cleanup();
-        reject(new Error(`process never logged bind port within ${deadlineMs}ms`));
+        reject(
+          new Error(`process never logged bind port within ${deadlineMs}ms`),
+        );
       }, deadlineMs);
       const cleanup = () => {
-        child.stdout?.off('data', onChunk);
-        child.stderr?.off('data', onChunk);
-        child.off('exit', onExit);
-        child.off('error', onError);
+        child.stdout?.off("data", onChunk);
+        child.stderr?.off("data", onChunk);
+        child.off("exit", onExit);
+        child.off("error", onError);
       };
       const onChunk = () => {
         const match = bindCapture.snapshot().match(BindPattern);
@@ -360,7 +420,11 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
         if (settled) return;
         settled = true;
         cleanup();
-        reject(new Error(`process exited before logging bind port code=${String(code)} signal=${String(signal)}`));
+        reject(
+          new Error(
+            `process exited before logging bind port code=${String(code)} signal=${String(signal)}`,
+          ),
+        );
       };
       const onError = (err: Error) => {
         if (settled) return;
@@ -368,10 +432,10 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
         cleanup();
         reject(err);
       };
-      child.stdout?.on('data', onChunk);
-      child.stderr?.on('data', onChunk);
-      child.once('exit', onExit);
-      child.once('error', onError);
+      child.stdout?.on("data", onChunk);
+      child.stderr?.on("data", onChunk);
+      child.once("exit", onExit);
+      child.once("error", onError);
     });
   }
 
@@ -383,12 +447,19 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
   // worker is in TLS mode and the Go scaffold has not yet
   // implemented HTTPS, so the rejection becomes a precise
   // behavior-specific RED.
-  async function httpsProbeReady(url: string, timeoutMs: number): Promise<{ status: number; body: string }> {
+  async function httpsProbeReady(
+    url: string,
+    timeoutMs: number,
+  ): Promise<{ status: number; body: string }> {
     if (!tlsProbeCertPath || !tlsProbeKeyPath || !tlsProbeCaPath) {
-      throw new Error('httpsProbeReady called without tlsClientCertPath/tlsClientKeyPath/tlsClientCaPath');
+      throw new Error(
+        "httpsProbeReady called without tlsClientCertPath/tlsClientKeyPath/tlsClientCaPath",
+      );
     }
-    const { Agent: HttpsAgent, request: nodeHttpsRequest } = await import('node:https');
-    const { readFileSync } = await import('node:fs');
+    const { Agent: HttpsAgent, request: nodeHttpsRequest } = await import(
+      "node:https"
+    );
+    const { readFileSync } = await import("node:fs");
     const agent = new HttpsAgent({
       cert: readFileSync(tlsProbeCertPath),
       key: readFileSync(tlsProbeKeyPath),
@@ -398,21 +469,33 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
       keepAlive: false,
     });
     const timeout = Math.max(timeoutMs, FetchTimeoutMs);
-    return await new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const req = nodeHttpsRequest(`${url}/v1/readyz`, { method: 'GET', agent, timeout }, (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => resolve({
-          status: res.statusCode ?? 0,
-          body: Buffer.concat(chunks).toString('utf-8'),
-        }));
-      });
-      req.on('error', (err) => reject(err));
-      req.on('timeout', () => {
-        req.destroy(new Error(`httpsProbeReady timed out after ${timeout}ms url=${url}`));
-      });
-      req.end();
-    });
+    return await new Promise<{ status: number; body: string }>(
+      (resolve, reject) => {
+        const req = nodeHttpsRequest(
+          `${url}/v1/readyz`,
+          { method: "GET", agent, timeout },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk: Buffer) => chunks.push(chunk));
+            res.on("end", () =>
+              resolve({
+                status: res.statusCode ?? 0,
+                body: Buffer.concat(chunks).toString("utf-8"),
+              }),
+            );
+          },
+        );
+        req.on("error", (err) => reject(err));
+        req.on("timeout", () => {
+          req.destroy(
+            new Error(
+              `httpsProbeReady timed out after ${timeout}ms url=${url}`,
+            ),
+          );
+        });
+        req.end();
+      },
+    );
   }
 
   async function waitForReady(url: string, timeoutMs: number): Promise<void> {
@@ -429,7 +512,9 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
               clearTimeout(timer);
               return;
             }
-            lastErr = new Error(`readyz status=${String(probe.status)} body=${probe.body.slice(0, 256)}`);
+            lastErr = new Error(
+              `readyz status=${String(probe.status)} body=${probe.body.slice(0, 256)}`,
+            );
           } catch (err) {
             lastErr = err;
           }
@@ -450,42 +535,51 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
       }
       await new Promise((r) => setTimeout(r, ReadinessPollMs));
     }
-    const lastErrMsg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    const lastErrMsg =
+      lastErr instanceof Error ? lastErr.message : String(lastErr);
     if (tlsMode) {
       throw new Error(
         `state-registry TLS-mode readiness probe never reached 200 within ${timeoutMs}ms ` +
-        `(last err=${lastErrMsg}); the Go scaffold likely does not yet consume ` +
-        `STATE_REGISTRY_TLS_* env vars, so no HTTPS/mTLS listener is bound on ${url}. ` +
-        `Expected behavior: State Registry consumes STATE_REGISTRY_TLS_SERVER_CERT, ` +
-        `STATE_REGISTRY_TLS_SERVER_KEY, STATE_REGISTRY_TLS_CLIENT_CA, and ` +
-        `STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT=true, binds HTTPS on the requested port, ` +
-        `and serves /v1/readyz to a trusted client cert with the trusted CA bundle.`,
+          `(last err=${lastErrMsg}); verify that the HTTPS/mTLS listener is bound on ${url} ` +
+          `and that State Registry received STATE_REGISTRY_TLS_SERVER_CERT, ` +
+          `STATE_REGISTRY_TLS_SERVER_KEY, STATE_REGISTRY_TLS_CLIENT_CA, and ` +
+          `STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT=true with a client cert trusted by that CA.`,
       );
     }
-    throw new Error(`state-registry never reported ready within ${timeoutMs}ms (last err=${lastErrMsg})`);
+    throw new Error(
+      `state-registry never reported ready within ${timeoutMs}ms (last err=${lastErrMsg})`,
+    );
   }
 
   // stopPostgres wraps StopPostgresContainer with the
   // remove-failure-injection counter. Each call decrements the
   // counter; while > 0, a synthetic error is returned instead of the
   // real remove result.
-  async function stopPostgres(pg: PostgresContainer | null): Promise<Error | null> {
+  async function stopPostgres(
+    pg: PostgresContainer | null,
+  ): Promise<Error | null> {
     if (!pg) {
       return null;
     }
-    if (removeFailuresRef.count > 0) {
-      removeFailuresRef.count -= 1;
-      return new Error('injected postgres remove failure');
-    }
-    return await StopPostgresContainer(pg);
+    return await StopPostgresContainer(pg, removeFailuresRef);
   }
 
   try {
     await lifecycle.run(async () => {
       try {
-        postgres = await StartPostgresContainer({ image: opts.postgresImage });
+        postgres = await StartPostgresContainer({
+          image: opts.postgresImage,
+          // When ANY postgres-TLS opt-in knob is set, forward the
+          // server cert + key to the fixture. The fixture stages
+          // the files inside the postgres:16 container and starts
+          // the server with `ssl=on`. When unset, the fixture
+          // takes the default plaintext path (preserved
+          // byte-for-byte for every other contract test).
+          tlsPostgresCertPath: opts.tlsPostgresServerCertPath,
+          tlsPostgresKeyPath: opts.tlsPostgresServerKeyPath,
+        });
       } catch (primary) {
-        throw new FixtureLifecycleError('postgres-startup', '', primary);
+        throw new FixtureLifecycleError("postgres-startup", "", primary);
       }
       try {
         current = startProcess();
@@ -493,8 +587,17 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
       } catch (primary) {
         const pg = postgres;
         postgres = null;
-        const cleanupErrs = await collectCleanupErrors(undefined, pg, removeFailuresRef);
-        throw new FixtureLifecycleError('process-spawn', '', primary, cleanupErrs);
+        const cleanupErrs = await collectCleanupErrors(
+          undefined,
+          pg,
+          removeFailuresRef,
+        );
+        throw new FixtureLifecycleError(
+          "process-spawn",
+          "",
+          primary,
+          cleanupErrs,
+        );
       }
       try {
         bindPort = await discoverBindPort(current, BindDiscoveryTimeoutMs);
@@ -503,9 +606,13 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
         const child = current;
         postgres = null;
         current = null;
-        const cleanupErrs = await collectCleanupErrors(child, pg, removeFailuresRef);
+        const cleanupErrs = await collectCleanupErrors(
+          child,
+          pg,
+          removeFailuresRef,
+        );
         throw new FixtureLifecycleError(
-          'process-bind-discovery',
+          "process-bind-discovery",
           diagnostics.snapshot(),
           primary,
           cleanupErrs,
@@ -518,9 +625,13 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
         const child = current;
         postgres = null;
         current = null;
-        const cleanupErrs = await collectCleanupErrors(child, pg, removeFailuresRef);
+        const cleanupErrs = await collectCleanupErrors(
+          child,
+          pg,
+          removeFailuresRef,
+        );
         throw new FixtureLifecycleError(
-          'readiness',
+          "readiness",
           diagnostics.snapshot(),
           primary,
           cleanupErrs,
@@ -556,7 +667,9 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
   }
 
   if (!postgres || bindPort === null || !current) {
-    throw new Error('startRegistryWorker invariant: lifecycle.run did not initialise worker state');
+    throw new Error(
+      "startRegistryWorker invariant: lifecycle.run did not initialise worker state",
+    );
   }
 
   return {
@@ -568,11 +681,9 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
     get baseUrl(): string {
       const p = bindPort;
       if (p === null) {
-        throw new Error('baseUrl unavailable: worker has no current bind port');
+        throw new Error("baseUrl unavailable: worker has no current bind port");
       }
-      return tlsMode
-        ? `https://${BindHost}:${p}`
-        : `http://${BindHost}:${p}`;
+      return tlsMode ? `https://${BindHost}:${p}` : `http://${BindHost}:${p}`;
     },
     workerExe: binary,
     get restartCount(): number {
@@ -580,10 +691,11 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
     },
     async restart(): Promise<RegistryRestartResult> {
       if (!lifecycle.canAcceptNew()) {
-        throw new Error('cannot restart: worker is already torn down');
+        throw new Error("cannot restart: worker is already torn down");
       }
       const startedAt = Date.now();
-      let previousExit: { code: number | null; signal: NodeJS.Signals | null } = { code: null, signal: null };
+      let previousExit: { code: number | null; signal: NodeJS.Signals | null } =
+        { code: null, signal: null };
 
       await lifecycle.run(async () => {
         const previous = current;
@@ -595,7 +707,11 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
           current = startProcess();
           diagnostics.child(current);
         } catch (primary) {
-          throw new FixtureLifecycleError('restart-process-spawn', diagnostics.snapshot(), primary);
+          throw new FixtureLifecycleError(
+            "restart-process-spawn",
+            diagnostics.snapshot(),
+            primary,
+          );
         }
         try {
           bindPort = await discoverBindPort(current, BindDiscoveryTimeoutMs);
@@ -610,13 +726,17 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
               killErr = e instanceof Error ? e : new Error(String(e));
             }
             throw new FixtureLifecycleError(
-              'restart-bind-discovery',
+              "restart-bind-discovery",
               diagnostics.snapshot(),
               primary,
               killErr ? [killErr] : [],
             );
           }
-          throw new FixtureLifecycleError('restart-bind-discovery', diagnostics.snapshot(), primary);
+          throw new FixtureLifecycleError(
+            "restart-bind-discovery",
+            diagnostics.snapshot(),
+            primary,
+          );
         }
         try {
           await waitForReady(readyUrl(bindPort), ReadinessTimeoutMs);
@@ -631,13 +751,17 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
               killErr = e instanceof Error ? e : new Error(String(e));
             }
             throw new FixtureLifecycleError(
-              'restart-readiness',
+              "restart-readiness",
               diagnostics.snapshot(),
               primary,
               killErr ? [killErr] : [],
             );
           }
-          throw new FixtureLifecycleError('restart-readiness', diagnostics.snapshot(), primary);
+          throw new FixtureLifecycleError(
+            "restart-readiness",
+            diagnostics.snapshot(),
+            primary,
+          );
         }
       });
 
@@ -684,7 +808,7 @@ export async function startRegistryWorker(opts: RegistryWorkerOptions = {}): Pro
       }
       if (cleanupErrors.length > 0) {
         throw aggregateErrors(
-          new Error('teardown reported cleanup failures'),
+          new Error("teardown reported cleanup failures"),
           cleanupErrors,
         );
       }
@@ -718,7 +842,7 @@ class LifecycleQueue {
   private acceptsNew = true;
   async run(task: () => Promise<void>): Promise<void> {
     if (this.closed) {
-      throw new Error('lifecycle closed');
+      throw new Error("lifecycle closed");
     }
     const next = this.mutex.then(task);
     this.mutex = next.then(
@@ -750,11 +874,11 @@ class BoundedCapture {
   private bytes = 0;
   constructor(private readonly cap: number) {}
   snapshot(): string {
-    return this.chunks.join('');
+    return this.chunks.join("");
   }
   child(proc: ChildProcess): void {
     const onChunk = (b: Buffer) => {
-      const text = sanitize(b.toString('utf-8'));
+      const text = sanitize(b.toString("utf-8"));
       this.chunks.push(text);
       this.bytes += text.length;
       while (this.bytes > this.cap && this.chunks.length > 1) {
@@ -764,8 +888,8 @@ class BoundedCapture {
         }
       }
     };
-    proc.stdout?.on('data', onChunk);
-    proc.stderr?.on('data', onChunk);
+    proc.stdout?.on("data", onChunk);
+    proc.stderr?.on("data", onChunk);
   }
 }
 
@@ -773,11 +897,11 @@ class BoundedCapture {
 // meaning the target process has already exited before we could
 // signal it. Such an error is benign and must not abort cleanup.
 function isEsrch(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
+  if (!err || typeof err !== "object") return false;
   const code = (err as { code?: unknown }).code;
-  if (code === 'ESRCH') return true;
+  if (code === "ESRCH") return true;
   const message = (err as { message?: unknown }).message;
-  if (typeof message === 'string' && /no such process/i.test(message)) {
+  if (typeof message === "string" && /no such process/i.test(message)) {
     return true;
   }
   return false;
@@ -796,7 +920,10 @@ async function terminateOrThrowCore(
   deadlineMs: number,
 ): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
   if (proc.exitCode !== null || proc.signalCode !== null) {
-    return { code: proc.exitCode, signal: proc.signalCode as NodeJS.Signals | null };
+    return {
+      code: proc.exitCode,
+      signal: proc.signalCode as NodeJS.Signals | null,
+    };
   }
   let exitCode: number | null = null;
   let exitSignal: NodeJS.Signals | null = null;
@@ -804,18 +931,21 @@ async function terminateOrThrowCore(
   let sigtermError: Error | undefined;
   try {
     if (pid !== undefined) {
-      process.kill(-pid, 'SIGTERM');
+      process.kill(-pid, "SIGTERM");
     } else {
-      proc.kill('SIGTERM');
+      proc.kill("SIGTERM");
     }
   } catch (err) {
     if (!isEsrch(err)) {
       sigtermError = err instanceof Error ? err : new Error(String(err));
     }
   }
-  const exited = await new Promise<{ code: number | null; signal: NodeJS.Signals | null } | null>((resolve) => {
+  const exited = await new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  } | null>((resolve) => {
     const timer = setTimeout(() => resolve(null), deadlineMs);
-    proc.once('exit', (code, signal) => {
+    proc.once("exit", (code, signal) => {
       clearTimeout(timer);
       resolve({ code, signal: signal as NodeJS.Signals | null });
     });
@@ -833,32 +963,35 @@ async function terminateOrThrowCore(
   let sigkillError: Error | undefined;
   try {
     if (pid !== undefined) {
-      process.kill(-pid, 'SIGKILL');
+      process.kill(-pid, "SIGKILL");
     } else {
-      proc.kill('SIGKILL');
+      proc.kill("SIGKILL");
     }
   } catch (err) {
     if (!isEsrch(err)) {
       sigkillError = err instanceof Error ? err : new Error(String(err));
     }
   }
-  const exitedAfterKill = await new Promise<{ code: number | null; signal: NodeJS.Signals | null } | null>(
-    (resolve) => {
-      const killTimer = setTimeout(() => resolve(null), 5_000);
-      proc.once('exit', (code, signal) => {
-        clearTimeout(killTimer);
-        resolve({ code, signal: signal as NodeJS.Signals | null });
-      });
-    },
-  );
+  const exitedAfterKill = await new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  } | null>((resolve) => {
+    const killTimer = setTimeout(() => resolve(null), 5_000);
+    proc.once("exit", (code, signal) => {
+      clearTimeout(killTimer);
+      resolve({ code, signal: signal as NodeJS.Signals | null });
+    });
+  });
   if (exitedAfterKill === null) {
     const err = new AggregateError(
       [
-        new Error(`process did not exit within ${deadlineMs}ms after SIGTERM and within 5s after SIGKILL`),
+        new Error(
+          `process did not exit within ${deadlineMs}ms after SIGTERM and within 5s after SIGKILL`,
+        ),
         ...(sigtermError ? [sigtermError] : []),
         ...(sigkillError ? [sigkillError] : []),
       ],
-      'terminateOrThrow: process refused to exit',
+      "terminateOrThrow: process refused to exit",
     );
     throw err;
   }
@@ -868,7 +1001,10 @@ async function terminateOrThrowCore(
   if (sigtermError) collected.push(sigtermError);
   if (sigkillError) collected.push(sigkillError);
   if (collected.length > 0) {
-    throw new AggregateError(collected, 'terminateOrThrow: signaling reported errors');
+    throw new AggregateError(
+      collected,
+      "terminateOrThrow: signaling reported errors",
+    );
   }
   return { code: exitCode, signal: exitSignal };
 }

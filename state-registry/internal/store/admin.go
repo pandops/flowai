@@ -36,12 +36,31 @@ type AdminRepository interface {
 
 // Store persists State Registry resources in PostgreSQL.
 type Store struct {
-	db *sql.DB
+	db                *sql.DB
+	aesKey            []byte
+	scopeTokenKeyring *scopeTokenKeyring
 }
 
 // New returns a PostgreSQL-backed Store.
 func New(db *sql.DB) *Store {
 	return &Store{db: db}
+}
+
+func NewWithAESKey(db *sql.DB, key []byte) *Store {
+	keyCopy := append([]byte(nil), key...)
+	return &Store{db: db, aesKey: keyCopy}
+}
+
+// NewWithScopeTokenKeyring wires the AES-256-GCM key and the
+// rotating scope-token HMAC keyring into a Store. Production
+// startup uses this constructor; callers that only need the AES path
+// can stay on NewWithAESKey.
+func NewWithScopeTokenKeyring(db *sql.DB, aesKey []byte, keyring *ScopeTokenKeyring) *Store {
+	if keyring == nil || keyring.inner == nil {
+		return &Store{db: db, aesKey: append([]byte(nil), aesKey...)}
+	}
+	keyCopy := append([]byte(nil), aesKey...)
+	return &Store{db: db, aesKey: keyCopy, scopeTokenKeyring: keyring.inner}
 }
 
 // TeamExists reports whether teamID names a registered team. It performs no

@@ -54,11 +54,13 @@ func TestWSReadLoopNoFrameForLongTimeThenTerminalFrame(t *testing.T) {
 
 	wsURL := "ws" + srv.URL[4:]
 	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	_ = resp
 
 	if !connStarted.Load() {
 		t.Fatalf("server never accepted the upgrade")

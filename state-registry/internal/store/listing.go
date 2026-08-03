@@ -34,6 +34,30 @@ type TaskAfter struct {
 	TaskID             string
 }
 
+// EnvironmentAfter is the after-cursor position for the deterministic
+// (created_at ASC, environment_id ASC) ordering of the
+// GET /v1/environments collection.
+type EnvironmentAfter struct {
+	CreatedAtUnixNano int64
+	EnvironmentID     string
+}
+
+// SecretAfter is the after-cursor position for the deterministic
+// (created_at ASC, secret_id ASC) ordering of the logical-secret
+// collection under one environment.
+type SecretAfter struct {
+	CreatedAtUnixNano int64
+	SecretID          string
+}
+
+// SecretVersionAfter is the after-cursor position for the deterministic
+// (version ASC, secret_id ASC) ordering of the secret_versions
+// collection under one logical secret.
+type SecretVersionAfter struct {
+	Version  int
+	SecretID string
+}
+
 // ListTaskTypes implements ListRepository on the PostgreSQL Store.
 // The select must always project exactly the three documented fields
 // (team_id, task_type_id, execution_tag). The deterministic

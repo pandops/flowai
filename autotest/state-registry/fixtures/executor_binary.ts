@@ -57,13 +57,13 @@
 // implementation lands, every RED flips to green without any harness
 // rewrite because the assertions read canonical Registry state that the
 // v0002 binary populates through its normal startup and runtime flow.
-import { randomBytes } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { resolve as pathResolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
-import { request, type APIRequestContext } from '@playwright/test';
-import { sanitize } from './redact';
+import { randomBytes } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { resolve as pathResolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { request, type APIRequestContext } from "@playwright/test";
+import { sanitize } from "./redact";
 
 export interface ExecutorStartOptions {
   /** Bind host for the Executor platform health API (default 127.0.0.1). */
@@ -76,11 +76,17 @@ export interface ExecutorStartOptions {
    * variable; v0001 ingores it entirely.
    */
   registryUrl?: string;
+  /** Client certificate presented to the State Registry mTLS endpoint. */
+  registryTLSClientCertPath?: string;
+  /** Private key paired with registryTLSClientCertPath. */
+  registryTLSClientKeyPath?: string;
+  /** CA bundle used to verify the State Registry server certificate. */
+  registryTLSServerCAPath?: string;
   /**
    * Ownership scope. Future-facing: surface as EXECUTOR_SCOPE.
    * v0001 ingores it.
    */
-  scope?: 'team' | 'system';
+  scope?: "team" | "system";
   /**
    * Immutable team_id binding for scope=team. Future-facing:
    * EXECUTOR_TEAM_ID. v0001 ingores it.
@@ -122,18 +128,18 @@ export interface ExecutorHandles {
   teardown(): Promise<void>;
 }
 
-const RepoRoot = pathResolve(__dirname, '..', '..', '..');
+const RepoRoot = pathResolve(__dirname, "..", "..", "..");
 const ExecutorBinary = (() => {
-  const envOverride = process.env['EXECUTOR_DOCKER_OPEHANDS_BIN'];
+  const envOverride = process.env["EXECUTOR_DOCKER_OPEHANDS_BIN"];
   if (envOverride && envOverride.length > 0) {
     return envOverride;
   }
   return pathResolve(
     RepoRoot,
-    'executor_docker_opehands',
-    'cmd',
-    'executor_docker_opehands',
-    'main.go',
+    "executor_docker_opehands",
+    "cmd",
+    "executor_docker_opehands",
+    "main.go",
   );
 })();
 
@@ -142,7 +148,10 @@ const DefaultStartupTimeoutMs = 10_000;
 const DefaultExecutorIdTimeoutMs = 5_000;
 const CaptureMaxBytes = 64 * 1024;
 
-function pushBounded(store: { chunks: string[]; bytes: number; cap: number }, chunk: string): void {
+function pushBounded(
+  store: { chunks: string[]; bytes: number; cap: number },
+  chunk: string,
+): void {
   store.chunks.push(chunk);
   store.bytes += chunk.length;
   while (store.bytes > store.cap && store.chunks.length > 1) {
@@ -164,16 +173,20 @@ async function discoverBindPort(
       if (settled) return;
       settled = true;
       cleanup();
-      reject(new Error(`executor binary never logged bind port within ${deadlineMs}ms; captured=${capture.chunks.join('')}`));
+      reject(
+        new Error(
+          `executor binary never logged bind port within ${deadlineMs}ms; captured=${capture.chunks.join("")}`,
+        ),
+      );
     }, deadlineMs);
     const cleanup = (): void => {
-      proc.stdout?.off('data', onChunk);
-      proc.stderr?.off('data', onChunk);
-      proc.off('exit', onExit);
-      proc.off('error', onError);
+      proc.stdout?.off("data", onChunk);
+      proc.stderr?.off("data", onChunk);
+      proc.off("exit", onExit);
+      proc.off("error", onError);
     };
     const onChunk = (): void => {
-      const snapshot = capture.chunks.join('');
+      const snapshot = capture.chunks.join("");
       const m = snapshot.match(BindPattern);
       if (m && m[1] && !settled) {
         settled = true;
@@ -182,12 +195,19 @@ async function discoverBindPort(
         resolve(Number(m[1]));
       }
     };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+    const onExit = (
+      code: number | null,
+      signal: NodeJS.Signals | null,
+    ): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       cleanup();
-      reject(new Error(`executor binary exited before logging bind port code=${String(code)} signal=${String(signal)}`));
+      reject(
+        new Error(
+          `executor binary exited before logging bind port code=${String(code)} signal=${String(signal)}`,
+        ),
+      );
     };
     const onError = (err: Error): void => {
       if (settled) return;
@@ -196,10 +216,10 @@ async function discoverBindPort(
       cleanup();
       reject(err);
     };
-    proc.stdout?.on('data', onChunk);
-    proc.stderr?.on('data', onChunk);
-    proc.once('exit', onExit);
-    proc.once('error', onError);
+    proc.stdout?.on("data", onChunk);
+    proc.stderr?.on("data", onChunk);
+    proc.once("exit", onExit);
+    proc.once("error", onError);
   });
 }
 
@@ -211,7 +231,7 @@ async function waitForLivez(url: string, timeoutMs: number): Promise<void> {
   try {
     while (Date.now() < deadline) {
       try {
-        const resp = await api.get('/v1/livez');
+        const resp = await api.get("/v1/livez");
         lastStatus = resp.status();
         if (resp.ok()) {
           return;
@@ -221,21 +241,29 @@ async function waitForLivez(url: string, timeoutMs: number): Promise<void> {
       }
       await delay(150);
     }
-    throw new Error(`executor binary livez at ${url} never returned 2xx within ${timeoutMs}ms (last status=${String(lastStatus)}, last err=${String(lastErr)})`);
+    throw new Error(
+      `executor binary livez at ${url} never returned 2xx within ${timeoutMs}ms (last status=${String(lastStatus)}, last err=${String(lastErr)})`,
+    );
   } finally {
     await api.dispose();
   }
 }
 
-async function discoverExecutorId(probe: APIRequestContext, timeoutMs: number): Promise<string> {
+async function discoverExecutorId(
+  probe: APIRequestContext,
+  timeoutMs: number,
+): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let lastErr: unknown;
   while (Date.now() < deadline) {
     try {
-      const livez = await probe.get('/v1/livez');
+      const livez = await probe.get("/v1/livez");
       if (livez.ok()) {
         const body = (await livez.json()) as { executor_id?: unknown };
-        if (typeof body.executor_id === 'string' && body.executor_id.length > 0) {
+        if (
+          typeof body.executor_id === "string" &&
+          body.executor_id.length > 0
+        ) {
           return body.executor_id;
         }
       }
@@ -244,27 +272,32 @@ async function discoverExecutorId(probe: APIRequestContext, timeoutMs: number): 
     }
     await delay(100);
   }
-  throw new Error(`executor binary livez never exposed executor_id within ${timeoutMs}ms (last err=${String(lastErr)})`);
+  throw new Error(
+    `executor binary livez never exposed executor_id within ${timeoutMs}ms (last err=${String(lastErr)})`,
+  );
 }
 
-async function terminateProcess(proc: ChildProcess, timeoutMs: number): Promise<void> {
+async function terminateProcess(
+  proc: ChildProcess,
+  timeoutMs: number,
+): Promise<void> {
   if (proc.exitCode !== null || proc.signalCode !== null) {
     return;
   }
   const pid = proc.pid;
   let sigtermErr: Error | undefined;
   try {
-    if (typeof pid === 'number') {
-      process.kill(-pid, 'SIGTERM');
+    if (typeof pid === "number") {
+      process.kill(-pid, "SIGTERM");
     } else {
-      proc.kill('SIGTERM');
+      proc.kill("SIGTERM");
     }
   } catch (err) {
     sigtermErr = err instanceof Error ? err : new Error(String(err));
   }
   const exited = await new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => resolve(false), timeoutMs);
-    proc.once('exit', () => {
+    proc.once("exit", () => {
       clearTimeout(timer);
       resolve(true);
     });
@@ -274,39 +307,44 @@ async function terminateProcess(proc: ChildProcess, timeoutMs: number): Promise<
   }
   let sigkillErr: Error | undefined;
   try {
-    if (typeof pid === 'number') {
-      process.kill(-pid, 'SIGKILL');
+    if (typeof pid === "number") {
+      process.kill(-pid, "SIGKILL");
     } else {
-      proc.kill('SIGKILL');
+      proc.kill("SIGKILL");
     }
   } catch (err) {
     sigkillErr = err instanceof Error ? err : new Error(String(err));
   }
   const exitedAfterKill = await new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => resolve(false), 5_000);
-    proc.once('exit', () => {
+    proc.once("exit", () => {
       clearTimeout(timer);
       resolve(true);
     });
   });
   if (!exitedAfterKill) {
     const errs: Error[] = [
-      new Error(`executor binary refused to exit after SIGTERM (${timeoutMs}ms) and SIGKILL (5s)`),
+      new Error(
+        `executor binary refused to exit after SIGTERM (${timeoutMs}ms) and SIGKILL (5s)`,
+      ),
     ];
     if (sigtermErr) errs.push(sigtermErr);
     if (sigkillErr) errs.push(sigkillErr);
-    throw new AggregateError(errs, 'terminateProcess: executor binary did not exit');
+    throw new AggregateError(
+      errs,
+      "terminateProcess: executor binary did not exit",
+    );
   }
 }
 
 export async function startExecutorBinary(
   opts: ExecutorStartOptions = {},
 ): Promise<ExecutorHandles> {
-  const bindHost = opts.bindHost ?? '127.0.0.1';
+  const bindHost = opts.bindHost ?? "127.0.0.1";
   const bindPort = opts.bindPort ?? 0;
-  const isGoSource = ExecutorBinary.endsWith('.go');
-  const cmd = isGoSource ? 'go' : ExecutorBinary;
-  const args = isGoSource ? ['run', ExecutorBinary] : [];
+  const isGoSource = ExecutorBinary.endsWith(".go");
+  const cmd = isGoSource ? "go" : ExecutorBinary;
+  const args = isGoSource ? ["run", ExecutorBinary] : [];
   if (!isGoSource && !existsSync(ExecutorBinary)) {
     throw new Error(`executor binary missing at ${ExecutorBinary}`);
   }
@@ -314,16 +352,30 @@ export async function startExecutorBinary(
   // Future-facing startup options. v0001 ignores every entry that is
   // not part of the v0001 surface; v0002 will read them at startup.
   const v0002Options: Record<string, string> = {};
-  if (opts.registryUrl) v0002Options['EXECUTOR_STATE_REGISTRY_URL'] = opts.registryUrl;
-  if (opts.scope) v0002Options['EXECUTOR_SCOPE'] = opts.scope;
-  if (opts.teamId) v0002Options['EXECUTOR_TEAM_ID'] = opts.teamId;
-  if (opts.authorizedTag) v0002Options['EXECUTOR_AUTHORIZED_TAG'] = opts.authorizedTag;
-  if (opts.localImage) v0002Options['EXECUTOR_LOCAL_IMAGE'] = opts.localImage;
-  if (typeof opts.maxContainers === 'number') {
-    v0002Options['EXECUTOR_MAX_CONTAINERS'] = String(opts.maxContainers);
+  if (opts.registryUrl)
+    v0002Options["EXECUTOR_STATE_REGISTRY_URL"] = opts.registryUrl;
+  if (opts.registryTLSClientCertPath) {
+    v0002Options["EXECUTOR_STATE_REGISTRY_TLS_CLIENT_CERT"] =
+      opts.registryTLSClientCertPath;
   }
-  if (typeof opts.pollIntervalMs === 'number') {
-    v0002Options['EXECUTOR_POLL_INTERVAL'] = `${opts.pollIntervalMs}ms`;
+  if (opts.registryTLSClientKeyPath) {
+    v0002Options["EXECUTOR_STATE_REGISTRY_TLS_CLIENT_KEY"] =
+      opts.registryTLSClientKeyPath;
+  }
+  if (opts.registryTLSServerCAPath) {
+    v0002Options["EXECUTOR_STATE_REGISTRY_TLS_SERVER_CA"] =
+      opts.registryTLSServerCAPath;
+  }
+  if (opts.scope) v0002Options["EXECUTOR_SCOPE"] = opts.scope;
+  if (opts.teamId) v0002Options["EXECUTOR_TEAM_ID"] = opts.teamId;
+  if (opts.authorizedTag)
+    v0002Options["EXECUTOR_AUTHORIZED_TAG"] = opts.authorizedTag;
+  if (opts.localImage) v0002Options["EXECUTOR_LOCAL_IMAGE"] = opts.localImage;
+  if (typeof opts.maxContainers === "number") {
+    v0002Options["EXECUTOR_MAX_CONTAINERS"] = String(opts.maxContainers);
+  }
+  if (typeof opts.pollIntervalMs === "number") {
+    v0002Options["EXECUTOR_POLL_INTERVAL"] = `${opts.pollIntervalMs}ms`;
   }
 
   const env: NodeJS.ProcessEnv = {
@@ -333,10 +385,12 @@ export async function startExecutorBinary(
     EXECUTOR_API_BIND: `${bindHost}:${String(bindPort)}`,
     // v0001 surface that v0001 already honours; preserved so the
     // binary boots with predictable defaults while we wait for v0002.
-    ROUTING_TARGET: opts.authorizedTag ?? 'openhands',
-    DOCKER_SOCKET_PATH: opts.dockerSocket ?? process.env['FLOWAI_DOCKER_SOCKET'] ?? '',
-    OPENHANDS_IMAGE: opts.openHandsImage ?? opts.localImage ?? '',
-    OPENHANDS_AGENT_PROFILE_ID: process.env['OPENHANDS_AGENT_PROFILE_ID'] ?? 'flowai-default',
+    ROUTING_TARGET: opts.authorizedTag ?? "openhands",
+    DOCKER_SOCKET_PATH:
+      opts.dockerSocket ?? process.env["FLOWAI_DOCKER_SOCKET"] ?? "",
+    OPENHANDS_IMAGE: opts.openHandsImage ?? opts.localImage ?? "",
+    OPENHANDS_AGENT_PROFILE_ID:
+      process.env["OPENHANDS_AGENT_PROFILE_ID"] ?? "flowai-default",
     EXECUTOR_POLL_INTERVAL: `${opts.pollIntervalMs ?? 1_000}ms`,
     // Surface all future-facing options verbatim so the binary can pick
     // them up once the v0002 client implementation lands.
@@ -344,20 +398,24 @@ export async function startExecutorBinary(
   };
 
   const proc = spawn(cmd, args, {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ["ignore", "pipe", "pipe"],
     env,
     detached: true,
   });
   const capture = { chunks: [] as string[], bytes: 0, cap: CaptureMaxBytes };
   const onChunk = (b: Buffer): void => {
-    pushBounded(capture, sanitize(b.toString('utf-8')));
+    pushBounded(capture, sanitize(b.toString("utf-8")));
   };
-  proc.stdout?.on('data', onChunk);
-  proc.stderr?.on('data', onChunk);
+  proc.stdout?.on("data", onChunk);
+  proc.stderr?.on("data", onChunk);
 
   let resolvedBindPort: number;
   try {
-    resolvedBindPort = await discoverBindPort(proc, capture, DefaultStartupTimeoutMs);
+    resolvedBindPort = await discoverBindPort(
+      proc,
+      capture,
+      DefaultStartupTimeoutMs,
+    );
   } catch (err) {
     await terminateProcess(proc, 1_000).catch(() => undefined);
     throw err;
@@ -389,7 +447,7 @@ export async function startExecutorBinary(
     executorId,
     v0002Options: Object.freeze({ ...v0002Options }),
     redactedLogs(): string {
-      return capture.chunks.join('');
+      return capture.chunks.join("");
     },
     async teardown(): Promise<void> {
       if (teardownStarted) return;
@@ -408,5 +466,5 @@ export async function startExecutorBinary(
 }
 
 export function uniqueExecutorId(): string {
-  return `exec-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+  return `exec-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
 }

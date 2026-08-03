@@ -206,9 +206,9 @@ func assertCrossTeamRejections(t *testing.T, db *sql.DB) {
 		resolved_image = $1::jsonb, image_source = 'team_default', claimed_at = now()
 		WHERE task_id = 'task-a'`, testImage)
 	mustExec(t, db, `INSERT INTO environment_definitions
-		(environment_id, team_id, task_id, name) VALUES ('env-a', 'team-a', 'task-a', 'Environment A')`)
+		(environment_id, team_id, parent_task_id, name) VALUES ('env-a', 'team-a', 'task-a', 'Environment A')`)
 	mustReject(t, db, "environment with foreign parent task", `INSERT INTO environment_definitions
-		(environment_id, team_id, task_id, name) VALUES ('env-bad', 'team-b', 'task-a', 'Bad Environment')`)
+		(environment_id, team_id, parent_task_id, name) VALUES ('env-bad', 'team-b', 'task-a', 'Bad Environment')`)
 	mustExec(t, db, `INSERT INTO secrets
 		(secret_id, team_id, environment_id, name) VALUES ('secret-a', 'team-a', 'env-a', 'Secret A')`)
 	mustReject(t, db, "secret with foreign environment", `INSERT INTO secrets
@@ -220,6 +220,12 @@ func assertCrossTeamRejections(t *testing.T, db *sql.DB) {
 	mustReject(t, db, "task event with foreign team", `INSERT INTO task_events
 		(event_id, team_id, task_id, executor_id, event_type, occurred_at)
 		VALUES ('event-bad', 'team-b', 'task-a', 'exec-a', 'created', now())`)
+	mustReject(t, db, "task event with foreign executor", `INSERT INTO task_events
+		(event_id, team_id, task_id, executor_id, event_type, occurred_at)
+		VALUES ('event-foreign-executor', 'team-a', 'task-a', 'exec-b', 'created', now())`)
+	mustReject(t, db, "task event without executor", `INSERT INTO task_events
+		(event_id, team_id, task_id, executor_id, event_type, occurred_at)
+		VALUES ('event-null-executor', 'team-a', 'task-a', NULL, 'created', now())`)
 	mustReject(t, db, "executor self event with foreign team", `INSERT INTO executor_events
 		(event_id, executor_id, team_id, event_type, occurred_at)
 		VALUES ('self-bad', 'exec-a', 'team-b', 'healthy', now())`)
@@ -229,6 +235,12 @@ func assertCrossTeamRejections(t *testing.T, db *sql.DB) {
 	mustReject(t, db, "system executor self event with team", `INSERT INTO executor_events
 		(event_id, executor_id, team_id, event_type, occurred_at)
 		VALUES ('self-system-team', 'exec-system', 'team-a', 'healthy', now())`)
+	mustExec(t, db, `INSERT INTO tasks
+		(task_id, team_id, source_system_id, source_id, task_type_id, required_tag, payload)
+		VALUES ('task-b', 'team-b', 'source-b', 'external-b-task', 'type-b', 'tag-b', '{}'::jsonb)`)
+	mustReject(t, db, "team executor self event with foreign task", `INSERT INTO executor_events
+		(event_id, executor_id, team_id, task_id, event_type, occurred_at)
+		VALUES ('self-foreign-task', 'exec-a', 'team-a', 'task-b', 'healthy', now())`)
 	mustReject(t, db, "control with foreign task", `INSERT INTO task_control_requests
 		(control_id, team_id, task_id, operator_id, action, idempotency_key)
 		VALUES ('control-bad', 'team-b', 'task-a', 'operator-b', 'cancel', 'idem-b')`)

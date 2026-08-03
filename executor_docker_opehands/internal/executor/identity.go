@@ -91,7 +91,7 @@ func loadOrCreateCleanupID(path string) (string, error) {
 	}
 	id := "cleanup-" + uuid.NewString()
 	if err := writeCleanupIDFile(path, id); err != nil {
-		return id, nil
+		return id, nil //nolint:nilerr // Persistence failure falls back to a transient ID.
 	}
 	return id, nil
 }

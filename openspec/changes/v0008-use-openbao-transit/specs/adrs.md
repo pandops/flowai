@@ -64,9 +64,12 @@ and route every secret write and read through the new
 interface. The v0002 HTTP paths, JSON shapes, FIFO claim,
 lifecycle, image precedence, scope-token wire format, and team
 authorization rules (including the `scope = system` support for
-assigned Executors) are unchanged. The canonical
-`associated_data` binding for both providers is the
-byte-identical `team_id + logical_secret_id + version` triple;
+assigned Executors) are unchanged. Both providers bind the
+canonical `team_id + logical_secret_id + version` triple, but
+their byte formats are versioned: v0002 local rows use
+`{team_id}\x00{secret_id}\x00{decimal_version}` and v0008
+Transit rows use
+`team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n`;
 the State Registry does NOT add a `provider_marker` to
 `associated_data` because routing is decided by the persisted
 `crypto_provider` column on the row, not by any authenticated
@@ -79,9 +82,9 @@ OpenBao 2.6 public API does not expose a configurable
 
 - Every encrypted secret continues to bind team identifier,
   logical secret identifier, and secret version in the
-  active provider's `associated_data`; the binding becomes
-  the contract seam. Both providers accept the same byte
-  string for the same canonical input triple.
+  active provider's `associated_data`; the canonical identity
+  triple is the contract seam. Migration decrypts with the
+  v0002 legacy bytes and encrypts with the v0008 active bytes.
 - The State Registry resolves the opaque `key_id` to a
   `(mount_path, key_name)` pair through a deployment-time
   runtime configuration rather than a PostgreSQL lookup
@@ -91,7 +94,7 @@ OpenBao 2.6 public API does not expose a configurable
   dependency with documented key configuration, ACLs, mTLS,
   and rotation.
 - The Registry expects the same single non-revealing `404
-  environment_unknown_or_unavailable` shape to cover every
+environment_unknown_or_unavailable` shape to cover every
   provider failure class; provider outages do not propagate
   to clients.
 - Local ciphertext written by v0002 requires a separate
@@ -170,13 +173,14 @@ considered:
    `state-registry` deployment boundary that joins
    `secret_versions` to the canonical `secrets` parent,
    derives the canonical `team_id` from the parent,
-   decrypts locally, encrypts through Transit with the
-   canonical `associated_data` byte string, atomically
+   decrypts locally with the v0002 legacy `associated_data`
+   bytes, encrypts through Transit with the v0008 active bytes,
+   atomically
    rewrites ONLY the cryptographic envelope columns of the
    row in one transaction under row-level lock, and appends
    the durable per-row checkpoint and audit entry. The
    reconciliation key is `(migration_name, team_id,
-   secret_id, version)` so `secret_id` is NOT assumed to be
+secret_id, version)` so `secret_id` is NOT assumed to be
    globally unique across teams.
 
 The v0002 contract declares that no Executor may start a
@@ -210,9 +214,9 @@ rows in deterministic batches joined to the canonical
 exists with the same `team_id` and that the row's persisted
 `(secret_id, version)` still resolves on that parent, claims
 the per-row checkpoint under row-level lock, decrypts
-through the local provider with the canonical `associated_data`
-byte string, encrypts through the active provider with the
-same canonical byte string, and in one transaction that
+through the local provider with the v0002 legacy
+`associated_data` byte string, encrypts through the active
+provider with the v0008 active byte string, and in one
 holds a row-level lock on both the `crypto_migration_checkpoints`
 row keyed by `(migration_name, team_id, secret_id, version)`
 and the targeted `secret_versions` row, rewrites ONLY the
@@ -256,7 +260,7 @@ the per-row checkpoint table is the worker-idle proof.
   per-row state proves verification for every immutable
   secret version rather than collapsing it into a single
   boolean; the composite key `(migration_name, team_id,
-  secret_id, version)` does NOT assume `secret_id` is
+secret_id, version)` does NOT assume `secret_id` is
   globally unique across teams.
 - The logical secret identity (`secret_id`, `version`) and
   the canonical `secrets` parent's team ownership are
@@ -266,6 +270,14 @@ the per-row checkpoint table is the worker-idle proof.
   and readers see either the complete old envelope or the
   complete new envelope of any row because every rewrite
   runs in one transaction under a row-level lock.
+- v0008 replaces v0002's unconditional
+  `secret_versions_append_only` UPDATE/DELETE trigger with a
+  migration-aware envelope-CAS UPDATE guard and an unconditional
+  DELETE guard. Only the five documented envelope columns may
+  change, and only under the matching locked `in_progress`
+  checkpoint plus transaction-local migration authorization
+  marker; identity changes, unclaimed updates, and every delete
+  remain rejected.
 - The cutover procedure is the only path that disables the
   local provider; the worker never disables it implicitly.
 - The cutover procedure does not decrypt arbitrary Transit
@@ -291,6 +303,12 @@ the per-row checkpoint table is the worker-idle proof.
 - `openspec/changes/v0008-use-openbao-transit/specs/state-registry/spec.md`
   — migration requirement, durable per-row checkpoint
   requirement, and cutover consistency-scan requirement.
+- `state-registry/internal/store/secrets.go` and
+  `state-registry/internal/store/scope_tokens.go` — v0002 legacy
+  NUL-delimited AAD construction.
+- `state-registry/internal/migrations/sql/00001_initial_schema.sql`
+  — v0002 `secret_versions_append_only` trigger replaced by this
+  change.
 
 ## ADR: Rotate new writes to a new Transit key version while retaining historical AAD-bound key versions; do not rewrap AAD-bound ciphertext
 

@@ -5,8 +5,8 @@
   "description": "API-only Playwright suite that drives the real state-registry Go process against an ephemeral postgres:16 container.",
   "type": "commonjs",
   "scripts": {
-    "test": "playwright test",
-    "test:report": "playwright show-report playwright-report"
+    "test": "env -u GOROOT playwright test",
+    "test:report": "playwright show-report ../reports/api/state-registry"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

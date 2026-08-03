@@ -4,14 +4,21 @@
 // the binary to a temp file, starting the worker with opts.binary
 // pointing at the temp path, exercising start + teardown, and
 // confirming the cleanup removes the temp file.
-import { test, expect } from '@playwright/test';
-import { mkdtempSync, existsSync, statSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { startRegistryWorker } from '../fixtures/registry_worker';
+import { test, expect } from "@playwright/test";
+import {
+  mkdtempSync,
+  existsSync,
+  statSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { startRegistryWorker } from "../fixtures/registry_worker";
 
-const repoRoot = join(__dirname, '..', '..', '..');
+const repoRoot = join(__dirname, "..", "..", "..");
 
 interface BuildArtifacts {
   binaryPath: string;
@@ -19,11 +26,20 @@ interface BuildArtifacts {
 }
 
 function buildCompiledBinary(): BuildArtifacts {
-  const tmpDir = mkdtempSync(join(tmpdir(), 'state-registry-bin-'));
-  const binaryPath = join(tmpDir, 'state-registry');
-  execFileSync('go', ['build', '-o', binaryPath, join(repoRoot, 'state-registry', 'cmd', 'state-registry')], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const tmpDir = mkdtempSync(join(tmpdir(), "state-registry-bin-"));
+  const binaryPath = join(tmpDir, "state-registry");
+  execFileSync(
+    "go",
+    [
+      "build",
+      "-tags",
+      "state_registry_test_harness",
+      "-o",
+      binaryPath,
+      join(repoRoot, "state-registry", "cmd", "state-registry"),
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
   if (!existsSync(binaryPath)) {
     throw new Error(`compiled binary missing at ${binaryPath}`);
   }
@@ -34,13 +50,16 @@ function buildCompiledBinary(): BuildArtifacts {
   return { binaryPath, tmpDir };
 }
 
-test.describe('compiled-binary regression', () => {
-  test('startRegistryWorker with opts.binary executes the compiled binary directly (not go run)', async () => {
+test.describe("compiled-binary regression", () => {
+  test("startRegistryWorker with opts.binary executes the compiled binary directly (not go run)", async () => {
     const artifacts = buildCompiledBinary();
     try {
       const sentinel = `sentinel-${Date.now()}`;
-      writeFileSync(join(artifacts.tmpDir, 'sentinel.txt'), sentinel);
-      const sentinelBefore = readFileSync(join(artifacts.tmpDir, 'sentinel.txt'), 'utf-8');
+      writeFileSync(join(artifacts.tmpDir, "sentinel.txt"), sentinel);
+      const sentinelBefore = readFileSync(
+        join(artifacts.tmpDir, "sentinel.txt"),
+        "utf-8",
+      );
       expect(sentinelBefore).toBe(sentinel);
 
       const w = await startRegistryWorker({ binary: artifacts.binaryPath });
@@ -65,7 +84,10 @@ test.describe('compiled-binary regression', () => {
       // are gone, but the compiled binary file (owned by the test)
       // is still present.
       expect(existsSync(artifacts.binaryPath)).toBe(true);
-      const sentinelAfter = readFileSync(join(artifacts.tmpDir, 'sentinel.txt'), 'utf-8');
+      const sentinelAfter = readFileSync(
+        join(artifacts.tmpDir, "sentinel.txt"),
+        "utf-8",
+      );
       expect(sentinelAfter).toBe(sentinel);
     } finally {
       rmSync(artifacts.tmpDir, { recursive: true, force: true });

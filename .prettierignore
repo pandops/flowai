@@ -1,0 +1,4 @@
+node_modules/
+autotest/reports/
+openspec/changes/archive/
+*.puml

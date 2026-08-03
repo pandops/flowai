@@ -110,13 +110,14 @@ func executorIdentityHeaders(role, teamID, executorID, requestID string) http.He
 // reaches the 501 / 200 boundary under test while the rejection
 // cases observe a clean zero-call counter on the read path.
 type executorRepo struct {
-	mu             sync.Mutex
-	teamExists     bool
-	executors      map[string]platform.Executor
-	teamExistsHits atomic.Int64
-	teamCalls      atomic.Int64
-	srcCalls       atomic.Int64
-	typeCalls      atomic.Int64
+	mu               sync.Mutex
+	teamExists       bool
+	executors        map[string]platform.Executor
+	teamExistsHits   atomic.Int64
+	registrationHits atomic.Int64
+	teamCalls        atomic.Int64
+	srcCalls         atomic.Int64
+	typeCalls        atomic.Int64
 }
 
 var _ store.AdminRepository = (*executorRepo)(nil)
@@ -150,6 +151,7 @@ func (r *executorRepo) TeamExists(_ context.Context, _ string) (bool, error) {
 }
 
 func (r *executorRepo) RegisterExecutor(_ context.Context, executorID string, req platform.ExecutorRegistrationRequest, identity platform.ExecutorIdentity) (platform.Executor, error) {
+	r.registrationHits.Add(1)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.executors[executorID]; ok {
@@ -209,14 +211,23 @@ func (r *executorRepo) DiscoverExecutorTasks(_ context.Context, executorID, tag 
 	}}, nil
 }
 
+func (r *executorRepo) ClaimTask(context.Context, platform.ClaimRequest, string, platform.ExecutorIdentity) (platform.ClaimResponse, error) {
+	return platform.ClaimResponse{}, store.ErrExecutorNotFound
+}
+
+func (r *executorRepo) GetTask(_ context.Context, teamID, taskID string) (platform.TaskListEntry, error) {
+	return platform.TaskListEntry{}, store.ErrTaskUnknown
+}
+
 func sameTestTeam(left, right *string) bool {
 	return (left == nil && right == nil) || (left != nil && right != nil && *left == *right)
 }
 
-func (r *executorRepo) teamExistsReads() int64 { return r.teamExistsHits.Load() }
-func (r *executorRepo) teamCreates() int64     { return r.teamCalls.Load() }
-func (r *executorRepo) srcCreates() int64      { return r.srcCalls.Load() }
-func (r *executorRepo) typeCreates() int64     { return r.typeCalls.Load() }
+func (r *executorRepo) teamExistsReads() int64   { return r.teamExistsHits.Load() }
+func (r *executorRepo) registrationCalls() int64 { return r.registrationHits.Load() }
+func (r *executorRepo) teamCreates() int64       { return r.teamCalls.Load() }
+func (r *executorRepo) srcCreates() int64        { return r.srcCalls.Load() }
+func (r *executorRepo) typeCreates() int64       { return r.typeCalls.Load() }
 
 // executorHarness wires the production Routes constructor in test mode
 // behind executorRepo so every pre-persistence rejection can assert
@@ -312,13 +323,13 @@ type executorPutBody struct {
 	RuntimeMetadata map[string]any `json:"runtime_metadata"`
 }
 
-func validTeamRegistrationBody(teamID, tag string) executorPutBody {
+func validTeamRegistrationBody(executorID, teamID, tag string) executorPutBody {
 	team := teamID
 	return executorPutBody{
 		Scope:           "team",
 		TeamID:          &team,
 		ExecutorType:    "executor_docker_opehands",
-		Identity:        "identity-" + teamID,
+		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,
@@ -326,12 +337,12 @@ func validTeamRegistrationBody(teamID, tag string) executorPutBody {
 	}
 }
 
-func validSystemRegistrationBody(tag string) executorPutBody {
+func validSystemRegistrationBody(executorID, tag string) executorPutBody {
 	return executorPutBody{
 		Scope:           "system",
 		TeamID:          nil,
 		ExecutorType:    "executor_docker_opehands",
-		Identity:        "identity-system-" + tag,
+		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,
@@ -376,6 +387,8 @@ var taskSummaryDocumentedFields = []string{
 // envelope code, or the missing pre-rejection short-circuit does not
 // match the documented Section 5 contract.
 func TestExecutorTeamRegistration(t *testing.T) {
+	const execID = "exec-section5-team"
+
 	tests := []struct {
 		name           string
 		authTeamID     string
@@ -388,7 +401,7 @@ func TestExecutorTeamRegistration(t *testing.T) {
 			name:       "valid existing team returns canonical Executor",
 			authTeamID: "team-a",
 			body: func() ([]byte, executorPutBody) {
-				b := validTeamRegistrationBody("team-a", "openhands")
+				b := validTeamRegistrationBody(execID, "team-a", "openhands")
 				return marshalExecutorBody(t, b), b
 			},
 			wantStatus:     http.StatusOK,
@@ -398,7 +411,7 @@ func TestExecutorTeamRegistration(t *testing.T) {
 			name:       "missing identity X-FlowAI-Team-Id rejected before team lookup",
 			authTeamID: "",
 			body: func() ([]byte, executorPutBody) {
-				b := validTeamRegistrationBody("team-a", "openhands")
+				b := validTeamRegistrationBody(execID, "team-a", "openhands")
 				return marshalExecutorBody(t, b), b
 			},
 			wantStatus:     http.StatusUnauthorized,
@@ -409,7 +422,7 @@ func TestExecutorTeamRegistration(t *testing.T) {
 			name:       "omitted body team_id rejected with 400 missing_team_id",
 			authTeamID: "team-a",
 			body: func() ([]byte, executorPutBody) {
-				b := validTeamRegistrationBody("team-a", "openhands")
+				b := validTeamRegistrationBody(execID, "team-a", "openhands")
 				b.TeamID = nil
 				return marshalExecutorBody(t, b), b
 			},
@@ -421,7 +434,7 @@ func TestExecutorTeamRegistration(t *testing.T) {
 			name:       "mismatched body and header team_id rejected",
 			authTeamID: "team-a",
 			body: func() ([]byte, executorPutBody) {
-				b := validTeamRegistrationBody("team-b", "openhands")
+				b := validTeamRegistrationBody(execID, "team-b", "openhands")
 				return marshalExecutorBody(t, b), b
 			},
 			wantStatus:     http.StatusForbidden,
@@ -436,7 +449,6 @@ func TestExecutorTeamRegistration(t *testing.T) {
 			h := newExecutorHarness(t)
 			h.repo.setTeamExists(true)
 
-			const execID = "exec-section5-team"
 			body, _ := tc.body()
 			headers := executorIdentityHeaders(executorRoleTeam, tc.authTeamID, execID, "req-section5-team")
 			resp, raw := h.put(t, execID, headers, body)
@@ -477,7 +489,7 @@ func TestExecutorTeamRegistration(t *testing.T) {
 		h := newExecutorHarness(t)
 		h.repo.setTeamExists(true)
 		const execID = "exec-canonical-shape"
-		body := marshalExecutorBody(t, validTeamRegistrationBody("team-a", "openhands"))
+		body := marshalExecutorBody(t, validTeamRegistrationBody(execID, "team-a", "openhands"))
 		headers := executorIdentityHeaders(executorRoleTeam, "team-a", execID, "req-canonical-shape")
 		resp, raw := h.put(t, execID, headers, body)
 		if resp.StatusCode != http.StatusOK {
@@ -517,11 +529,10 @@ func TestExecutorTeamRegistration(t *testing.T) {
 		const execID = "exec-team-reregister"
 		headers := executorIdentityHeaders(executorRoleTeam, "team-a", execID, "req-section5-team-reregister")
 		// Seed the prior registration (today: 501).
-		firstBody := marshalExecutorBody(t, validTeamRegistrationBody("team-a", "openhands"))
-		if _, _ = h.put(t, execID, headers, firstBody); false {
-		}
+		firstBody := marshalExecutorBody(t, validTeamRegistrationBody(execID, "team-a", "openhands"))
+		_, _ = h.put(t, execID, headers, firstBody)
 		// Attempt to re-register against a different team.
-		secondBody := marshalExecutorBody(t, validTeamRegistrationBody("team-b", "openhands"))
+		secondBody := marshalExecutorBody(t, validTeamRegistrationBody(execID, "team-b", "openhands"))
 		secondHeaders := executorIdentityHeaders(executorRoleTeam, "team-b", execID, "req-section5-team-reregister-2")
 		resp, raw := h.put(t, execID, secondHeaders, secondBody)
 		if resp.StatusCode != http.StatusBadRequest {
@@ -548,6 +559,8 @@ func TestExecutorTeamRegistration(t *testing.T) {
 // persistence). The happy path currently fails the existing guard's
 // role check (returns 403 not_authorized).
 func TestSystemExecutorRegistration(t *testing.T) {
+	const execID = "exec-section5-system"
+
 	tests := []struct {
 		name       string
 		body       func(t *testing.T) []byte
@@ -557,14 +570,14 @@ func TestSystemExecutorRegistration(t *testing.T) {
 		{
 			name: "scope=system with team_id=null accepted",
 			body: func(t *testing.T) []byte {
-				return marshalExecutorBody(t, validSystemRegistrationBody("openhands"))
+				return marshalExecutorBody(t, validSystemRegistrationBody(execID, "openhands"))
 			},
 			wantStatus: http.StatusOK,
 		},
 		{
 			name: "scope=system with non-null body team_id rejected",
 			body: func(t *testing.T) []byte {
-				b := validSystemRegistrationBody("openhands")
+				b := validSystemRegistrationBody(execID, "openhands")
 				team := "team-a"
 				b.TeamID = &team
 				return marshalExecutorBody(t, b)
@@ -577,7 +590,7 @@ func TestSystemExecutorRegistration(t *testing.T) {
 			body: func(t *testing.T) []byte {
 				payload := map[string]any{
 					"scope": "system", "executor_type": "executor_docker_opehands",
-					"identity": "identity-system", "authorized_tag": "openhands",
+					"identity": execID, "authorized_tag": "openhands",
 					"max_capacity": 4, "running_count": 0, "runtime_metadata": map[string]any{},
 				}
 				raw, err := json.Marshal(payload)
@@ -596,7 +609,6 @@ func TestSystemExecutorRegistration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newExecutorHarness(t)
 			h.repo.setTeamExists(true)
-			const execID = "exec-section5-system"
 			body := tc.body(t)
 			headers := executorIdentityHeaders(executorRoleSystem, "", execID, "req-section5-system")
 			resp, raw := h.put(t, execID, headers, body)
@@ -627,7 +639,7 @@ func TestSystemExecutorRegistration(t *testing.T) {
 		h := newExecutorHarness(t)
 		h.repo.setTeamExists(true)
 		const execID = "exec-system-canonical"
-		body := marshalExecutorBody(t, validSystemRegistrationBody("openhands"))
+		body := marshalExecutorBody(t, validSystemRegistrationBody(execID, "openhands"))
 		headers := executorIdentityHeaders(executorRoleSystem, "", execID, "req-system-canonical")
 		resp, raw := h.put(t, execID, headers, body)
 		if resp.StatusCode != http.StatusOK {
@@ -644,6 +656,60 @@ func TestSystemExecutorRegistration(t *testing.T) {
 			t.Errorf("response team_id=%v, want null (system scope)", got["team_id"])
 		}
 	})
+}
+
+func TestExecutorRegistrationIdentityMismatch(t *testing.T) {
+	const execID = "exec-authenticated"
+
+	tests := []struct {
+		name   string
+		role   string
+		teamID string
+		body   func() executorPutBody
+	}{
+		{
+			name:   "team-owned Executor",
+			role:   executorRoleTeam,
+			teamID: "team-a",
+			body: func() executorPutBody {
+				body := validTeamRegistrationBody(execID, "team-a", "openhands")
+				body.Identity = "exec-other"
+				return body
+			},
+		},
+		{
+			name: "system-owned Executor",
+			role: executorRoleSystem,
+			body: func() executorPutBody {
+				body := validSystemRegistrationBody(execID, "openhands")
+				body.Identity = "exec-other"
+				return body
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newExecutorHarness(t)
+			const executorID = "exec-authenticated"
+			headers := executorIdentityHeaders(tc.role, tc.teamID, executorID, "req-identity-mismatch")
+
+			resp, raw := h.put(t, executorID, headers, marshalExecutorBody(t, tc.body()))
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("status=%d, want 403; body=%s", resp.StatusCode, raw)
+			}
+			env := decodeErrorEnvelope(t, raw)
+			if env.Code != "not_authorized" {
+				t.Errorf("error code=%q, want %q; body=%s", env.Code, "not_authorized", raw)
+			}
+			if got := h.repo.teamExistsReads(); got != 0 {
+				t.Errorf("team lookups=%d, want 0", got)
+			}
+			if got := h.repo.registrationCalls(); got != 0 {
+				t.Errorf("registration repository calls=%d, want 0", got)
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +730,8 @@ func TestSystemExecutorRegistration(t *testing.T) {
 // invalid_request (the test asserts the documented envelope code so
 // the RED is behavior-specific, not a generic mismatch).
 func TestRegistrationTagCount(t *testing.T) {
+	const execID = "exec-tag-count"
+
 	type bodyFn func(t *testing.T) []byte
 
 	cases := []struct {
@@ -675,7 +743,7 @@ func TestRegistrationTagCount(t *testing.T) {
 		{
 			name: "omitted authorized_tag rejected with 400 invalid_tag_count",
 			body: func(t *testing.T) []byte {
-				b := validTeamRegistrationBody("team-a", "openhands")
+				b := validTeamRegistrationBody(execID, "team-a", "openhands")
 				b.AuthorizedTag = ""
 				return marshalExecutorBody(t, b)
 			},
@@ -685,7 +753,7 @@ func TestRegistrationTagCount(t *testing.T) {
 		{
 			name: "JSON array of one tag rejected with 400 invalid_tag_count",
 			body: func(t *testing.T) []byte {
-				return injectTagArray(t, validTeamRegistrationBody("team-a", "openhands"), []string{"openhands"})
+				return injectTagArray(t, validTeamRegistrationBody(execID, "team-a", "openhands"), []string{"openhands"})
 			},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_tag_count",
@@ -693,7 +761,7 @@ func TestRegistrationTagCount(t *testing.T) {
 		{
 			name: "JSON array of two tags rejected with 400 invalid_tag_count",
 			body: func(t *testing.T) []byte {
-				return injectTagArray(t, validTeamRegistrationBody("team-a", "openhands"),
+				return injectTagArray(t, validTeamRegistrationBody(execID, "team-a", "openhands"),
 					[]string{"openhands", "k8s"})
 			},
 			wantStatus: http.StatusBadRequest,
@@ -702,7 +770,7 @@ func TestRegistrationTagCount(t *testing.T) {
 		{
 			name: "JSON array of three tags rejected with 400 invalid_tag_count",
 			body: func(t *testing.T) []byte {
-				return injectTagArray(t, validTeamRegistrationBody("team-a", "openhands"),
+				return injectTagArray(t, validTeamRegistrationBody(execID, "team-a", "openhands"),
 					[]string{"openhands", "k8s", "shell"})
 			},
 			wantStatus: http.StatusBadRequest,
@@ -715,7 +783,6 @@ func TestRegistrationTagCount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newExecutorHarness(t)
 			h.repo.setTeamExists(true)
-			const execID = "exec-tag-count"
 			body := tc.body(t)
 			headers := executorIdentityHeaders(executorRoleTeam, "team-a", execID, "req-section5-tag-count")
 			resp, raw := h.put(t, execID, headers, body)
@@ -737,14 +804,14 @@ func TestRegistrationTagCount(t *testing.T) {
 // injectTagArray rewrites the supplied body so that authorized_tag is
 // emitted as a JSON array of the supplied tags (overriding the typed
 // string shape). The strict decoder MUST reject every array form.
-func injectTagArray(t *testing.T, _ executorPutBody, tags []string) []byte {
+func injectTagArray(t *testing.T, body executorPutBody, tags []string) []byte {
 	t.Helper()
 	team := "team-a"
 	payload := map[string]any{
 		"scope":            "team",
 		"team_id":          team,
 		"executor_type":    "executor_docker_opehands",
-		"identity":         "identity-multitag",
+		"identity":         body.Identity,
 		"authorized_tag":   tags,
 		"max_capacity":     1,
 		"running_count":    0,
@@ -770,6 +837,8 @@ func injectTagArray(t *testing.T, _ executorPutBody, tags []string) []byte {
 // against the documented `invalid_scope` and `scope_change_forbidden`
 // envelopes is RED.
 func TestRegistrationScopeDiscriminator(t *testing.T) {
+	const execID = "exec-scope-discriminator"
+
 	tests := []struct {
 		name       string
 		body       func(t *testing.T) []byte
@@ -779,7 +848,7 @@ func TestRegistrationScopeDiscriminator(t *testing.T) {
 		{
 			name: "scope outside team/system rejected with 400 invalid_scope",
 			body: func(t *testing.T) []byte {
-				b := validTeamRegistrationBody("team-a", "openhands")
+				b := validTeamRegistrationBody(execID, "team-a", "openhands")
 				b.Scope = "global"
 				return marshalExecutorBody(t, b)
 			},
@@ -789,7 +858,7 @@ func TestRegistrationScopeDiscriminator(t *testing.T) {
 		{
 			name: "missing scope rejected with 400 invalid_scope",
 			body: func(t *testing.T) []byte {
-				b := validTeamRegistrationBody("team-a", "openhands")
+				b := validTeamRegistrationBody(execID, "team-a", "openhands")
 				b.Scope = ""
 				return marshalExecutorBody(t, b)
 			},
@@ -799,7 +868,7 @@ func TestRegistrationScopeDiscriminator(t *testing.T) {
 		{
 			name: "re-registration scope change rejected without mutation",
 			body: func(t *testing.T) []byte {
-				b := validSystemRegistrationBody("openhands")
+				b := validSystemRegistrationBody(execID, "openhands")
 				return marshalExecutorBody(t, b)
 			},
 			wantStatus: http.StatusBadRequest,
@@ -812,9 +881,8 @@ func TestRegistrationScopeDiscriminator(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newExecutorHarness(t)
 			h.repo.setTeamExists(true)
-			const execID = "exec-scope-discriminator"
 			if tc.wantCode == "scope_change_forbidden" {
-				initial := validTeamRegistrationBody("team-a", "openhands")
+				initial := validTeamRegistrationBody(execID, "team-a", "openhands")
 				_, _ = h.put(t, execID,
 					executorIdentityHeaders(executorRoleTeam, "team-a", execID, "req-section5-scope-initial"),
 					marshalExecutorBody(t, initial),
@@ -854,7 +922,7 @@ func TestTeamTagFifoDiscovery(t *testing.T) {
 
 	const execID = "exec-team-discovery"
 	headers := executorIdentityHeaders(executorRoleTeam, "team-a", execID, "req-section5-team-discovery")
-	_, _ = h.put(t, execID, headers, marshalExecutorBody(t, validTeamRegistrationBody("team-a", "openhands")))
+	_, _ = h.put(t, execID, headers, marshalExecutorBody(t, validTeamRegistrationBody(execID, "team-a", "openhands")))
 
 	resp, raw := h.discover(t, execID, "openhands", headers)
 	if resp.StatusCode != http.StatusOK {
@@ -908,7 +976,7 @@ func TestSystemCrossTeamFifoDiscovery(t *testing.T) {
 
 	const execID = "exec-system-discovery"
 	headers := executorIdentityHeaders(executorRoleSystem, "", execID, "req-section5-system-discovery")
-	_, _ = h.put(t, execID, headers, marshalExecutorBody(t, validSystemRegistrationBody("openhands")))
+	_, _ = h.put(t, execID, headers, marshalExecutorBody(t, validSystemRegistrationBody(execID, "openhands")))
 
 	resp, raw := h.discover(t, execID, "openhands", headers)
 	if resp.StatusCode != http.StatusOK {
@@ -950,7 +1018,7 @@ func TestDiscoveryShape(t *testing.T) {
 
 	const execID = "exec-discovery-shape"
 	headers := executorIdentityHeaders(executorRoleTeam, "team-a", execID, "req-section5-discovery-shape")
-	_, _ = h.put(t, execID, headers, marshalExecutorBody(t, validTeamRegistrationBody("team-a", "openhands")))
+	_, _ = h.put(t, execID, headers, marshalExecutorBody(t, validTeamRegistrationBody(execID, "team-a", "openhands")))
 	resp, raw := h.discover(t, execID, "openhands", headers)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200 for discovery shape probe; body=%s", resp.StatusCode, raw)
@@ -1031,7 +1099,7 @@ func TestDiscoveryIgnoresCapacity(t *testing.T) {
 	// the documented "saturated" observation pair (0 / 10). Today
 	// the PUT returns 501; we only assert the eventual GET, which
 	// is the RED we care about.
-	putBody := validTeamRegistrationBody("team-a", "openhands")
+	putBody := validTeamRegistrationBody(execID, "team-a", "openhands")
 	putBody.MaxCapacity = 0
 	putBody.RunningCount = 10
 	_, _ = h.put(t, execID,

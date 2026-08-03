@@ -127,6 +127,7 @@ CREATE TABLE environment_definitions (
     environment_id text PRIMARY KEY,
     team_id text NOT NULL REFERENCES teams(team_id),
     task_id text,
+    parent_task_id text,
     project_id text,
     name text NOT NULL CHECK (length(btrim(name)) > 0),
     values jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -135,7 +136,8 @@ CREATE TABLE environment_definitions (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (team_id, environment_id),
-    FOREIGN KEY (team_id, task_id) REFERENCES tasks(team_id, task_id)
+    FOREIGN KEY (team_id, task_id) REFERENCES tasks(team_id, task_id),
+    FOREIGN KEY (team_id, parent_task_id) REFERENCES tasks(team_id, task_id)
 );
 
 CREATE TABLE secrets (
@@ -288,6 +290,7 @@ LANGUAGE plpgsql AS $$
 DECLARE
     executor_scope text;
     executor_team_id text;
+    task_team_id text;
 BEGIN
     SELECT scope, team_id
       INTO executor_scope, executor_team_id
@@ -301,6 +304,29 @@ BEGIN
     END IF;
     IF executor_scope = 'system' AND NEW.team_id IS NOT NULL THEN
         RAISE EXCEPTION 'system-owned executor event must carry a null team_id' USING ERRCODE = '23503';
+    END IF;
+    IF executor_scope = 'team' AND NEW.task_id IS NOT NULL THEN
+        SELECT team_id INTO task_team_id FROM tasks WHERE task_id = NEW.task_id;
+        IF FOUND AND task_team_id IS DISTINCT FROM executor_team_id THEN
+            RAISE EXCEPTION 'team-owned executor event task must share executor team_id' USING ERRCODE = '23503';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE FUNCTION validate_task_event_scope() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    executor_scope text;
+    executor_team_id text;
+BEGIN
+    SELECT scope, team_id
+      INTO executor_scope, executor_team_id
+      FROM executors
+     WHERE executor_id = NEW.executor_id;
+    IF FOUND AND executor_scope = 'team' AND NEW.team_id IS DISTINCT FROM executor_team_id THEN
+        RAISE EXCEPTION 'team-owned task event must share executor team_id' USING ERRCODE = '23503';
     END IF;
     RETURN NEW;
 END;
@@ -331,6 +357,8 @@ BEFORE UPDATE ON task_control_requests FOR EACH ROW EXECUTE FUNCTION protect_tea
 
 CREATE TRIGGER task_events_append_only
 BEFORE UPDATE OR DELETE ON task_events FOR EACH ROW EXECUTE FUNCTION reject_immutable_update();
+CREATE TRIGGER task_events_scope
+BEFORE INSERT ON task_events FOR EACH ROW EXECUTE FUNCTION validate_task_event_scope();
 CREATE TRIGGER executor_events_append_only
 BEFORE UPDATE OR DELETE ON executor_events FOR EACH ROW EXECUTE FUNCTION reject_immutable_update();
 CREATE TRIGGER executor_events_scope
@@ -362,6 +390,7 @@ DROP FUNCTION protect_task_update();
 DROP FUNCTION protect_team_update();
 DROP FUNCTION protect_team_owner_update();
 DROP FUNCTION validate_task_executor_ownership();
+DROP FUNCTION validate_task_event_scope();
 DROP FUNCTION validate_executor_event_scope();
 DROP FUNCTION reject_immutable_update();
 

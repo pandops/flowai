@@ -294,7 +294,7 @@ type routedListenerRepo struct {
 	*recordingListenerRepo
 }
 
-func TestRoutesMountsListenerOnlyInTestMode(t *testing.T) {
+func TestRoutesMountsListenerInProductionAndTestMode(t *testing.T) {
 	repo := &routedListenerRepo{
 		recordingAdminRepo:    &recordingAdminRepo{},
 		recordingListenerRepo: newRecordingListenerRepo(),
@@ -305,12 +305,22 @@ func TestRoutesMountsListenerOnlyInTestMode(t *testing.T) {
 	headers := listenerAuthHeaders("team-a", "source-system-a", "listener-identity-a", "req-route")
 
 	for _, tc := range []struct {
-		name       string
-		testMode   bool
-		wantStatus int
+		name        string
+		testMode    bool
+		skipHeaders bool
+		wantStatus  int
 	}{
+		// Test mode trusts X-FlowAI-* identity headers; the
+		// listener adapter persists the task.
 		{name: "test mode mounts listener adapter", testMode: true, wantStatus: http.StatusCreated},
-		{name: "production mode remains fail closed", testMode: false, wantStatus: http.StatusNotFound},
+		// Production mode mounts the listener adapter too (the
+		// verified peer-cert identity is the production auth
+		// source via cmd/state-registry/main.go's
+		// `withPeerIdentity` middleware). With no verified peer
+		// identity present, the listener's
+		// `requireListenerIdentity` middleware rejects with 401
+		// BEFORE any repository call.
+		{name: "production mode rejects without identity", testMode: false, skipHeaders: true, wantStatus: http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			handler := httpapi.Routes("state-registry", "", logger, ready, httpapi.NewDecryptOps(), tc.testMode, repo)
@@ -321,7 +331,9 @@ func TestRoutesMountsListenerOnlyInTestMode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build request: %v", err)
 			}
-			req.Header = headers.Clone()
+			if !tc.skipHeaders {
+				req.Header = headers.Clone()
+			}
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {

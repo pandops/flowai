@@ -34,6 +34,18 @@ func (*routeListRepository) ListTasks(context.Context, platform.AdminTaskFilter,
 	return []platform.TaskListEntry{}, nil, nil
 }
 
+// rejectingListenerAdminRepository adds ListenerRepository to the
+// base AdminRepository so the listener adapter mounts in the
+// production-route rejection probe. Other capabilities remain
+// absent on purpose so the probe measures "no repository calls".
+type rejectingListenerAdminRepository struct {
+	rejectingAdminRepository
+}
+
+func (*rejectingListenerAdminRepository) IngestTask(context.Context, platform.TaskIngestionRequest, platform.ListenerIdentity) (platform.TaskListEntry, bool, error) {
+	return platform.TaskListEntry{}, false, nil
+}
+
 type routeCursorKeyring struct{}
 
 func (routeCursorKeyring) ActiveKeyID() string { return "test-key" }
@@ -195,51 +207,63 @@ func TestDecryptOpsRouteIsPresentInTestMode(t *testing.T) {
 	}
 }
 
-func TestProductionRoutesRejectForgedIdentityHeadersBeforeRepositoryAccess(t *testing.T) {
-	repo := &rejectingAdminRepository{}
-	router := Routes("state-registry", "", newTestLogger(), alwaysReady, NewDecryptOps(), false, repo)
+func TestProductionRoutesRejectMissingIdentityBeforeRepositoryAccess(t *testing.T) {
+	adminRepo := &rejectingAdminRepository{}
+	listenerRepo := &rejectingListenerAdminRepository{}
+	router := Routes("state-registry", "", newTestLogger(), alwaysReady, NewDecryptOps(), false, listenerRepo)
 
 	tests := []struct {
 		name   string
 		method string
 		path   string
 		body   string
-		role   string
 	}{
 		{
-			name:   "forged admin",
+			name:   "admin teams missing identity",
 			method: http.MethodPost,
 			path:   "/admin/teams",
-			body:   `{"team_name":"forged","default_image":{"repository":"registry.example/agent","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
-			role:   "admin",
+			body:   `{"team_name":"missing","default_image":{"repository":"registry.example/agent","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
 		},
 		{
-			name:   "forged executor",
+			name:   "executor register missing identity",
 			method: http.MethodPut,
-			path:   "/v1/executors/exec-forged",
-			body:   `{"scope":"team","team_id":"team-forged"}`,
-			role:   "team-executor",
+			path:   "/v1/executors/exec-missing",
+			body:   `{"scope":"team","team_id":"team-missing"}`,
+		},
+		{
+			name:   "listener ingest missing identity",
+			method: http.MethodPost,
+			path:   "/v1/tasks",
+			body:   `{"team_id":"t","source_system_id":"s","source_id":"x","task_type_id":"y","payload":{}}`,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("X-FlowAI-Role", tc.role)
-			req.Header.Set("X-FlowAI-Admin-Subject", "forged-subject")
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
 			recorder := httptest.NewRecorder()
 
 			router.ServeHTTP(recorder, req)
 
-			if recorder.Code != http.StatusNotFound {
-				t.Fatalf("status=%d, want 404 while production identity adapters are unavailable", recorder.Code)
+			if recorder.Code == http.StatusNotFound {
+				t.Fatalf("status=%d (route not mounted), want 401/403 (per-surface auth middleware); body=%s",
+					recorder.Code, recorder.Body.String())
+			}
+			if recorder.Code != http.StatusUnauthorized && recorder.Code != http.StatusForbidden {
+				t.Fatalf("status=%d, want 401 or 403 (auth rejection); body=%s",
+					recorder.Code, recorder.Body.String())
 			}
 		})
 	}
 
-	if repo.calls != 0 {
-		t.Fatalf("repository calls=%d, want 0 for forged production headers", repo.calls)
+	if adminRepo.calls != 0 {
+		t.Fatalf("admin repository calls=%d, want 0 for missing production identity", adminRepo.calls)
+	}
+	if listenerRepo.calls != 0 {
+		t.Fatalf("listener repository calls=%d, want 0 for missing production identity", listenerRepo.calls)
 	}
 }
 

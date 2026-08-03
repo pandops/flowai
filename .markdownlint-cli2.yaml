@@ -1,0 +1,13 @@
+config:
+  MD013: false
+  MD001: false
+  MD024:
+    siblings_only: true
+  MD033: false
+  MD040: false
+  MD041: false
+  MD056: false
+ignores:
+  - "node_modules/**"
+  - "autotest/reports/**"
+  - "openspec/changes/archive/**"

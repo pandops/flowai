@@ -1,14 +1,13 @@
 # FlowAI Platform — Architecture
 
-> **Status:** Planning phase. No code written yet.
+> **Status:** State Registry and Docker OpenHands Executor implemented.
 >
 > **Scope:** AI platform that runs **agentic-loop** AI tasks (LLM + tools, multi-turn) inside containers — locally (Docker) or in Kubernetes.
 >
 > **Source of truth:** Accepted real state lives in [`openspec/specs/`](../../openspec/specs/). Planned architecture lives in active numbered changes under [`openspec/changes/`](../../openspec/changes/); accepted historical changes live under `openspec/changes/archive/`. Proposed diagrams live under `openspec/changes/*/specs/diagrams/`. This directory documents implemented current-state design only.
 
 This directory holds implemented current-state architecture documentation for
-`flowai_v2`. Because no runtime services are implemented yet, the diagram set is
-currently empty.
+`flowai_v2`. See [overview.md](overview.md) for the current runtime.
 
 ## Conventions
 
@@ -55,8 +54,8 @@ That command runs OpenSpec strict validation, `markdownlint`, and a PlantUML syn
 
 ## Diagrams
 
-No current-state diagrams exist yet. Proposed target diagrams currently live in
-the numbered change directories under `openspec/changes/*/specs/diagrams/`.
+Accepted current-state diagrams live here. Proposed diagrams remain in their
+numbered change directories until archive.
 
 ## Tooling
 

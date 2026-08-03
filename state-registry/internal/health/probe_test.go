@@ -156,6 +156,6 @@ func TestAESKeyPresent(t *testing.T) {
 }
 
 func TestNewPostgresPingerFromSQLDB(t *testing.T) {
-	var p PostgresPinger = NewPostgresPinger(nil)
+	p := NewPostgresPinger(nil)
 	_ = p
 }

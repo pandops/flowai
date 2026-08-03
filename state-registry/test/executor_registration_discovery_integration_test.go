@@ -133,13 +133,13 @@ type execPutBody struct {
 	RuntimeMetadata map[string]any `json:"runtime_metadata"`
 }
 
-func teamBody(team, tag string) []byte {
+func teamBody(executorID, team, tag string) []byte {
 	t := team
 	raw, _ := json.Marshal(execPutBody{
 		Scope:           "team",
 		TeamID:          &t,
 		ExecutorType:    "executor_docker_opehands",
-		Identity:        "identity-" + team,
+		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,
@@ -148,12 +148,12 @@ func teamBody(team, tag string) []byte {
 	return raw
 }
 
-func systemBody(tag string) []byte {
+func systemBody(executorID, tag string) []byte {
 	raw, _ := json.Marshal(execPutBody{
 		Scope:           "system",
 		TeamID:          nil,
 		ExecutorType:    "executor_docker_opehands",
-		Identity:        "identity-system-" + tag,
+		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,
@@ -322,7 +322,7 @@ func TestExecutorTeamRegistrationPersistsRow(t *testing.T) {
 	const execID = "exec-section5-team-persist"
 	resp, raw := h.put(t, execID,
 		execPutHeaders(execRoleTeam, "team-a", execID, "req-section5-team-persist"),
-		teamBody("team-a", "openhands"),
+		teamBody(execID, "team-a", "openhands"),
 	)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200; body=%s", resp.StatusCode, raw)
@@ -350,7 +350,7 @@ func TestSystemExecutorRegistrationPersistsNullTeam(t *testing.T) {
 	const execID = "exec-section5-system-persist"
 	resp, raw := h.put(t, execID,
 		execPutHeaders(execRoleSystem, "", execID, "req-section5-system-persist"),
-		systemBody("openhands"),
+		systemBody(execID, "openhands"),
 	)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200; body=%s", resp.StatusCode, raw)
@@ -383,7 +383,7 @@ func TestSameScopeReregistrationPreservesScopeAndTeam(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	// Re-register with the same scope + team + tag but new observations.
-	body := teamBody("team-a", "openhands")
+	body := teamBody("exec-reregister", "team-a", "openhands")
 	// Mutate observation values directly because teamBody reuses fixed defaults.
 	var parsed execPutBody
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -489,7 +489,7 @@ func TestScopeChangeReregistrationRejected(t *testing.T) {
 
 	resp, raw := h.put(t, "exec-scope-change",
 		execPutHeaders(execRoleTeam, "team-a", "exec-scope-change", "req-section5-scope-change"),
-		systemBody("openhands"),
+		systemBody("exec-scope-change", "openhands"),
 	)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400 scope_change_forbidden; body=%s", resp.StatusCode, raw)
@@ -525,7 +525,7 @@ func TestTeamChangeReregistrationRejected(t *testing.T) {
 
 	resp, raw := h.put(t, "exec-team-change",
 		execPutHeaders(execRoleTeam, "team-b", "exec-team-change", "req-section5-team-change"),
-		teamBody("team-b", "openhands"),
+		teamBody("exec-team-change", "team-b", "openhands"),
 	)
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400 team_binding_mismatch; body=%s", resp.StatusCode, raw)

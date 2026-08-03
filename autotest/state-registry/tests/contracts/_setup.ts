@@ -15,8 +15,8 @@
 // The bootstrap is intentionally minimal: tests that need additional
 // setup (e.g. environment rows, secret versions) call admin endpoints
 // directly with their own identity context.
-import type { APIRequestContext, APIResponse } from '@playwright/test';
-import type { IdentityContext } from '../../fixtures/identities';
+import type { APIRequestContext, APIResponse } from "@playwright/test";
+import type { IdentityContext } from "../../fixtures/identities";
 
 // ImageReference is the wire shape the OpenAPI components.schemas.ImageReference
 // object documents. State Registry JSON fields that reference an image
@@ -40,23 +40,38 @@ const HexCharPattern = /^[A-Fa-f0-9]$/;
 // 'a' produces a valid 64-hex digest. Throws when the repository or
 // hex char would violate the OpenAPI shape so failures surface at
 // construction time.
-export function imageReference(repository: string, digestHexChar: string = 'a'): ImageReference {
-  if (!RepositoryPattern.test(repository)) {
-    throw new Error(
-      `imageReference: repository ${JSON.stringify(repository)} does not match OpenAPI ` +
-        'pattern ^[A-Za-z0-9][A-Za-z0-9._/-]*(:[A-Za-z0-9._-]+)?$',
-    );
-  }
+export function imageReference(
+  repository: string,
+  digestHexChar: string = "a",
+): ImageReference {
   if (!HexCharPattern.test(digestHexChar)) {
     throw new Error(
       `imageReference: digestHexChar ${JSON.stringify(digestHexChar)} is not a single ` +
-        'hex character [A-Fa-f0-9]',
+        "hex character [A-Fa-f0-9]",
     );
   }
-  return {
+  return imageReferenceFromDigest(
     repository,
-    digest: `sha256:${digestHexChar.repeat(64)}`,
-  };
+    `sha256:${digestHexChar.repeat(64)}`,
+  );
+}
+
+export function imageReferenceFromDigest(
+  repository: string,
+  digest: string,
+): ImageReference {
+  if (!RepositoryPattern.test(repository)) {
+    throw new Error(
+      `imageReferenceFromDigest: repository ${JSON.stringify(repository)} does not match OpenAPI ` +
+        "pattern ^[A-Za-z0-9][A-Za-z0-9._/-]*(:[A-Za-z0-9._-]+)?$",
+    );
+  }
+  if (!DigestPattern.test(digest)) {
+    throw new Error(
+      `imageReferenceFromDigest: digest ${JSON.stringify(digest)} is not sha256:<64hex>`,
+    );
+  }
+  return { repository, digest };
 }
 
 // dockerPullString renders an ImageReference as `<repository>@<digest>`
@@ -147,7 +162,7 @@ export interface TaskResource {
 }
 
 export interface ExecutorRegistrationBody {
-  scope: 'team' | 'system';
+  scope: "team" | "system";
   team_id: string | null;
   executor_type: string;
   identity: string;
@@ -159,7 +174,7 @@ export interface ExecutorRegistrationBody {
 
 export interface ExecutorResource {
   executor_id: string;
-  scope: 'team' | 'system';
+  scope: "team" | "system";
   team_id: string | null;
   executor_type: string;
   identity: string;
@@ -182,7 +197,9 @@ export interface ResponseSnapshot {
 // APIRequestContext.dispose() releases every response body retained by
 // Playwright. Helpers that own a short-lived context must therefore copy the
 // complete response before disposal instead of returning a live APIResponse.
-export async function snapshotResponse(response: APIResponse): Promise<ResponseSnapshot> {
+export async function snapshotResponse(
+  response: APIResponse,
+): Promise<ResponseSnapshot> {
   const status = response.status();
   const ok = response.ok();
   const headers = Object.freeze({ ...response.headers() });
@@ -201,7 +218,7 @@ export async function createAdminTeam(
   admin: APIRequestContext,
   body: AdminTeamCreateBody,
 ): Promise<AdminTeam> {
-  const resp = await admin.post('/admin/teams', { data: body });
+  const resp = await admin.post("/admin/teams", { data: body });
   if (resp.status() !== 201) {
     throw new Error(
       `createAdminTeam expected 201, received ${String(resp.status())}; body=${await resp.text()}`,
@@ -214,7 +231,7 @@ export async function createAdminSourceSystem(
   admin: APIRequestContext,
   body: AdminSourceSystemCreateBody,
 ): Promise<AdminSourceSystem> {
-  const resp = await admin.post('/admin/source-systems', { data: body });
+  const resp = await admin.post("/admin/source-systems", { data: body });
   if (resp.status() !== 201) {
     throw new Error(
       `createAdminSourceSystem expected 201, received ${String(resp.status())}; body=${await resp.text()}`,
@@ -227,7 +244,7 @@ export async function createAdminTaskType(
   admin: APIRequestContext,
   body: AdminTaskTypeCreateBody,
 ): Promise<AdminTaskType> {
-  const resp = await admin.post('/admin/task-types', { data: body });
+  const resp = await admin.post("/admin/task-types", { data: body });
   if (resp.status() !== 201) {
     throw new Error(
       `createAdminTaskType expected 201, received ${String(resp.status())}; body=${await resp.text()}`,
@@ -264,8 +281,9 @@ export async function bootstrapTeam(
   const adminApi = await admin.api(baseUrl);
   try {
     const teamName = opts.teamName ?? `team-${suffix}`;
-    const defaultImage = opts.defaultImage ?? imageReference(`default-${suffix}`);
-    const executionTag = opts.executionTag ?? 'openhands';
+    const defaultImage =
+      opts.defaultImage ?? imageReference(`default-${suffix}`);
+    const executionTag = opts.executionTag ?? "openhands";
     const team = await createAdminTeam(adminApi, {
       team_name: teamName,
       default_image: defaultImage,
@@ -293,7 +311,7 @@ export async function ingestPendingTask(
 ): Promise<TaskResource> {
   const api = await listener.api(baseUrl);
   try {
-    const resp = await api.post('/v1/tasks', { data: body });
+    const resp = await api.post("/v1/tasks", { data: body });
     if (resp.status() !== 201) {
       throw new Error(
         `ingestPendingTask expected 201, received ${String(resp.status())}; body=${await resp.text()}`,
@@ -312,7 +330,7 @@ export async function retryPendingTask(
 ): Promise<TaskResource> {
   const api = await listener.api(baseUrl);
   try {
-    const resp = await api.post('/v1/tasks', { data: body });
+    const resp = await api.post("/v1/tasks", { data: body });
     if (resp.status() !== 200) {
       throw new Error(
         `retryPendingTask expected 200, received ${String(resp.status())}; body=${await resp.text()}`,
@@ -329,13 +347,19 @@ export async function registerExecutor(
   baseUrl: string,
   body: ExecutorRegistrationBody,
 ): Promise<ExecutorResource> {
-  const executorId = executor.attach()['X-FlowAI-Executor-Id'];
+  const executorId = executor.attach()["X-FlowAI-Executor-Id"];
   if (!executorId) {
-    throw new Error('registerExecutor requires an executor identity with X-FlowAI-Executor-Id');
+    throw new Error(
+      "registerExecutor requires an executor identity with X-FlowAI-Executor-Id",
+    );
   }
   const api = await executor.api(baseUrl);
   try {
-    const resp = await api.put(`/v1/executors/${encodeURIComponent(executorId)}`, { data: body });
+    const canonicalBody = { ...body, identity: executorId };
+    const resp = await api.put(
+      `/v1/executors/${encodeURIComponent(executorId)}`,
+      { data: canonicalBody },
+    );
     if (resp.status() !== 200) {
       throw new Error(
         `registerExecutor expected 200, received ${String(resp.status())}; body=${await resp.text()}`,

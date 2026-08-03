@@ -88,7 +88,7 @@ The operational consequence is:
   rotation.
 - **Failure posture is non-revealing.** Every invalid or unavailable
   environment open keeps the v0002 single non-revealing `404
-  environment_unknown_or_unavailable` shape. Provider outages do
+environment_unknown_or_unavailable` shape. Provider outages do
   not become visible to operators through response bodies; every
   Transit token, sealed/unavailable response, ACL rejection, mount
   absence, key absence, version absence, tampered ciphertext, or
@@ -157,9 +157,9 @@ scope-token verification.
     unique across teams.
   - Add a per-row durable checkpoint table
     `crypto_migration_checkpoints(migration_name, team_id,
-    secret_id, version, state, attempt_count, verified_at,
-    error_class, updated_at, PRIMARY KEY(migration_name, team_id,
-    secret_id, version))` whose `state` is constrained to
+secret_id, version, state, attempt_count, verified_at,
+error_class, updated_at, PRIMARY KEY(migration_name, team_id,
+secret_id, version))` whose `state` is constrained to
     `pending | in_progress | verified | failed`. The table is the
     worker's single source of truth; a row exists for every
     immutable secret version in scope for the migration, NOT a
@@ -169,14 +169,17 @@ scope-token verification.
     canonical `secrets` parent; per row it SHALL verify the
     parent still exists, derive the canonical `team_id` from the
     parent, claim the per-row checkpoint under row-level lock,
-    decrypt locally in memory with the canonical `associated_data`
-    byte string, re-encrypt through Transit with the same
-    canonical byte string, and in one transaction that holds a
+    decrypt locally in memory with the v0002 legacy
+    `associated_data` byte string
+    `{team_id}\x00{secret_id}\x00{decimal_version}`, re-encrypt
+    through Transit with the v0008 active byte string
+    `team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n`,
+    and in one transaction that holds a
     row-level lock on both rows, rewrite ONLY the envelope
     columns (`ciphertext`, `key_id`, `key_version`,
     `crypto_provider = 'transit'`, `migrated_at`) of the targeted
     row, mark the checkpoint row `state = 'verified',
-    verified_at = NOW()`, and append a plaintext-free audit entry.
+verified_at = NOW()`, and append a plaintext-free audit entry.
   - The CAS commit guarantee replaces any provider-once claim:
     if the worker crashes after the Transit call returns but
     before PostgreSQL commits, a retry may invoke the provider
@@ -185,6 +188,15 @@ scope-token verification.
     encrypted again; at most one envelope is committed per
     immutable secret version; discarded provider responses are
     never persisted or logged.
+  - Replace v0002's unconditional `secret_versions_append_only`
+    `BEFORE UPDATE OR DELETE` trigger with a migration-aware
+    envelope-CAS `BEFORE UPDATE` trigger plus an unconditional
+    `BEFORE DELETE` rejection. The replacement permits only the
+    documented envelope columns to change, only when the migration
+    worker has locked the matching per-row checkpoint and installed
+    the matching transaction-local migration authorization marker;
+    identity-column changes, unclaimed updates, and every delete
+    remain rejected.
   - Plaintext exists only in State Registry process memory and
     inside the verified mTLS-protected in-flight request
     accepted by Transit. It is never persisted, never logged,
@@ -231,10 +243,16 @@ scope-token verification.
     HMAC `HS256 / HS384 / HS512` scope-token wire format and
     verification order, and every team authorization rule (including
     support for `scope = system` assigned Executors) are unchanged.
-  - The canonical `associated_data` binding for every encrypted
-    secret value remains exactly the v0002 binding
-    (`team_id`, `secret_id`, `version`) bound as authenticated
-    additional data. The v0008 design DOES NOT add a
+  - The canonical `associated_data` semantic binding remains the
+    v0002 triple (`team_id`, `secret_id`, `version`), but the
+    provider byte formats are explicitly versioned. Existing local
+    rows decrypt with v0002 legacy bytes
+    `{team_id}\x00{secret_id}\x00{decimal_version}`; Transit rows
+    encrypt and decrypt with v0008 active bytes
+    `team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n`.
+    Migration re-authenticates plaintext under the active format;
+    it does not claim the byte strings are equal. The v0008 design
+    DOES NOT add a
     `provider_marker` field to AAD; routing is decided by the
     persisted `crypto_provider` column on the row, not by any
     authenticated binding.
@@ -290,13 +308,13 @@ scope-token verification.
   configuration are deployment-time configuration; they are not
   part of the public OpenAPI surface and not present in audit
   entries beyond identifier metadata.
-- The mapping from `crypto_provider = 'local'` to the canonical
-  v0002 `associated_data` byte string and from
-  `crypto_provider = 'transit'` to the same canonical
-  `team_id + secret_id + version` byte string is identical
-  because the v0002 binding did not include a provider marker;
-  the provider marker is routing metadata persisted on the row,
-  not authenticated AAD.
+- `crypto_provider = 'local'` routes to the v0002 legacy AAD
+  format `{team_id}\x00{secret_id}\x00{decimal_version}`;
+  `crypto_provider = 'transit'` routes to the v0008 active format
+  `team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n`.
+  Both authenticate the same canonical identity triple, but they
+  are intentionally not byte-identical. The provider marker is
+  routing metadata persisted on the row, not authenticated AAD.
 
 ## Impact
 
@@ -394,7 +412,7 @@ scope-token verification.
 
 - Run any task, control any Executor runtime, or change the
   listener ingestion, FIFO claim, `pending (no event) -> created ->
-  running -> finished | failed` lifecycle, four-level image
+running -> finished | failed` lifecycle, four-level image
   precedence, HMAC scope-token wire format or verification order,
   or any team authorization rule (including `scope = system`
   support).
@@ -415,7 +433,7 @@ scope-token verification.
 - Grant the State Registry Transit privileges to create,
   delete, export, or plaintext-backup a Transit key, enable
   implicit key upsert, or bypass the same `404
-  environment_unknown_or_unavailable` shape that v0002 already
+environment_unknown_or_unavailable` shape that v0002 already
   pins.
 - Add a configurable Transit `version_template`; v0008 pins the
   implementation to the documented default ciphertext shape

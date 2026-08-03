@@ -43,23 +43,7 @@ func RegisterGatewayList(r chi.Router, logger *slog.Logger, repo store.ListRepos
 
 // requireTrustedGateway enforces the trusted-Gateway identity.
 func (h *gatewayListHandlers) requireTrustedGateway(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get(adminRoleHeader) != "gateway" {
-			h.writeGatewayError(w, r, http.StatusForbidden, "not_authorized", "trusted Gateway identity is required")
-			return
-		}
-		teamID := strings.TrimSpace(r.Header.Get(gatewayTeamIDHeader))
-		operatorID := strings.TrimSpace(r.Header.Get(gatewayOperatorIDHeader))
-		if teamID == "" || operatorID == "" {
-			h.writeGatewayError(w, r, http.StatusUnauthorized, "unauthenticated", "trusted Gateway identity is required")
-			return
-		}
-		if !validListingIdentifier(teamID) || !validListingIdentifier(operatorID) {
-			h.writeGatewayError(w, r, http.StatusUnauthorized, "unauthenticated", "trusted Gateway identity is required")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return requireTrustedGateway(next)
 }
 
 // listTasks returns the documented GET /v1/tasks page under the
@@ -68,8 +52,9 @@ func (h *gatewayListHandlers) requireTrustedGateway(next http.Handler) http.Hand
 // task_type_id is intentionally not accepted as a filter because
 // the OpenAPI TaskPage contract does not expose it.
 func (h *gatewayListHandlers) listTasks(w http.ResponseWriter, r *http.Request) {
-	teamID := strings.TrimSpace(r.Header.Get(gatewayTeamIDHeader))
-	operatorID := strings.TrimSpace(r.Header.Get(gatewayOperatorIDHeader))
+	gateway := gatewayContext(r)
+	teamID := gateway.TeamID
+	operatorID := gateway.OperatorID
 	ident := cursor.Identity{
 		Kind:       "gateway",
 		TeamID:     teamID,

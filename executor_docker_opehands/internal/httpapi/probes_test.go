@@ -112,7 +112,10 @@ func TestProbeConcurrency(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		go func() {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/v1/readyz", nil)
-			_, _ = http.DefaultClient.Do(req)
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				_ = resp.Body.Close()
+			}
 		}()
 	}
 	probe.Set(false)

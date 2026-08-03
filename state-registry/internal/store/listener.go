@@ -127,8 +127,9 @@ func (s *Store) IngestTask(
 		INSERT INTO tasks (
 			task_id, team_id, source_system_id, source_id,
 			task_type_id, required_tag, payload, project_id,
-			environment_id, image
-		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb)
+			environment_id, image, ingested_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb,
+		          date_trunc('second', transaction_timestamp()))
 		ON CONFLICT (team_id, source_system_id, source_id) DO NOTHING
 		RETURNING
 			task_id, team_id, source_system_id, source_id,

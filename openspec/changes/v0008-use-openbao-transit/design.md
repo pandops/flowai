@@ -43,11 +43,13 @@ The `CipherAAD` value type binds ONLY the canonical
 NOT add a `provider_marker` field to AAD; the routing
 decision for each row is taken from the persisted
 `crypto_provider` column on `secret_versions`, not from any
-authenticated binding. The local provider and the active
-Transit provider therefore use the SAME canonical AAD bytes
-for a given canonical input triple, which is why a local row
-can decrypt under the same `associated_data` it was written
-under after migration re-encrypts it through Transit.
+authenticated binding. The local provider uses the v0002
+legacy bytes `{team_id}\x00{secret_id}\x00{decimal_version}`.
+The active Transit provider uses the v0008 bytes
+`team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n`.
+The migration worker decrypts with the legacy format and
+encrypts with the active format, re-authenticating the same
+canonical identity triple rather than claiming byte equality.
 
 The opaque envelope recorded on every `secret_versions` row
 is exactly the `EncryptedRecord`: opaque `key_id` string
@@ -84,20 +86,20 @@ the public `404 environment_unknown_or_unavailable` shape
 is preserved. The endpoint choice follows the official 2.6
 API:
 
-| Concern | Implementation choice |
-|---|---|
-| Endpoint naming | Configurable `<mount>` (default `/transit`). Configurable `key_name`. |
-| Encryption | `POST /v1/<mount>/encrypt/<key_name>` with JSON body `{"plaintext": "<b64>", "associated_data": "<b64>"}`; no client nonce (Transit generates its nonce; documented fields are `plaintext`, `associated_data`, `context` (unused), `key_version`, `nonce` (unused), `batch_input` (unused)). |
-| Decryption | `POST /v1/<mount>/decrypt/<key_name>` with JSON body `{"ciphertext": "<text>", "associated_data": "<b64>"}`. The opaque `associated_data` MUST equal the value used at `Encrypt` time byte-for-byte; mismatch is the canonical "wrong AAD" failure and routes to the non-revealing `404 environment_unknown_or_unavailable`. |
+| Concern           | Implementation choice                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint naming   | Configurable `<mount>` (default `/transit`). Configurable `key_name`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Encryption        | `POST /v1/<mount>/encrypt/<key_name>` with JSON body `{"plaintext": "<b64>", "associated_data": "<b64>"}`; no client nonce (Transit generates its nonce; documented fields are `plaintext`, `associated_data`, `context` (unused), `key_version`, `nonce` (unused), `batch_input` (unused)).                                                                                                                                                                                                                                                                                                          |
+| Decryption        | `POST /v1/<mount>/decrypt/<key_name>` with JSON body `{"ciphertext": "<text>", "associated_data": "<b64>"}`. The opaque `associated_data` MUST equal the value used at `Encrypt` time byte-for-byte; mismatch is the canonical "wrong AAD" failure and routes to the non-revealing `404 environment_unknown_or_unavailable`.                                                                                                                                                                                                                                                                          |
 | Rotation (rotate) | `POST /v1/<mount>/keys/<key_name>/rotate` creates a new (latest) key version. The documented request takes no body parameters and the documented success response carries no body. Subsequent encrypt calls that do not specify `key_version` use the new latest version the deployment permits. Existing AAD-bound ciphertext from prior versions is left untouched and continues to decrypt under the older key version that matches its embedded version, as long as `min_decryption_version` permits. The rotate call itself does NOT raise `min_encryption_version` or `min_decryption_version`. |
-| Read-key | `GET /v1/<mount>/keys/<key_name>` returns the documented JSON `{"data": {"type": ..., "deletion_allowed": ..., "derived": ..., "exportable": ..., "allow_plaintext_backup": ..., "keys": {"<version>": <timestamp>, ...}, "min_decryption_version": ..., "min_encryption_version": ..., "name": ..., "supports_encryption": ..., "supports_decryption": ...}}`. The State Registry uses this call only to observe the canonical key's current state during cutover verification; nothing else. |
-| Rewrap | Intentionally NOT used. The documented rewrap endpoint at `POST /v1/<mount>/rewrap/<key_name>` accepts only `ciphertext`, `context`, `key_version`, `nonce`, `reference`, `batch_input` — it has no `associated_data` parameter. Since every v0008 ciphertext binds `associated_data` at encrypt time, rewrap cannot authenticate a v0008 ciphertext and SHALL NOT be called by the State Registry. This is documented at <https://openbao.org/api-docs/secret/transit/#rewrap-data>. |
-| Key configuration | Out of band: `POST /v1/<mount>/keys/<key_name>` with the documented `aes256-gcm96`, `deletion_allowed=false`, `exportable=false`, `allow_plaintext_backup=false`; explicit `min_decryption_version` and `min_encryption_version` set through `POST /v1/<mount>/keys/<key_name>/config`. v0008 SHALL NOT advance `min_decryption_version` past any still-referenced Transit ciphertext; retiring historical versions requires an explicit future migration change. |
-| Ciphertext format | v0008 pins the implementation to the documented default ciphertext shape `vault:v<N>:...` where `<N>` is the embedded key version. The official OpenBao 2.6 public API does not expose a configurable `version_template`, so v0008 does not configure one; the implementation parses the documented shape strictly and fails startup or operation if the provider returns ciphertext that does not match. |
-| Authentication | HTTP `X-Vault-Token: <token>` (or Kubernetes / Vault Agent wrapped equivalent). The token is loaded from a secure configuration source at startup; rotated independently of any State Registry restart. The token MUST NOT be sent to logs, audit, or error responses. |
-| Network identity | mTLS with verified peer certificates; self-signed Transit deployments pin the CA bundle through State Registry configuration. |
-| Disable upsert | `POST /v1/<mount>/config/keys` with `disable_upsert=true` set out of band so a typo never creates a key through `/encrypt`. |
-| Failure mapping | `5xx` and connect failure -> internal sentinel `provider_unavailable`. `403 permission denied` -> `provider_forbidden`. `400 invalid ciphertext` or `400 associated_data mismatch` -> `provider_invalid_aad_or_ciphertext`. `404 key not found` -> `provider_key_unknown`. `404 mount not found` -> `provider_mount_unknown`. All sentinels return the same `404 environment_unknown_or_unavailable` shape to the caller; provider-side detail is logged to plaintext-free audit. |
+| Read-key          | `GET /v1/<mount>/keys/<key_name>` returns the documented JSON `{"data": {"type": ..., "deletion_allowed": ..., "derived": ..., "exportable": ..., "allow_plaintext_backup": ..., "keys": {"<version>": <timestamp>, ...}, "min_decryption_version": ..., "min_encryption_version": ..., "name": ..., "supports_encryption": ..., "supports_decryption": ...}}`. The State Registry uses this call only to observe the canonical key's current state during cutover verification; nothing else.                                                                                                        |
+| Rewrap            | Intentionally NOT used. The documented rewrap endpoint at `POST /v1/<mount>/rewrap/<key_name>` accepts only `ciphertext`, `context`, `key_version`, `nonce`, `reference`, `batch_input` — it has no `associated_data` parameter. Since every v0008 ciphertext binds `associated_data` at encrypt time, rewrap cannot authenticate a v0008 ciphertext and SHALL NOT be called by the State Registry. This is documented at <https://openbao.org/api-docs/secret/transit/#rewrap-data>.                                                                                                                 |
+| Key configuration | Out of band: `POST /v1/<mount>/keys/<key_name>` with the documented `aes256-gcm96`, `deletion_allowed=false`, `exportable=false`, `allow_plaintext_backup=false`; explicit `min_decryption_version` and `min_encryption_version` set through `POST /v1/<mount>/keys/<key_name>/config`. v0008 SHALL NOT advance `min_decryption_version` past any still-referenced Transit ciphertext; retiring historical versions requires an explicit future migration change.                                                                                                                                     |
+| Ciphertext format | v0008 pins the implementation to the documented default ciphertext shape `vault:v<N>:...` where `<N>` is the embedded key version. The official OpenBao 2.6 public API does not expose a configurable `version_template`, so v0008 does not configure one; the implementation parses the documented shape strictly and fails startup or operation if the provider returns ciphertext that does not match.                                                                                                                                                                                             |
+| Authentication    | HTTP `X-Vault-Token: <token>` (or Kubernetes / Vault Agent wrapped equivalent). The token is loaded from a secure configuration source at startup; rotated independently of any State Registry restart. The token MUST NOT be sent to logs, audit, or error responses.                                                                                                                                                                                                                                                                                                                                |
+| Network identity  | mTLS with verified peer certificates; self-signed Transit deployments pin the CA bundle through State Registry configuration.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Disable upsert    | `POST /v1/<mount>/config/keys` with `disable_upsert=true` set out of band so a typo never creates a key through `/encrypt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Failure mapping   | `5xx` and connect failure -> internal sentinel `provider_unavailable`. `403 permission denied` -> `provider_forbidden`. `400 invalid ciphertext` or `400 associated_data mismatch` -> `provider_invalid_aad_or_ciphertext`. `404 key not found` -> `provider_key_unknown`. `404 mount not found` -> `provider_mount_unknown`. All sentinels return the same `404 environment_unknown_or_unavailable` shape to the caller; provider-side detail is logged to plaintext-free audit.                                                                                                                     |
 
 The `AssociatedData` value is exactly the canonical binding
 the Registry uses for the row, encoded as a UTF-8 byte string:
@@ -106,13 +108,12 @@ the Registry uses for the row, encoded as a UTF-8 byte string:
 team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n
 ```
 
-This matches v0002's authenticated binding of team identifier
-/ logical secret identifier / version. Both providers
-produce the same bytes for the same canonical inputs, so a
-local row's `associated_data` is byte-identical to the Transit
-row's `associated_data` for the same logical secret version.
-The persisted `crypto_provider` column records the routing
-decision, not the binding.
+This is the v0008 active-provider format. v0002's local
+AES-256-GCM implementation sealed rows with the UTF-8 bytes
+`{team_id}\x00{secret_id}\x00{decimal_version}`. The formats
+are not byte-identical. Both bind the same canonical identity
+triple; the persisted `crypto_provider` column selects which
+format and provider decrypt a row.
 
 ### Why "no client nonce"
 
@@ -147,15 +148,15 @@ and the worker mutates ONLY the cryptographic envelope
 columns of each immutable secret version under a row-level
 lock.
 
-| Step | Atomic boundary | Outcome |
-|---|---|---|
-| 1. Discover | Select local rows joined to canonical secrets parents: `SELECT SV.team_id, SV.secret_id, SV.version FROM secret_versions SV JOIN secrets S ON S.environment_id IN (env_set) AND S.secret_id = SV.secret_id WHERE SV.crypto_provider = 'local' ORDER BY SV.team_id, SV.secret_id, SV.version LIMIT $1`. The canonical `team_id` is the parent's `team_id` (v0008 does NOT introduce a direct `team_id` column on `secret_versions`). | A bounded batch of legacy rows whose `state = 'pending'` in `crypto_migration_checkpoints` keyed by `(migration_name, team_id, secret_id, version)`. |
-| 2. Verify canonical state | For each row, confirm the canonical `secrets` parent row still exists and that the row's persisted `(secret_id, version)` still resolves on the parent. The canonical team_id used to write the checkpoint row and the audit entry is the parent's `team_id`. Audit entries are NEVER consulted as an authorization source. The verification does NOT require `version` to equal a `current_version` field on the parent because `secrets` does not own per-version identity. | Either the row's identity and team ownership are still authoritative or it is removed from the batch. |
-| 3. Claim per-row checkpoint | `UPDATE crypto_migration_checkpoints SET state = 'in_progress', attempt_count = attempt_count + 1, updated_at = NOW() WHERE (migration_name, team_id, secret_id, version) = ($1, $2, $3, $4) AND state IN ('pending','failed')` under row-level lock; verify exactly one row was updated. | The targeted row is now `in_progress`; no other worker can double-process it. |
-| 4. Local decrypt | Call the local provider's `Decrypt` with the persisted AAD bytes recorded on the row. The local provider used the same canonical AAD `team_id\nsecret_id\nversion\n` at original encryption. | Plaintext exists in State Registry process memory only between this call and step 5 only. |
-| 5. Transit encrypt | Call the active provider's `Encrypt` over the verified mTLS-protected in-flight request with the same canonical AAD `team_id\nsecret_id\nversion\n`. Receive the opaque ciphertext whose embedded key version is parsed against the documented default `vault:v<N>:...` shape. | A new opaque encrypted record. |
-| 6. Persist atomically (compare-and-swap envelope) | One transaction that holds a row-level lock on both the `crypto_migration_checkpoints` row keyed by `(migration_name, team_id, secret_id, version)` and the targeted `secret_versions` row: `UPDATE secret_versions SET ciphertext = $1, key_id = $2, key_version = $3, crypto_provider = 'transit', migrated_at = $4 WHERE secret_id = $5 AND version = $6 AND crypto_provider = 'local'`; `UPDATE crypto_migration_checkpoints SET state = 'verified', verified_at = NOW() WHERE migration_name = $7 AND team_id = $8 AND secret_id = $5 AND version = $6`; append the canonical `audit_entries` row with `team_id`, `secret_id`, `version`, action `secret_version_migrated`, and outcome `accepted`. The targeted row's `(secret_id, version)` and logical secret identity are NEVER touched by this transaction. | The row's logical identity is unchanged; the cryptographic envelope and the checkpoint state are swapped atomically. |
-| 7. Verify persistence | After commit, a subsequent read of `secret_versions` and `crypto_migration_checkpoints` returns the persisted envelope and the `verified` checkpoint; concurrent readers see the complete old envelope or the complete new envelope (never a mixed intermediate state). | Migration progress advances one row. |
+| Step                                              | Atomic boundary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Outcome                                                                                                                                              |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. Discover                                       | Select local rows joined to canonical secrets parents: `SELECT SV.team_id, SV.secret_id, SV.version FROM secret_versions SV JOIN secrets S ON S.environment_id IN (env_set) AND S.secret_id = SV.secret_id WHERE SV.crypto_provider = 'local' ORDER BY SV.team_id, SV.secret_id, SV.version LIMIT $1`. The canonical `team_id` is the parent's `team_id` (v0008 does NOT introduce a direct `team_id` column on `secret_versions`).                                                                                                                                                                                                                                                                                                                                                                                   | A bounded batch of legacy rows whose `state = 'pending'` in `crypto_migration_checkpoints` keyed by `(migration_name, team_id, secret_id, version)`. |
+| 2. Verify canonical state                         | For each row, confirm the canonical `secrets` parent row still exists and that the row's persisted `(secret_id, version)` still resolves on the parent. The canonical team_id used to write the checkpoint row and the audit entry is the parent's `team_id`. Audit entries are NEVER consulted as an authorization source. The verification does NOT require `version` to equal a `current_version` field on the parent because `secrets` does not own per-version identity.                                                                                                                                                                                                                                                                                                                                         | Either the row's identity and team ownership are still authoritative or it is removed from the batch.                                                |
+| 3. Claim per-row checkpoint                       | `UPDATE crypto_migration_checkpoints SET state = 'in_progress', attempt_count = attempt_count + 1, updated_at = NOW() WHERE (migration_name, team_id, secret_id, version) = ($1, $2, $3, $4) AND state IN ('pending','failed')` under row-level lock; verify exactly one row was updated.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | The targeted row is now `in_progress`; no other worker can double-process it.                                                                        |
+| 4. Local decrypt                                  | Call the local provider's `Decrypt` with the exact v0002 legacy AAD bytes `{team_id}\x00{secret_id}\x00{decimal_version}` used when the row was sealed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Plaintext exists in State Registry process memory only between this call and step 5 only.                                                            |
+| 5. Transit encrypt                                | Call the active provider's `Encrypt` over the verified mTLS-protected in-flight request with v0008 active AAD `team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n`. Receive the opaque ciphertext whose embedded key version is parsed against the documented default `vault:v<N>:...` shape.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | A new opaque encrypted record re-authenticated under the active AAD format.                                                                          |
+| 6. Persist atomically (compare-and-swap envelope) | One transaction that holds a row-level lock on both the `crypto_migration_checkpoints` row keyed by `(migration_name, team_id, secret_id, version)` and the targeted `secret_versions` row: `UPDATE secret_versions SET ciphertext = $1, key_id = $2, key_version = $3, crypto_provider = 'transit', migrated_at = $4 WHERE secret_id = $5 AND version = $6 AND crypto_provider = 'local'`; `UPDATE crypto_migration_checkpoints SET state = 'verified', verified_at = NOW() WHERE migration_name = $7 AND team_id = $8 AND secret_id = $5 AND version = $6`; append the canonical `audit_entries` row with `team_id`, `secret_id`, `version`, action `secret_version_migrated`, and outcome `accepted`. The targeted row's `(secret_id, version)` and logical secret identity are NEVER touched by this transaction. | The row's logical identity is unchanged; the cryptographic envelope and the checkpoint state are swapped atomically.                                 |
+| 7. Verify persistence                             | After commit, a subsequent read of `secret_versions` and `crypto_migration_checkpoints` returns the persisted envelope and the `verified` checkpoint; concurrent readers see the complete old envelope or the complete new envelope (never a mixed intermediate state).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Migration progress advances one row.                                                                                                                 |
 
 The migration's idempotency boundary is the per-row
 `crypto_migration_checkpoints` table inside PostgreSQL. A
@@ -217,18 +218,18 @@ scan accepts the cutover when all of the following conditions
 hold atomically:
 
 - `SELECT COUNT(*) FROM secret_versions WHERE
-  crypto_provider = 'local'` returns `0`.
+crypto_provider = 'local'` returns `0`.
 - For every `secret_versions` row where `migrated_at IS NOT
-  NULL` and `crypto_provider = 'transit'`: a matching row in
+NULL` and `crypto_provider = 'transit'`: a matching row in
   `crypto_migration_checkpoints` (matched by
   `migration_name = 'local_to_transit', team_id, secret_id,
-  version`, where `team_id` is the canonical team's
+version`, where `team_id` is the canonical team's
   identifier derived from the `secrets` parent of the
   version row) exists with `state = 'verified'` and
   `verified_at >= migrated_at`.
 - `SELECT COUNT(*) FROM crypto_migration_checkpoints
-  WHERE state IN ('pending','in_progress','failed')
-  AND migration_name = 'local_to_transit'` returns `0`. The
+WHERE state IN ('pending','in_progress','failed')
+AND migration_name = 'local_to_transit'` returns `0`. The
   absence of `in_progress` rows is the worker-idle proof;
   there is no other worker-state row.
 - The active provider's
@@ -444,7 +445,26 @@ CREATE TABLE crypto_migration_checkpoints (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (migration_name, team_id, secret_id, version)
 );
+
+DROP TRIGGER secret_versions_append_only ON secret_versions;
+
+CREATE TRIGGER secret_versions_envelope_cas_guard
+  BEFORE UPDATE ON secret_versions
+  FOR EACH ROW EXECUTE FUNCTION secret_versions_envelope_cas_guard();
+
+CREATE TRIGGER secret_versions_delete_blocked
+  BEFORE DELETE ON secret_versions
+  FOR EACH ROW EXECUTE FUNCTION reject_immutable_update();
 ```
+
+The forward-only trigger replacement runs before the worker.
+`secret_versions_envelope_cas_guard()` rejects identity-column
+changes and every column outside `ciphertext`, `key_id`,
+`key_version`, `crypto_provider`, and `migrated_at`. It permits
+that envelope-only update only after the current transaction has
+locked the matching `crypto_migration_checkpoints` row in
+`state = 'in_progress'` and set the matching transaction-local
+migration authorization marker. Every delete remains rejected.
 
 Every immutable secret version (`team_id`, `secret_id`,
 `version`) that is in scope for the migration is recorded as

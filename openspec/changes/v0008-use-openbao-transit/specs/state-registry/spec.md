@@ -117,8 +117,9 @@ provider only after every row is verified".
   version with the canonical byte string; the routing
   decision SHALL be taken from the persisted
   `crypto_provider` column on `secret_versions`, not from
-  any field in `associated_data`; both providers SHALL
-  accept the same canonical byte string for the same
+  any field in `associated_data`; the local provider SHALL
+  use the v0002 legacy byte format and the active provider
+  SHALL use the v0008 active byte format for the same
   canonical input triple; the resulting ciphertext SHALL
   be rejected on provider decrypt if any of the canonical
   bindings do not match the persisted records
@@ -198,6 +199,20 @@ team ownership of a `secret_versions` row is established
 exclusively through the same-team FK to the canonical
 `secrets` parent row.
 
+#### Scenario: Migration envelope CAS preserves immutable identity
+
+- **WHEN** v0008 installs its forward-only schema migration
+- **THEN** it SHALL replace v0002's unconditional
+  `secret_versions_append_only` UPDATE/DELETE trigger with an
+  envelope-CAS UPDATE guard and an unconditional DELETE guard;
+  the UPDATE guard SHALL permit changes only to `ciphertext`,
+  `key_id`, `key_version`, `crypto_provider`, and `migrated_at`,
+  and only after the current transaction has locked the matching
+  per-row checkpoint in `state = 'in_progress'` and installed the
+  matching transaction-local migration authorization marker;
+  identity-column changes, updates without that claim, and every
+  delete SHALL remain rejected
+
 #### Scenario: Same-team operator stores a secret
 
 - **WHEN** a valid secret write arrives through trusted API
@@ -256,7 +271,7 @@ exclusively through the same-team FK to the canonical
   ciphertext using the wrong team, logical secret, or
   version binding in the `associated_data`
 - **THEN** State Registry returns the non-revealing `404
-  environment_unknown_or_unavailable` shape, performs zero
+environment_unknown_or_unavailable` shape, performs zero
   provider decrypt operations when authorization is denied,
   and logs no key material, nonce, ciphertext, plaintext,
   `associated_data` value, Transit token, Transit endpoint,
@@ -325,14 +340,14 @@ response, audit entry, or application log.
   `X-FlowAI-Scope-Token` request header, the protected header
   carrying `alg` (allow-listed `HS256`/`HS384`/`HS512`),
   `kid`, and `typ` (`scope-token+json`) with `kid == payload
-  key_id`, and the payload's `team_id`, `project_id`
+key_id`, and the payload's `team_id`, `project_id`
   (required, null only when the canonical environment has no
   project scope), `task_id`, `environment_id`,
   `executor_id`, `audience` (literal
   `state-registry.environment.open`), `key_id`,
   `issued_at`, and `expiry` (`expiry > issued_at`,
   `expiry - issued_at <= 5 minutes`, `issued_at <=
-  server_now + 30 seconds`) all matching canonical records,
+server_now + 30 seconds`) all matching canonical records,
   the MAC verifying under constant-time comparison, the
   assigned Executor team equals the parent task's team
 - **THEN** State Registry returns authorized values
@@ -455,19 +470,21 @@ own encrypt / decrypt primitive.
 
 ### Requirement: State Registry binds associated_data to exactly (team_id, secret_id, version)
 
-The State Registry SHALL bind the `associated_data` value
-used by both the local provider and the OpenBao Transit
-provider to exactly the canonical triple `team_id`,
-`logical_secret_id`, and `version` of the canonical
-`secret_versions` row. The binding SHALL be encoded as the
-UTF-8 byte string
-`"team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n"`
-with no other field, no provider marker, no scope marker, no
-nonce, no key reference, and no token. The `associated_data`
-value passed to `POST /v1/<mount>/encrypt/<key_name>` SHALL
-be byte-equal to the `associated_data` value passed to
-`POST /v1/<mount>/decrypt/<key_name>` when reading the same
-row; the State Registry SHALL return the non-revealing
+The State Registry SHALL bind `associated_data` to exactly the
+canonical triple `team_id`, `logical_secret_id`, and `version`.
+For `crypto_provider = 'local'`, the local provider SHALL use
+the v0002 legacy UTF-8 bytes
+`{team_id}\x00{secret_id}\x00{decimal_version}` used when the
+row was sealed. For `crypto_provider = 'transit'`, the active
+provider SHALL use the UTF-8 bytes
+`"team_id=<team_id>\nsecret_id=<secret_id>\nversion=<uint64>\n"`.
+Each provider's decrypt input SHALL be byte-equal to that
+provider's original encrypt input for the row. The migration
+worker SHALL decrypt with the legacy format and encrypt with the
+active format; this re-authenticates the same identity triple
+rather than performing byte-equal re-encryption. Neither format
+contains a provider marker, scope marker, nonce, key reference,
+or token. The State Registry SHALL return the non-revealing
 `404 environment_unknown_or_unavailable` shape and audit
 the failure with the `provider_invalid_aad_or_ciphertext`
 outcome status class whenever the provider reports an AAD
@@ -528,9 +545,9 @@ for any authorization or source-of-truth purpose
 verification, the worker SHALL claim the per-row checkpoint
 under row-level lock by transitioning `state = 'pending'`
 (or `'failed'`) to `'in_progress'`, decrypt through the
-local provider with the canonical `associated_data` byte
-string, encrypt through the active provider with the same
-canonical byte string, and in one transaction that holds a
+local provider with the v0002 legacy `associated_data` byte
+string, encrypt through the active provider with the v0008
+active byte string, and in one transaction that holds a
 row-level lock on both the `crypto_migration_checkpoints`
 row (keyed by `(migration_name, team_id, secret_id,
 version)`) and the targeted `secret_versions` row, rewrite
@@ -573,25 +590,25 @@ intact, and cutover trusts them through that evidence.
 #### Scenario: Migration happy path verifies canonical identity and rewrites envelope atomically
 
 - **WHEN** the migration worker selects a `crypto_provider
-  = 'local'` row whose canonical `secrets` parent row
+= 'local'` row whose canonical `secrets` parent row
   exists with the row's same `team_id` and whose
   `(secret_id, version)` identity still resolves on the
   parent
 - **THEN** the worker claims the per-row checkpoint under
   row-level lock keyed by `(migration_name, team_id,
-  secret_id, version)`, decrypts locally in memory with the
-  canonical `associated_data` byte string whose `team_id`
+secret_id, version)`, decrypts locally in memory with the
+  v0002 legacy `associated_data` byte string whose `team_id`
   is the canonical team's identifier, encrypts through the
-  active provider with the same canonical byte string,
+  active provider with the v0008 active byte string,
   and in one transaction that holds a row-level lock on
   both rows, rewrites ONLY the envelope columns
   (`ciphertext`, `key_id`, `key_version`,
   `crypto_provider = 'transit'`, `migrated_at`) of the
   targeted row, marks the checkpoint `state = 'verified',
-  verified_at = NOW()`, and appends a
+verified_at = NOW()`, and appends a
   `secret_version_migrated` audit entry with identifier-
   level metadata only; the targeted row's `(secret_id,
-  version)` identity is unchanged; the row is never
+version)` identity is unchanged; the row is never
   visible to a reader in an intermediate state; plaintext
   never persists, is never logged, is never audited, is
   never returned to any operator, and travels only inside
@@ -602,9 +619,9 @@ intact, and cutover trusts them through that evidence.
 - **WHEN** the migration worker is restarted between two
   immutable versions
 - **THEN** the worker resumes from the next `(team_id,
-  secret_id, version)` row in
+secret_id, version)` row in
   `crypto_migration_checkpoints` whose `state IN
-  ('pending','failed')` after the restart, never re-encrypts
+('pending','failed')` after the restart, never re-encrypts
   any row whose marker is already `'transit'`, never
   duplicates any canonical `audit_entries` row, and
   produces the same final state as a single uninterrupted
@@ -618,9 +635,9 @@ intact, and cutover trusts them through that evidence.
   `crypto_provider = 'transit'` during the migration window
 - **THEN** every open-environment read and every secret
   replacement routes by the row's persisted marker to the
-  corresponding provider with the same canonical
-  `associated_data` byte string, the non-revealing `404
-  environment_unknown_or_unavailable` shape is returned
+  corresponding provider with that provider's documented
+  `associated_data` byte format, the non-revealing `404
+environment_unknown_or_unavailable` shape is returned
   unchanged on every denial, and no plaintext is exchanged
   between the two providers
 
@@ -655,18 +672,18 @@ worker-state row. The scan SHALL confirm, all in one
 transaction:
 
 - `SELECT COUNT(*) FROM secret_versions WHERE
-  crypto_provider = 'local'` equals `0`.
+crypto_provider = 'local'` equals `0`.
 - For every `secret_versions` row where `migrated_at IS NOT
-  NULL` and `crypto_provider = 'transit'`, the matching row
+NULL` and `crypto_provider = 'transit'`, the matching row
   in `crypto_migration_checkpoints` keyed by
   `(migration_name, team_id, secret_id, version) =
-  ('local_to_transit', canonical_team_id, secret_id, version)`
+('local_to_transit', canonical_team_id, secret_id, version)`
   (where the canonical team_id is derived from the
   `secrets` parent of the version row) has `state =
-  'verified'` and `verified_at >= migrated_at`.
+'verified'` and `verified_at >= migrated_at`.
 - `SELECT COUNT(*) FROM crypto_migration_checkpoints
-  WHERE state IN ('pending','in_progress','failed')
-  AND migration_name = 'local_to_transit'` equals `0`;
+WHERE state IN ('pending','in_progress','failed')
+AND migration_name = 'local_to_transit'` equals `0`;
   the absence of `in_progress` rows is the worker-idle
   proof — there is no other worker-state row.
 - The active provider's `GET /v1/<mount>/keys/<key_name>`
@@ -692,7 +709,7 @@ unchanged by this procedure.
 - **THEN** State Registry accepts the procedure, records a
   plaintext-free audit entry with action `crypto.cutover`
   and outcome `succeeded`, sets `crypto.local.enabled =
-  false`, and continues to serve every Transit row under the
+false`, and continues to serve every Transit row under the
   active provider
 
 #### Scenario: Cutover rejected when any row is still local
@@ -701,7 +718,7 @@ unchanged by this procedure.
   procedure and the canonical `secret_versions` table still
   contains any row with `crypto_provider = 'local'` or any
   per-row checkpoint in `state IN
-  ('pending','in_progress','failed')`
+('pending','in_progress','failed')`
 - **THEN** State Registry rejects the procedure, records the
   rejection in `crypto_migration_checkpoints`, audits the
   rejection with identifier-level metadata only, and
@@ -813,7 +830,7 @@ canonical authorization check passes.
 - **WHEN** every canonical authorization check passes and
   the active Transit server reports a sealed state
 - **THEN** State Registry returns the non-revealing `404
-  environment_unknown_or_unavailable` shape with zero
+environment_unknown_or_unavailable` shape with zero
   plaintext disclosure and audits the rejection with the
   `provider_unavailable` outcome status class and
   identifier-level metadata only
@@ -824,7 +841,7 @@ canonical authorization check passes.
   the active Transit server returns an ACL denial for the
   encrypt, decrypt, or rotate call
 - **THEN** State Registry returns the non-revealing `404
-  environment_unknown_or_unavailable` shape with zero
+environment_unknown_or_unavailable` shape with zero
   plaintext disclosure and audits the rejection with the
   `provider_forbidden` outcome status class and
   identifier-level metadata only
@@ -835,7 +852,7 @@ canonical authorization check passes.
   the active Transit server reports an `associated_data`
   mismatch for the provider decrypt call
 - **THEN** State Registry returns the non-revealing `404
-  environment_unknown_or_unavailable` shape with zero
+environment_unknown_or_unavailable` shape with zero
   plaintext disclosure, zero Transit error-body
   disclosure, and audits the rejection with the
   `provider_invalid_aad_or_ciphertext` outcome status class

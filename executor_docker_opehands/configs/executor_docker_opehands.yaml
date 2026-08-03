@@ -1,15 +1,10 @@
 executor_api_bind: "127.0.0.1:8020"
-routing_target: openhands
 executor_max_containers: 2
 docker_socket_path: /var/run/docker.sock
 openhands_image: ghcr.io/openhands/agent-server:latest-python
 openhands_host_port_start: 18000
 openhands_host_port_end: 18099
 openhands_api_key: ""
-openhands_interrupt_endpoint: /api/conversations/{conversation_id}/pause
-openhands_message_endpoint: /api/conversations/{conversation_id}/events
-openhands_message_event_type: message
-openhands_interrupt_timeout: 15s
 openhands_startup_timeout: 60s
 openhands_drain_timeout: 30s
 # V1 conversation startup fields. The Executor must satisfy exactly one
@@ -24,6 +19,13 @@ openhands_llm_usage_id: "flowai-executor"
 openhands_initial_run: true
 image_pull_policy: if-not-present
 log_level: info
-mocked_server_url: http://127.0.0.1:8080/v1
-env_scope_token: default-scope
+# State Registry is the Executor's mandatory control plane.
+state_registry_url: "https://127.0.0.1:8443"
+# These three mTLS paths are REQUIRED: production connects to the
+# State Registry is mTLS, so the Executor must present a client
+# keypair and trust the server CA. They MUST point to PEM-encoded
+# files on disk.
+state_registry_tls_client_cert: ""
+state_registry_tls_client_key: ""
+state_registry_tls_server_ca: ""
 poll_interval: 2s

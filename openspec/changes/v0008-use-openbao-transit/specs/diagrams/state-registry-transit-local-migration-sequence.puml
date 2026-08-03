@@ -43,15 +43,15 @@ loop per (team_id, secret_id, version) in batch
   activate state_registry_service
   state_registry_service --> migration_worker_service : canonical confirmed\n(or row removed from batch)
   deactivate state_registry_service
-  migration_worker_service -> local_provider_service : Decrypt(local_aad)\nlocal_aad = team_id=<canonical_team_id>\\nsecret_id=<secret_id>\\nversion=<version>
+  migration_worker_service -> local_provider_service : Decrypt(local_aad)\nlocal_aad = {canonical_team_id}\\x00{secret_id}\\x00{decimal_version}\n(v0002 legacy bytes used at seal time)
   activate local_provider_service
   local_provider_service --> migration_worker_service : plaintext in State Registry process memory
   deactivate local_provider_service
-  migration_worker_service -> openbao_transit_server : Encrypt(transit_aad)\nplaintext=<b64>, associated_data=<b64>\n(transit_aad = SAME byte string as local_aad:\nteam_id=<canonical_team_id>\\nsecret_id=<secret_id>\\nversion=<version>)\n(verified mTLS-protected in-flight request)
+  migration_worker_service -> openbao_transit_server : Encrypt(transit_aad)\nplaintext=<b64>, associated_data=<b64>\ntransit_aad = team_id=<canonical_team_id>\\nsecret_id=<secret_id>\\nversion=<uint64>\\n\n(v0008 active bytes; NOT byte-equal to local_aad)\n(verified mTLS-protected in-flight request)
   activate openbao_transit_server
   openbao_transit_server --> migration_worker_service : 200 ciphertext=vault:v<N>:...\n(opaque key_id, key_version=N)
   deactivate openbao_transit_server
-  migration_worker_service -> state_registry_service : persist migrated row\n(ONE transaction; row-level lock on both rows;\nenvelope columns only; (secret_id, version) identity unchanged;\ncanonical team_id from secrets parent)\nUPDATE secret_versions\n  SET ciphertext=$1, key_id=$2, key_version=$3,\n      crypto_provider='transit', migrated_at=NOW()\n  WHERE secret_id=$4 AND version=$5\n  AND crypto_provider='local'\n  -- CAS guard: no already-committed 'transit' row\nUPDATE crypto_migration_checkpoints\n  SET state='verified', verified_at=NOW()\n  WHERE migration_name='local_to_transit'\n  AND team_id=$6 AND secret_id=$4 AND version=$5\nINSERT audit (secret_version_migrated, accepted,\nidentifier-level metadata only)
+  migration_worker_service -> state_registry_service : persist migrated row\n(ONE transaction; row-level lock on both rows;\nmatching transaction-local migration authorization marker;\nenvelope columns only; (secret_id, version) identity unchanged;\ncanonical team_id from secrets parent)\nUPDATE secret_versions\n  SET ciphertext=$1, key_id=$2, key_version=$3,\n      crypto_provider='transit', migrated_at=NOW()\n  WHERE secret_id=$4 AND version=$5\n  AND crypto_provider='local'\n  -- CAS guard: no already-committed 'transit' row\nUPDATE crypto_migration_checkpoints\n  SET state='verified', verified_at=NOW()\n  WHERE migration_name='local_to_transit'\n  AND team_id=$6 AND secret_id=$4 AND version=$5\nINSERT audit (secret_version_migrated, accepted,\nidentifier-level metadata only)
   activate state_registry_service
   state_registry_service -> state_registry_db : UPDATE + UPDATE + INSERT\nin one transaction
   state_registry_db --> state_registry_service : committed atomically

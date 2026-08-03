@@ -16,6 +16,7 @@ type ExecutorIdentity struct {
 	ExecutorID string
 	Scope      string
 	TeamID     *string
+	RequestID  string
 }
 
 // ExecutorRegistrationRequest is the closed request body for

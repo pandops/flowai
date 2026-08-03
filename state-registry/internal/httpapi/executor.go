@@ -36,6 +36,7 @@ func RegisterExecutor(r chi.Router, logger *slog.Logger, admin store.AdminReposi
 	r.Put("/executors/{executor_id}", h.register)
 	r.Get("/executors/{executor_id}", h.get)
 	r.Get("/executors/{executor_id}/tasks", h.discover)
+	r.Post("/executors/{executor_id}/claim", h.claim)
 }
 
 func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +74,10 @@ func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validIdentifier(executorID) || !validText(req.ExecutorType, 128) || !validText(req.Identity, 512) || req.MaxCapacity < 0 || req.RunningCount < 0 || !validJSONObject(req.RuntimeMetadata) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "registration fields are invalid")
+		return
+	}
+	if req.Identity != identity.ExecutorID {
+		h.writeError(w, r, http.StatusForbidden, "not_authorized", "Executor identity does not match registration")
 		return
 	}
 	if req.Scope == platform.ExecutorScopeTeam {
@@ -251,6 +256,55 @@ func (h *executorHandlers) authenticate(w http.ResponseWriter, r *http.Request, 
 		return platform.ExecutorIdentity{}, false
 	}
 	return identity, true
+}
+
+func (h *executorHandlers) claim(w http.ResponseWriter, r *http.Request) {
+	executorID := chi.URLParam(r, "executor_id")
+	identity, ok := h.authenticate(w, r, executorID)
+	if !ok {
+		return
+	}
+	var raw map[string]json.RawMessage
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxAdminRequestBytes))
+	if err != nil || json.Unmarshal(body, &raw) != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "request body is invalid")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	var req platform.ClaimRequest
+	if err := decodeAdminJSON(w, r, &req); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "request body is invalid")
+		return
+	}
+	if !validIdentifier(req.TaskID) || !validIdentifier(req.CommandID) {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "task_id and command_id are required")
+		return
+	}
+	if _, exists := raw["task_id"]; !exists {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "task_id is required")
+		return
+	}
+	if _, exists := raw["command_id"]; !exists {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "command_id is required")
+		return
+	}
+	resp, err := h.repo.ClaimTask(r.Context(), req, executorID, identity)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrExecutorNotFound):
+			h.writeError(w, r, http.StatusNotFound, "executor_unknown", "Executor is unknown")
+		case errors.Is(err, store.ErrTaskNotFound), errors.Is(err, store.ErrTaskUnknown):
+			h.writeError(w, r, http.StatusNotFound, "task_not_found", "task is unknown or unavailable")
+		case errors.Is(err, store.ErrTaskAlreadyClaimed):
+			h.writeError(w, r, http.StatusConflict, "task_already_claimed", "the task is already claimed under a different command_id")
+		case errors.Is(err, store.ErrOlderTaskMustBeClaimedFirst):
+			h.writeError(w, r, http.StatusConflict, "older_task_must_be_claimed_first", "an older eligible pending task must be claimed first")
+		default:
+			h.repositoryError(w, r, err)
+		}
+		return
+	}
+	JSON(w, http.StatusOK, resp)
 }
 
 func (h *executorHandlers) repositoryError(w http.ResponseWriter, r *http.Request, err error) {

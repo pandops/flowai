@@ -53,17 +53,25 @@ const AdminRole = "admin"
 // binding during encoder construction; the decoder rejects any cursor
 // whose declared ordering differs from the binding.
 const (
-	OrderingAdminTags = "team_id_asc__execution_tag_asc__task_type_id_asc"
-	OrderingTasksDesc = "ingested_at_desc__task_id_desc"
+	OrderingAdminTags         = "team_id_asc__execution_tag_asc__task_type_id_asc"
+	OrderingTasksDesc         = "ingested_at_desc__task_id_desc"
+	OrderingAuditDesc         = "occurred_at_desc__audit_id_desc"
+	OrderingEnvironmentsAsc   = "created_at_asc__environment_id_asc"
+	OrderingSecretsAsc        = "created_at_asc__secret_id_asc"
+	OrderingSecretVersionsAsc = "version_asc__secret_id_asc"
 )
 
 // Endpoints known to the cursor layer. The decoder rejects any cursor
 // whose endpoint label does not match the endpoint that issued the
 // request.
 const (
-	EndpointAdminTags    = "GET:/admin/tags"
-	EndpointAdminTasks   = "GET:/admin/tasks"
-	EndpointGatewayTasks = "GET:/v1/tasks"
+	EndpointAdminTags             = "GET:/admin/tags"
+	EndpointAdminTasks            = "GET:/admin/tasks"
+	EndpointGatewayTasks          = "GET:/v1/tasks"
+	EndpointGatewayAudit          = "GET:/v1/audit"
+	EndpointGatewayEnvironments   = "GET:/v1/environments"
+	EndpointGatewaySecrets        = "GET:/v1/environments/{environment_id}/secrets"
+	EndpointGatewaySecretVersions = "GET:/v1/environments/{environment_id}/secrets/{secret_id}/versions"
 )
 
 // KeyID is the opaque identifier of the server-controlled HMAC key used
@@ -114,13 +122,17 @@ func (i Identity) Equal(o Identity) bool {
 // or caller-tunable fields (no algorithm, no key_id, no MAC bytes inside
 // the envelope). The key_id is a separate component on the wire.
 type envelope struct {
-	Endpoint     string             `json:"ep"`
-	Scope        string             `json:"sc"`
-	Ordering     string             `json:"or"`
-	Direction    string             `json:"dr"`
-	Filters      map[string]string  `json:"ft"`
-	TagPosition  *tagPositionTuple  `json:"tp,omitempty"`
-	TaskPosition *taskPositionTuple `json:"kp,omitempty"`
+	Endpoint              string                      `json:"ep"`
+	Scope                 string                      `json:"sc"`
+	Ordering              string                      `json:"or"`
+	Direction             string                      `json:"dr"`
+	Filters               map[string]string           `json:"ft"`
+	TagPosition           *tagPositionTuple           `json:"tp,omitempty"`
+	TaskPosition          *taskPositionTuple          `json:"kp,omitempty"`
+	AuditPosition         *auditPositionTuple         `json:"ap,omitempty"`
+	EnvironmentPosition   *environmentPositionTuple   `json:"enp,omitempty"`
+	SecretPosition        *secretPositionTuple        `json:"sep,omitempty"`
+	SecretVersionPosition *secretVersionPositionTuple `json:"svp,omitempty"`
 }
 
 // tagPositionTuple is the after-cursor continuation for the documented
@@ -137,6 +149,34 @@ type tagPositionTuple struct {
 type taskPositionTuple struct {
 	IngestedAtNano int64  `json:"i"`
 	TaskID         string `json:"t"`
+}
+
+type auditPositionTuple struct {
+	OccurredAtNano int64  `json:"o"`
+	AuditID        string `json:"a"`
+}
+
+// environmentPositionTuple is the after-cursor continuation for the
+// documented (created_at ASC, environment_id ASC) ordering.
+type environmentPositionTuple struct {
+	CreatedAtNano int64  `json:"c"`
+	EnvironmentID string `json:"e"`
+}
+
+// secretPositionTuple is the after-cursor continuation for the
+// documented (created_at ASC, secret_id ASC) ordering of logical
+// secrets under one environment.
+type secretPositionTuple struct {
+	CreatedAtNano int64  `json:"c"`
+	SecretID      string `json:"s"`
+}
+
+// secretVersionPositionTuple is the after-cursor continuation for the
+// documented (version ASC, secret_id ASC) ordering of secret_versions
+// under one logical secret.
+type secretVersionPositionTuple struct {
+	Version  int    `json:"v"`
+	SecretID string `json:"s"`
 }
 
 // Keyring is the server-controlled rotating key set consulted by the
@@ -160,12 +200,16 @@ func invalid(reason string) error { return &invalidError{reason: reason} }
 
 // EncodeIssue is the structured input to Encode.
 type EncodeIssue struct {
-	Endpoint     string
-	Identity     Identity
-	Ordering     string
-	Filters      map[string]string
-	TagPosition  *tagPositionTuple
-	TaskPosition *taskPositionTuple
+	Endpoint              string
+	Identity              Identity
+	Ordering              string
+	Filters               map[string]string
+	TagPosition           *tagPositionTuple
+	TaskPosition          *taskPositionTuple
+	AuditPosition         *auditPositionTuple
+	EnvironmentPosition   *environmentPositionTuple
+	SecretPosition        *secretPositionTuple
+	SecretVersionPosition *secretVersionPositionTuple
 }
 
 // Encode returns the opaque base64url cursor string for the supplied
@@ -188,13 +232,17 @@ func Encode(keyring Keyring, issue EncodeIssue) (string, error) {
 		return "", fmt.Errorf("cursor: keyring missing key %q", keyID)
 	}
 	env := envelope{
-		Endpoint:     issue.Endpoint,
-		Scope:        issue.Identity.Scope(),
-		Ordering:     issue.Ordering,
-		Direction:    Direction,
-		Filters:      canonicalFilters(issue.Filters),
-		TagPosition:  issue.TagPosition,
-		TaskPosition: issue.TaskPosition,
+		Endpoint:              issue.Endpoint,
+		Scope:                 issue.Identity.Scope(),
+		Ordering:              issue.Ordering,
+		Direction:             Direction,
+		Filters:               canonicalFilters(issue.Filters),
+		TagPosition:           issue.TagPosition,
+		TaskPosition:          issue.TaskPosition,
+		AuditPosition:         issue.AuditPosition,
+		EnvironmentPosition:   issue.EnvironmentPosition,
+		SecretPosition:        issue.SecretPosition,
+		SecretVersionPosition: issue.SecretVersionPosition,
 	}
 	envBytes, err := json.Marshal(env)
 	if err != nil {
@@ -284,6 +332,25 @@ func TagPosition(env *envelope) *tagPositionTuple { return env.TagPosition }
 // envelope. Returns nil when the envelope carries no task position.
 func TaskPosition(env *envelope) *taskPositionTuple { return env.TaskPosition }
 
+func AuditPosition(env *envelope) *auditPositionTuple { return env.AuditPosition }
+
+// EnvironmentPosition returns the environment continuation tuple from
+// the decoded envelope. Returns nil when the envelope carries no
+// environment position.
+func EnvironmentPosition(env *envelope) *environmentPositionTuple { return env.EnvironmentPosition }
+
+// SecretPosition returns the secret continuation tuple from the
+// decoded envelope. Returns nil when the envelope carries no secret
+// position.
+func SecretPosition(env *envelope) *secretPositionTuple { return env.SecretPosition }
+
+// SecretVersionPosition returns the secret-version continuation tuple
+// from the decoded envelope. Returns nil when the envelope carries no
+// secret-version position.
+func SecretVersionPosition(env *envelope) *secretVersionPositionTuple {
+	return env.SecretVersionPosition
+}
+
 // TagPositionTuple constructs a tag continuation tuple from the
 // caller-supplied (team_id, execution_tag, task_type_id).
 func TagPositionTuple(teamID, executionTag, taskTypeID string) *tagPositionTuple {
@@ -294,6 +361,28 @@ func TagPositionTuple(teamID, executionTag, taskTypeID string) *tagPositionTuple
 // caller-supplied (ingested_at, task_id).
 func TaskPositionTuple(ingestedAtNano int64, taskID string) *taskPositionTuple {
 	return &taskPositionTuple{IngestedAtNano: ingestedAtNano, TaskID: taskID}
+}
+
+func AuditPositionTuple(occurredAtNano int64, auditID string) *auditPositionTuple {
+	return &auditPositionTuple{OccurredAtNano: occurredAtNano, AuditID: auditID}
+}
+
+// EnvironmentPositionTuple constructs an environment continuation
+// tuple from the caller-supplied (created_at, environment_id).
+func EnvironmentPositionTuple(createdAtNano int64, environmentID string) *environmentPositionTuple {
+	return &environmentPositionTuple{CreatedAtNano: createdAtNano, EnvironmentID: environmentID}
+}
+
+// SecretPositionTuple constructs a logical-secret continuation tuple
+// from the caller-supplied (created_at, secret_id).
+func SecretPositionTuple(createdAtNano int64, secretID string) *secretPositionTuple {
+	return &secretPositionTuple{CreatedAtNano: createdAtNano, SecretID: secretID}
+}
+
+// SecretVersionPositionTuple constructs a secret-version continuation
+// tuple from the caller-supplied (version, secret_id).
+func SecretVersionPositionTuple(version int, secretID string) *secretVersionPositionTuple {
+	return &secretVersionPositionTuple{Version: version, SecretID: secretID}
 }
 
 // ----------------------------------------------------------------------

@@ -49,12 +49,21 @@ import (
 // Registry identity). flowai.cleanup_id is stable across process restarts
 // (so a fresh process can find and remove leftover containers from a
 // previous run). They are intentionally distinct.
+//
+// flowai.team_id, flowai.executor_scope, flowai.command_id, and
+// flowai.resolved_image_source are v0002 record-keeping labels the
+// Docker metadata surface exposes to contract tests; the values are
+// carried verbatim from the State Registry's claim response.
 const (
-	LabelExecutorID  = "flowai.executor_id"
-	LabelCleanupID   = "flowai.cleanup_id"
-	LabelRuntime     = "flowai.runtime"
-	LabelTaskID      = "flowai.task_id"
-	RuntimeOpenHands = "openhands"
+	LabelExecutorID          = "flowai.executor_id"
+	LabelCleanupID           = "flowai.cleanup_id"
+	LabelRuntime             = "flowai.runtime"
+	LabelTaskID              = "flowai.task_id"
+	LabelTeamID              = "flowai.team_id"
+	LabelExecutorScope       = "flowai.executor_scope"
+	LabelCommandID           = "flowai.command_id"
+	LabelResolvedImageSource = "flowai.resolved_image_source"
+	RuntimeOpenHands         = "openhands"
 )
 
 // PortMapping describes a host:container port binding.

@@ -141,6 +141,23 @@ type GatewayTaskPage struct {
 	Page  AdminPageInfo      `json:"page"`
 }
 
+// TaskEvent is one immutable canonical task lifecycle event.
+type TaskEvent struct {
+	EventID    string          `json:"event_id"`
+	TeamID     string          `json:"team_id"`
+	TaskID     string          `json:"task_id"`
+	ExecutorID *string         `json:"executor_id"`
+	EventType  string          `json:"event_type"`
+	OccurredAt string          `json:"occurred_at"`
+	Payload    json.RawMessage `json:"payload"`
+}
+
+// TaskEventPage is the ordered, team-filtered event-history response.
+type TaskEventPage struct {
+	Items []TaskEvent   `json:"items"`
+	Page  AdminPageInfo `json:"page"`
+}
+
 // AdminTagFilter captures the accepted query filters for
 // GET /admin/tags. Empty strings mean "no filter on this column".
 type AdminTagFilter struct {

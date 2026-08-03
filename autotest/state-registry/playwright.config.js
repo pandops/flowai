@@ -1,7 +1,16 @@
 module.exports = {
-  testDir: './tests',
+  testDir: "./tests",
   testMatch: /.*\.spec\.ts$/,
   workers: 1,
   timeout: 120_000,
-  reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
+  outputDir: "../reports/video/state-registry",
+  preserveOutput: "always",
+  use: {
+    trace: "on",
+    video: "on",
+  },
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "../reports/api/state-registry", open: "never" }],
+  ],
 };

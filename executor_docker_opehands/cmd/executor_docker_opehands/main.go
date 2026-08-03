@@ -21,7 +21,6 @@ import (
 	"github.com/flowai/platform/executor_docker_opehands/internal/executor"
 	"github.com/flowai/platform/executor_docker_opehands/internal/httpapi"
 	"github.com/flowai/platform/executor_docker_opehands/internal/logging"
-	"github.com/flowai/platform/executor_docker_opehands/internal/mockedclient"
 	"github.com/flowai/platform/executor_docker_opehands/internal/openhands"
 	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
@@ -47,12 +46,7 @@ func main() {
 		logger.Error("docker client init failed", "err", err.Error())
 		os.Exit(1)
 	}
-	mocked := mockedclient.New(cfg.MockedServerURL, nil)
-	if cfg.StateRegistryURL != "" {
-		mocked = mockedclient.NewStateRegistry(cfg.StateRegistryURL, nil)
-	}
-
-	exec := executor.New(cfg, docker, mocked, logger)
+	exec := executor.New(cfg, docker, logger)
 
 	// Local platform health API.
 	mux := httpapi.NewRouter("executor_docker_opehands", logger)

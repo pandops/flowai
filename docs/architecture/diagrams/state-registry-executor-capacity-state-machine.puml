@@ -1,0 +1,92 @@
+' diagram-type: state-machine
+@startuml
+!pragma layout smetana
+title v0002 State Registry - Executor Capacity State Machine
+
+note as ConcreteNaming
+  Concrete Executor services follow the platform naming convention
+  documented in AGENTS.md:
+    executor_<runtime>_<tool>
+  Current concrete Executor: executor_docker_opehands
+  (runtime = docker, tool = openhands; "opehands" is the service
+  identifier; the external product spelling "OpenHands" stays
+  unchanged). The state machine below is generic over every concrete
+  Executor under the executor_<runtime>_<tool> family.
+end note
+
+state "Executor local: available" as ExAvail
+state "Executor local: full" as ExFull
+
+[*] --> ExAvail : Executor starts\nscope + tag immutable\nlocally observes max_capacity, running_count
+
+ExAvail --> ExFull : Executor local\nrunning_count >= max_capacity
+ExFull --> ExAvail : Executor local\nlocal runtime terminates
+
+note right of ExAvail
+  When available, Executor discovers
+  pending tasks matching eligibility
+  and tag, ordered (ingested_at ASC,
+  task_id ASC), then claims oldest
+  eligible pending with command_id.
+  Only starts runtime after 200 claimed.
+end note
+
+note right of ExFull
+  When full, Executor stops discovery
+  and claim requests. Registry emits
+  no capacity-based rejection
+  (no 422 executor_at_capacity).
+end note
+
+note as TeamInvariant
+  scope = team: Executor bound to one
+  immutable team_id referencing existing
+  team; envelope team_id verified against
+  authenticated Executor; foreign
+  identifiers -> non-revealing 404.
+  scope = system: no team binding;
+  envelope team_id verified against
+  parent task team_id; same-team
+  requirement becomes parent-task
+  team_id verification only.
+end note
+
+note as Observations
+  Executor appends executor_events with
+  executor_id NOT NULL; envelope team_id
+  matches scope. Latest max_capacity and
+  running_count mirror onto executors
+  in the same transaction. Observations
+  never gate discovery, claim, or events.
+end note
+
+note as RegistryContract
+  Claim responses:
+  - 200 claimed
+  - 409 older_task_must_be_claimed_first
+  - 409 task_already_claimed
+  - same (task_id, command_id) retry is
+    idempotent 200 claimed
+  - non-revealing 404 for unknown/foreign
+  No 422 executor_at_capacity.
+end note
+
+note as ImageSource
+  resolved_image set atomically at the
+  Created transition from four-level
+  precedence. Executor uses it verbatim
+  and refuses the task if it cannot be
+  pulled or started. No local image
+  fallback; no substitution.
+end note
+
+note as Scope
+  scope = team: flowai.team_id = auth team,
+  flowai.executor_scope = team,
+  flowai.command_id = claim command_id.
+  scope = system: flowai.team_id = parent
+  task team_id, flowai.executor_scope = system,
+  flowai.command_id = claim command_id.
+end note
+
+@enduml

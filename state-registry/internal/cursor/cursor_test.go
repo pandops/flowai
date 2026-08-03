@@ -501,6 +501,120 @@ func TestParseLimitAcceptsValid(t *testing.T) {
 	}
 }
 
+// TestEncodeDecodeEnvironmentPositionRoundTrip covers the new
+// environment cursor tuple.
+func TestEncodeDecodeEnvironmentPositionRoundTrip(t *testing.T) {
+	keyring := newKeyring(t)
+	tok := mustEncode(t, keyring, cursor.EncodeIssue{
+		Endpoint:            cursor.EndpointGatewayEnvironments,
+		Identity:            gatewayIdentity(),
+		Ordering:            cursor.OrderingEnvironmentsAsc,
+		Filters:             map[string]string{"team_id": "team-a"},
+		EnvironmentPosition: cursor.EnvironmentPositionTuple(1700000000000000000, "env-a"),
+	})
+	env, err := cursor.Decode(keyring, cursor.DecodeRequest{
+		Token:    tok,
+		Endpoint: cursor.EndpointGatewayEnvironments,
+		Identity: gatewayIdentity(),
+		Ordering: cursor.OrderingEnvironmentsAsc,
+		Filters:  map[string]string{"team_id": "team-a"},
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pos := cursor.EnvironmentPosition(env)
+	if pos == nil {
+		t.Fatalf("environment position missing")
+	}
+	if pos.EnvironmentID != "env-a" || pos.CreatedAtNano != 1700000000000000000 {
+		t.Errorf("env position=%+v, want env-a/1700000000000000000", pos)
+	}
+}
+
+// TestEncodeDecodeSecretPositionRoundTrip covers the new logical
+// secret cursor tuple.
+func TestEncodeDecodeSecretPositionRoundTrip(t *testing.T) {
+	keyring := newKeyring(t)
+	tok := mustEncode(t, keyring, cursor.EncodeIssue{
+		Endpoint:       cursor.EndpointGatewaySecrets,
+		Identity:       gatewayIdentity(),
+		Ordering:       cursor.OrderingSecretsAsc,
+		Filters:        map[string]string{"team_id": "team-a", "environment_id": "env-a"},
+		SecretPosition: cursor.SecretPositionTuple(1700000000000000000, "secret-a"),
+	})
+	env, err := cursor.Decode(keyring, cursor.DecodeRequest{
+		Token:    tok,
+		Endpoint: cursor.EndpointGatewaySecrets,
+		Identity: gatewayIdentity(),
+		Ordering: cursor.OrderingSecretsAsc,
+		Filters:  map[string]string{"team_id": "team-a", "environment_id": "env-a"},
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pos := cursor.SecretPosition(env)
+	if pos == nil {
+		t.Fatalf("secret position missing")
+	}
+	if pos.SecretID != "secret-a" || pos.CreatedAtNano != 1700000000000000000 {
+		t.Errorf("secret position=%+v", pos)
+	}
+}
+
+// TestEncodeDecodeSecretVersionPositionRoundTrip covers the new
+// secret-version cursor tuple.
+func TestEncodeDecodeSecretVersionPositionRoundTrip(t *testing.T) {
+	keyring := newKeyring(t)
+	tok := mustEncode(t, keyring, cursor.EncodeIssue{
+		Endpoint:              cursor.EndpointGatewaySecretVersions,
+		Identity:              gatewayIdentity(),
+		Ordering:              cursor.OrderingSecretVersionsAsc,
+		Filters:               map[string]string{"team_id": "team-a", "environment_id": "env-a", "secret_id": "secret-a"},
+		SecretVersionPosition: cursor.SecretVersionPositionTuple(2, "secret-a"),
+	})
+	env, err := cursor.Decode(keyring, cursor.DecodeRequest{
+		Token:    tok,
+		Endpoint: cursor.EndpointGatewaySecretVersions,
+		Identity: gatewayIdentity(),
+		Ordering: cursor.OrderingSecretVersionsAsc,
+		Filters:  map[string]string{"team_id": "team-a", "environment_id": "env-a", "secret_id": "secret-a"},
+	})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pos := cursor.SecretVersionPosition(env)
+	if pos == nil {
+		t.Fatalf("secret version position missing")
+	}
+	if pos.SecretID != "secret-a" || pos.Version != 2 {
+		t.Errorf("secret version position=%+v", pos)
+	}
+}
+
+// TestDecodeRejectsEnvironmentCrossEndpoint covers the
+// OpenSpec "Cross-endpoint cursor reuse is rejected" invariant
+// for the new environment endpoint.
+func TestDecodeRejectsEnvironmentCrossEndpoint(t *testing.T) {
+	keyring := newKeyring(t)
+	tok := mustEncode(t, keyring, cursor.EncodeIssue{
+		Endpoint:            cursor.EndpointGatewayEnvironments,
+		Identity:            gatewayIdentity(),
+		Ordering:            cursor.OrderingEnvironmentsAsc,
+		Filters:             map[string]string{"team_id": "team-a"},
+		EnvironmentPosition: cursor.EnvironmentPositionTuple(1700000000000000000, "env-a"),
+	})
+	_, err := cursor.Decode(keyring, cursor.DecodeRequest{
+		Token:    tok,
+		Endpoint: cursor.EndpointGatewaySecrets,
+		Identity: gatewayIdentity(),
+		Ordering: cursor.OrderingEnvironmentsAsc,
+		Filters:  map[string]string{"team_id": "team-a"},
+	})
+	if !errors.Is(err, cursor.ErrInvalid) {
+		t.Fatalf("err=%v, want ErrInvalid", err)
+	}
+}
+
 // split3 splits a cursor token on "." and returns the three parts.
 func split3(tok string) [3]string {
 	parts := [3]string{}
