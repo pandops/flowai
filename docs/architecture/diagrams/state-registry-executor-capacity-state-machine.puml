@@ -7,8 +7,8 @@ note as ConcreteNaming
   Concrete Executor services follow the platform naming convention
   documented in AGENTS.md:
     executor_<runtime>_<tool>
-  Current concrete Executor: executor_docker_opehands
-  (runtime = docker, tool = openhands; "opehands" is the service
+  Current concrete Executor: executor_docker_openhands
+  (runtime = docker, tool = openhands; "openhands" is the service
   identifier; the external product spelling "OpenHands" stays
   unchanged). The state machine below is generic over every concrete
   Executor under the executor_<runtime>_<tool> family.

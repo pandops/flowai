@@ -24,11 +24,11 @@ note right of Executors
   Concrete Executor services follow the platform naming convention
   documented in AGENTS.md:
     executor_<runtime>_<tool>
-  Current concrete Executor: executor_docker_opehands
-  (runtime = docker, tool = openhands; "opehands" is the service
+  Current concrete Executor: executor_docker_openhands
+  (runtime = docker, tool = openhands; "openhands" is the service
   identifier; the external product spelling "OpenHands" stays
-  unchanged). Future K8s executors will follow the same pattern with
-  runtime = k8s and tool selection pending.
+  unchanged). The planned K8s concrete service is
+  executor_k8s_openhands (runtime = k8s, tool = openhands).
 end note
 
 note right of State

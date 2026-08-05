@@ -5,7 +5,7 @@ only after its corresponding RED task has failed for the expected
 behavior-specific reason. Record the exact RED and GREEN
 command/result before checking an implementation task. The K8s Executor
 SHALL NOT be implemented before every `v0005.<n>` definition has a
-runnable Playwright test in `autotest/executor_k8s_<tool>/tests/` whose title
+runnable Playwright test in `autotest/executor_k8s_openhands/tests/` whose title
 contains the immutable `v0005.<n>` id.
 
 ## 1. Implementation-start test activation and harness
@@ -14,9 +14,9 @@ contains the immutable `v0005.<n>` id.
       `openspec/changes/v0005-executor-k8s/specs/test-cases/v0005.<n>-*.md`
       unchanged into `autotest/test-cases/` as the first implementation
       mutation; verify ordinals remain contiguous from `v0005.1` through
-      `v0005.9`, destinations do not collide, and no v0005 definition
+      `v0005.11`, destinations do not collide, and no v0005 definition
       remains under the change folder.
-- [ ] Bootstrap `autotest/executor_k8s_<tool>/` as an API-only Playwright
+- [ ] Bootstrap `autotest/executor_k8s_openhands/` as an API-only Playwright
       suite that starts the real State Registry and PostgreSQL processes,
       supplies authenticated Executor service identities for two distinct
       teams (`team-A` and `team-B`), supports controlled K8s Executor
@@ -38,7 +38,7 @@ contains the immutable `v0005.<n>` id.
       authenticated Executor identity) and `v0005.2` (registration with a
       `team_id` that does not match the identity-bound team is rejected
       without persistence); run
-      `npm --prefix autotest/k8s-executor test -- --grep 'v0005\.(1|2)\b'`
+      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.(1|2)\b'`
       and verify failure because team-bound registration, identity match,
       and immutability rules are absent.
 - [ ] **RED unit/integration:** add table-driven tests for zero, one,
@@ -74,7 +74,7 @@ contains the immutable `v0005.<n>` id.
       foreign-team `task_id` (claim, task detail read) return a
       non-revealing `404` indistinguishable from "resource does not exist";
       in both cases the Executor creates no Pod and appends no event); run
-      `npm --prefix autotest/k8s-executor test -- --grep 'v0005\.3\b'` and
+      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.3\b'` and
       verify failure because same-team exact-tag pending FIFO discovery,
       the team-filter-before-result-shaping rule, and the non-revealing
       cross-team `404` rule on point resources are absent.
@@ -156,8 +156,13 @@ contains the immutable `v0005.<n>` id.
       `occurred_at`, `payload` — creates the Kubernetes Pod carrying the
       canonical `task_id`, `command_id`, `team_id`, `executor_id`,
       `executor_scope`, and `resolved_image_source` labels and the runtime
-      label `flowai.runtime=k8s`, and emits exactly one of `finished` or
-      `failed` at terminal state with the same envelope shape; the task's
+      label `flowai.runtime=k8s`, treats the OpenHands terminal conversation
+      status rather than Pod exit code as authoritative, emits exactly one of
+      `finished` or `failed` with the same envelope shape, retains the Pod for
+      configured `finished_cleanup_delay` or `failed_cleanup_delay`, selected
+      by the accepted terminal event type, while keeping it in local capacity,
+      and then deletes it
+      idempotently; the task's
       canonical history is exactly `[created, running, finished]` with the
       Registry-appended `created` carrying non-null `executor_id` and the
       payload meaning `task <task_id> loaded by <executor_id>`) and
@@ -167,13 +172,19 @@ contains the immutable `v0005.<n>` id.
       returns `403 not_assigned`; an authenticated Executor whose envelope
       `team_id` differs from its immutable service binding returns `403
 team_mismatch`); run
-      `npm --prefix autotest/k8s-executor test -- --grep 'v0005\.(4|5)\b'`
+      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.(4|5)\b'`
       and verify failure because the FIFO claim response shape, the
       `resolved_image` flow, the Registry-appended first `created` event,
       the team_id envelope, `running`-after-claim ordering, and the
       event-denial taxonomy are absent.
-- [ ] **RED unit/integration:** add transition and envelope tests
+- [ ] **RED unit/integration:** add transition, cleanup-delay, and envelope tests
       covering the seven-field envelope for `running`/`finished`/`failed`,
+      OpenHands `finished` -> FlowAI `finished`, OpenHands
+      `failed`/`error`/`stuck`/`paused` -> FlowAI `failed`, confirmation that
+      agent-server Pod exit is not required, zero and non-zero
+      `finished_cleanup_delay`, `failed_cleanup_delay`, selection by accepted
+      terminal event type, capacity retention until cleanup, idempotent
+      deletion, and no duplicate terminal event on deletion failure,
       missing `team_id` rejection, envelope `team_id` mismatch (`403
 team_mismatch`), unassigned same-team writer (`403 not_assigned`),
       and foreign point probe (`404`); verify behavior-specific failures
@@ -182,8 +193,12 @@ team_mismatch`), unassigned same-team writer (`403 not_assigned`),
       every Executor-emitted task event (`running`/`finished`/`failed`)
       carrying `task_id`, `executor_id`, `team_id`, `event_id`,
       `event_type`, `occurred_at`, `payload`; emit `running` AFTER `200
-claimed` and BEFORE creating the Kubernetes Pod, emit exactly one of
-      `finished` or `failed` at terminal state, enforce the event-denial
+claimed` and BEFORE creating the Kubernetes Pod, derive exactly one of
+      `finished` or `failed` from the agent tool's explicit terminal signal,
+      select and start `finished_cleanup_delay` or `failed_cleanup_delay` only
+      after the corresponding event receives `202 accepted`, retain the Pod
+      and capacity slot during the selected delay, then delete idempotently; enforce
+      the event-denial
       taxonomy — `403 team_mismatch` for envelope `team_id` mismatch, `403
 not_assigned` for unassigned same-team writers, `404` for foreign
       task or Executor point identifiers, no `403` for foreign-team probes
@@ -200,6 +215,16 @@ not_assigned` for unassigned same-team writers, `404` for foreign
       mismatches, `403 not_assigned` for unassigned same-team writers, the
       same non-revealing `404` for foreign point probes and unknown
       identifiers, and no event appended on any rejection.
+- [ ] **RED Docker regression:** add Docker OpenHands tests proving the same
+      `finished_cleanup_delay` and `failed_cleanup_delay` configurations (each
+      default `0s`) are selected by accepted terminal event type and start only
+      after terminal-event acceptance, retain the container in local capacity
+      during a non-zero selected delay, and perform idempotent stop/removal
+      without a duplicate terminal task event.
+- [ ] **GREEN Docker regression:** add the cleanup-delay setting to
+      `executor_docker_opehands`, apply it between accepted terminal
+      conversation event and container cleanup, and keep shutdown/drain/error
+      cleanup bounded and idempotent.
 - [ ] **REFACTOR:** consolidate envelope validation and team-scoped
       event filtering behind narrow Executor-client interfaces without
       separating envelope validation from event forwarding; rerun all
@@ -210,7 +235,7 @@ not_assigned` for unassigned same-team writers, `404` for foreign
 - [ ] **RED E2E:** implement the runnable test for `v0005.6`
       (`max_capacity = running_count` does not cause the Registry to reject
       claim; the Executor alone decides when to start a Pod); run
-      `npm --prefix autotest/k8s-executor test -- --grep 'v0005\.6\b'` and
+      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.6\b'` and
       verify failure because the saturated-capacity rule,
       capacity-independent FIFO claim, and local-only slot enforcement are
       absent.
@@ -261,7 +286,7 @@ max_capacity`, and self-event observation writes; verify
       foreign-team or unassigned Executor — returns the same
       non-revealing `404 environment_unknown_or_unavailable` shape with
       no values and zero provider decrypt operations); run
-      `npm --prefix autotest/k8s-executor test -- --grep 'v0005\.7\b'` and
+      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.7\b'` and
       verify failure because the inherited v0002 token-contract
       validation, the `kid == key_id` check before any MAC computation,
       the `issued_at`/`expiry` window, the project-scope rule for
@@ -340,7 +365,7 @@ environment_unknown_or_unavailable` shape for every invalid /
       assigned same-team Executor reads and applies pending controls for
       its assigned task; a cross-team or unassigned control read returns
       a non-revealing `404`); run
-      `npm --prefix autotest/k8s-executor test -- --grep 'v0005\.8\b'` and
+      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.8\b'` and
       verify failure because assigned-task-only control reads and the
       cross-team `404` are absent.
 - [ ] **RED unit/integration:** add control-read tests covering the
@@ -376,7 +401,7 @@ environment_unknown_or_unavailable` shape for every invalid /
       re-attaches to existing Pods in Kubernetes without creating new
       Pods, emits no duplicate `running` event, and emits exactly one
       terminal `finished` or `failed` event per Pod); run
-      `npm --prefix autotest/k8s-executor test -- --grep 'v0005\.9\b'` and
+      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.9\b'` and
       verify failure because non-reassigning reconciliation, `team_id`
       immutability across restart, the executor-id-only re-read filter,
       the `owner_command_id` -> `flowai.command_id` Pod-matching rule, and
@@ -408,7 +433,47 @@ environment_unknown_or_unavailable` shape for every invalid /
       Executor-owned component without coupling it to discovery, claim, or
       Pod creation paths; rerun all targeted tests.
 
-## 9. Architecture diagrams
+## 9. Correct Docker OpenHands concrete service name
+
+- [ ] **BASELINE:** before the rename, run `go build ./...`,
+      `go test ./...`, `go test -race ./...`, and the existing
+      `autotest/executor_docker_opehands` Playwright suite; record the
+      results so the rename remains separable from behavior changes.
+- [ ] **RED E2E/contract:** implement the runnable test for `v0005.11` and
+      add or update regression assertions that require
+      directory, command, binary, config YAML, Go import path, wire
+      `executor_type`, slog `service` field, probe service label, package
+      name, and documentation identifier `executor_docker_openhands`, with
+      Go constant `ExecutorTypeDockerOpenHands`; verify they fail against
+      the existing misspelled `executor_docker_opehands` identifier.
+- [ ] **GREEN filesystem:** rename top-level
+      `executor_docker_opehands/` to `executor_docker_openhands/`, rename
+      its `cmd/` directory and config YAML to the same concrete identifier,
+      and rename `autotest/executor_docker_opehands/` to
+      `autotest/executor_docker_openhands/`; preserve file history as moves
+      and do not edit archived OpenSpec change artifacts.
+- [ ] **GREEN contract:** replace the misspelled current-state identifier
+      with `executor_docker_openhands` across Go imports, binary/build
+      invocations, wire values, State Registry fixtures and tests,
+      Playwright configuration, manual QA scripts, current architecture
+      diagrams/docs, README files, and active OpenSpec artifacts. Keep the
+      correctly spelled Go constant `ExecutorTypeDockerOpenHands`, change
+      its wire value to `executor_docker_openhands`, and provide no alias or
+      compatibility acceptance for `executor_docker_opehands`.
+- [ ] **GREEN VERIFY:** prove no non-archived source or current-state file
+      contains `executor_docker_opehands`; run `gofmt` on changed Go files,
+      `go build ./...`, `go vet ./...`, `go test ./...`, and
+      `go test -race ./...`; run the renamed Docker Playwright suite and
+      relevant State Registry contract tests; require all to pass with the
+      new filesystem and wire identifier.
+- [ ] **REFACTOR REVIEW:** inspect string-based and reflection-adjacent
+      references (YAML keys/values, JSON fixtures, shell scripts, package
+      names, Docker labels, executable paths, and test snapshots), confirm
+      archived OpenSpec artifacts retain the historical spelling, and keep
+      the rename commit purely structural except for the explicitly approved
+      breaking wire-value correction.
+
+## 10. Architecture diagrams
 
 - [ ] Prepare both proposed v0005 sequence diagrams already present:
       `01-k8s-executor-topology.puml` (`sequence`) and
@@ -427,17 +492,17 @@ environment_unknown_or_unavailable` shape for every invalid /
 openspec/changes/v0005-executor-k8s/specs/diagrams/*.puml --checkonly`
       and require both sources to compile without errors.
 
-## 10. Final verification and OpenSpec gates
+## 11. Final verification and OpenSpec gates
 
 - [ ] Fill every moved v0005 definition's
       `## Implementation reference` with its exact Playwright file path
       and test title; verify no test is skipped and every task records
       valid RED-before-GREEN evidence.
 - [ ] Run `gofmt` on changed Go files, `go test -race ./...`,
-      `go test -tags=integration ./executor_k8s_<tool>/...`, and `go build ./...`;
+      `go test -tags=integration ./executor_k8s_openhands/...`, and `go build ./...`;
       require all unit/integration/race/build checks to pass.
 - [ ] Run the full K8s Executor Playwright suite with
-      `npm --prefix autotest/k8s-executor test`; require every v0005 E2E
+      `npm --prefix autotest/executor_k8s_openhands test`; require every v0005 E2E
       to pass.
 - [ ] Run change validation:
       `npx -y @fission-ai/openspec@1.5.0 validate v0005-executor-k8s

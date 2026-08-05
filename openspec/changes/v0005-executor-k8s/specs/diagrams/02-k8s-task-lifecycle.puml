@@ -1,6 +1,6 @@
 ' diagram-type: sequence
 @startuml
-title v0005-executor-k8s - executor_k8s_<tool> team-scope lifecycle (FIFO claim and restart)
+title v0005-executor-k8s - executor_k8s_openhands team-scope lifecycle (FIFO claim and restart)
 
 !pragma layout smetana
 
@@ -8,19 +8,18 @@ note over k8s_executor
   Concrete Executor services follow the platform naming convention
   documented in AGENTS.md:
     executor_<runtime>_<tool>
-  Current concrete Executor: executor_docker_opehands
-  (runtime = docker, tool = openhands; "opehands" is the service
+  Current concrete Executor: executor_docker_openhands
+  (runtime = docker, tool = openhands; "openhands" is the service
   identifier; the external product spelling "OpenHands" stays
   unchanged).
   This K8s Executor will follow the same pattern:
-    executor_k8s_<tool>
-  with runtime = k8s and the agent tool selected when the K8s
-  runtime lands. Tool selection is pending; the wire value is fixed
-  by then, and the lifecycle below is generic over the chosen tool.
+    executor_k8s_openhands
+  with runtime = k8s and tool = openhands. The wire value and
+  lifecycle below are pinned to that concrete OpenHands binding.
 end note
 
 participant "Authenticated\nExecutor identity" as executor_identity
-participant "K8s Executor\nexecutor_k8s_<tool>" as k8s_executor
+participant "K8s Executor\nexecutor_k8s_openhands" as k8s_executor
 participant "State Registry" as state_registry
 participant "Kubernetes API" as kubernetes_api
 participant "Agent Pod" as agent_pod
@@ -28,7 +27,7 @@ participant "Agent Pod" as agent_pod
 == Registration (team-bound) ==
 k8s_executor -> executor_identity : present service credential\n(bound team_id = T-A)
 activate k8s_executor
-k8s_executor -> state_registry : PUT /v1/executors/{executor_id}\n{scope = team,\nexecutor_type = executor_k8s_<tool>,\nexactly one team_id = T-A,\nexactly one authorized_tag,\noptional display-only team_name,\nobserved max_capacity, observed running_count,\nruntime metadata}
+k8s_executor -> state_registry : PUT /v1/executors/{executor_id}\n{scope = team,\nexecutor_type = executor_k8s_openhands,\nexactly one team_id = T-A,\nexactly one authorized_tag,\noptional display-only team_name,\nobserved max_capacity, observed running_count,\nruntime metadata}
 activate state_registry
 state_registry -> state_registry : verify team_id matches identity-bound team\nreject zero/extra team_id\nreject team_id change
 state_registry --> k8s_executor : 200 Executor record\n(scope = team, team_id = T-A,\nauthorized_tag, observed capacity)
@@ -72,20 +71,25 @@ alt claimed
   k8s_executor -> kubernetes_api : watch Pod phase and logs
   note right of agent_pod : Pod carries labels:\nflowai.executor_id\nflowai.team_id = T-A\nflowai.task_id\nflowai.command_id\nflowai.executor_scope = team\nflowai.resolved_image_source\nflowai.runtime = k8s
 
-  == Terminal events ==
-  alt Pod terminated successfully
+  == Tool terminal event and delayed runtime cleanup ==
+  alt OpenHands conversation execution_status = finished
     k8s_executor -> state_registry : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id = T-A,\nevent_id, event_type = finished,\noccurred_at, payload}
     activate state_registry
     state_registry --> k8s_executor : 202 accepted
     deactivate state_registry
-  else Pod failed
+  else OpenHands status failed/error/stuck/paused or Pod failed
     k8s_executor -> state_registry : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id = T-A,\nevent_id, event_type = failed,\noccurred_at, payload}
     activate state_registry
     state_registry --> k8s_executor : 202 accepted
     deactivate state_registry
   end
 
-  k8s_executor -> kubernetes_api : delete or clean up terminal Pod
+  note over k8s_executor, agent_pod
+    OpenHands agent-server remains running after conversation completion.
+    Pod exit code is not the successful task-completion signal.
+  end note
+  k8s_executor -> k8s_executor : select delay by accepted event type\nfinished_cleanup_delay or failed_cleanup_delay\n(Pod remains counted against local capacity)
+  k8s_executor -> kubernetes_api : idempotently delete terminal task Pod
   deactivate agent_pod
 else eligible but non-oldest pending task
   state_registry --> k8s_executor : 409 older_task_must_be_claimed_first

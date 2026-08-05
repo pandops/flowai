@@ -8,9 +8,9 @@ note over Executor
   documented in AGENTS.md:
     executor_<runtime>_<tool>
   The current concrete Executor is
-    executor_docker_opehands
+    executor_docker_openhands
   where "docker" is the runtime and "openhands" is the agent tool;
-  "opehands" is the deliberate service identifier (the external
+  "openhands" is the concrete service identifier (the external
   product spelling "OpenHands" stays unchanged). The diagram below
   uses the generic "Executor" participant on purpose: it covers every
   concrete service under the executor_<runtime>_<tool> family.

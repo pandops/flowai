@@ -1,10 +1,30 @@
 ## MODIFIED Requirements
 
+### Requirement: Docker OpenHands concrete service uses the correctly spelled identifier
+
+The existing Docker OpenHands Executor SHALL use
+`executor_docker_openhands` consistently as its top-level directory,
+command, binary, config YAML basename, Go import-path segment, wire
+`executor_type`, slog `service` value, probe service label, autotest package,
+and current documentation identifier. Its Go constant SHALL remain
+`ExecutorTypeDockerOpenHands` and SHALL have the wire value
+`executor_docker_openhands`. Non-archived runtime code SHALL provide no alias
+or compatibility registration for `executor_docker_opehands`; archived
+OpenSpec artifacts MAY retain that spelling as historical evidence.
+
+#### Scenario: Docker OpenHands registers under the corrected wire value
+
+- **WHEN** the renamed Docker OpenHands Executor starts and registers with
+  State Registry
+- **THEN** it runs from the `executor_docker_openhands` service surface and
+  registers `executor_type = "executor_docker_openhands"`, while the old
+  spelling is absent from non-archived runtime and current-state files
+
 ### Requirement: K8s Executor participates in State Registry FIFO task claims
 
 The K8s Executor SHALL register with the State Registry using the concrete
-service and wire identifier `executor_k8s_<tool>`, with the agent tool
-selected before implementation, and exactly one immutable ownership
+service and wire identifier `executor_k8s_openhands`, with OpenHands as its
+agent tool, and exactly one immutable ownership
 `scope` from `{team, system}`. It SHALL submit exactly one
 `authorized_tag`, observed `max_capacity`, observed `running_count`, and
 runtime metadata. Team scope SHALL submit exactly one immutable `team_id`
@@ -51,7 +71,7 @@ emit a capacity-based rejection.
 #### Scenario: K8s Executor starts
 
 - **WHEN** a K8s Executor process starts
-- **THEN** it registers `executor_type = "executor_k8s_<tool>"`, exactly
+- **THEN** it registers `executor_type = "executor_k8s_openhands"`, exactly
   one immutable scope from `{team, system}`, exactly one `authorized_tag`,
   observed `max_capacity`, observed `running_count`, and metadata; team scope
   includes exactly one identity-bound `team_id` and optional display-only
@@ -93,9 +113,34 @@ create exactly one Kubernetes Pod for the task. The Pod SHALL carry the
 immutable labels `flowai.executor_id`, `flowai.team_id`, `flowai.task_id`,
 `flowai.command_id`, `flowai.executor_scope`, `flowai.resolved_image_source`,
 and the runtime identity label `flowai.runtime=k8s`. The Pod SHALL mount
-task-scoped inputs, be supervised until terminal task state or Executor
-exit, and produce exactly one of `finished` or `failed` at terminal
-state. Every Executor-emitted task or self event SHALL carry
+task-scoped inputs and be supervised until terminal task state or
+Executor exit. For an OpenHands agent-server runtime, the authoritative
+successful-completion signal SHALL be the terminal conversation event
+whose normalized `execution_status` is `finished`; the long-running
+server process and Pod exit code SHALL NOT be used as the successful
+task-completion signal. A terminal OpenHands status of `failed`,
+`error`, `stuck`, or `paused`, an agent-server failure, or a Pod failure
+SHALL produce `failed`. Other agent tools SHALL define an equally
+explicit tool-level terminal-success signal before implementation. The
+Executor SHALL produce exactly one of `finished` or `failed` for the
+task.
+
+After State Registry accepts the terminal event with `202`, the K8s
+Executor SHALL select the cleanup delay by the accepted event type:
+non-negative `finished_cleanup_delay` after `finished` and non-negative
+`failed_cleanup_delay` after `failed` (each default `0s`). It SHALL
+retain the terminal task Pod and continue counting it against local
+capacity for the selected delay, then delete it idempotently. The timer
+SHALL begin only after terminal-event acceptance, not when the tool
+first emits its terminal signal. A zero delay preserves immediate
+cleanup. Shutdown, drain, explicit
+cancellation, and failed-Pod handling MAY clean up sooner. Failure to
+delete SHALL NOT append a second terminal task event and SHALL be
+retried or surfaced as an Executor self event. The Docker OpenHands
+Executor SHALL implement the same configuration and ordering for its
+task container: accepted terminal conversation event, configurable
+delay, then idempotent stop/removal. Every Executor-emitted task or
+self event SHALL carry
 `task_id` (when task-scoped), `executor_id`, `team_id` (equal to the
 team-owned Executor's bound team or the system-owned Executor's assigned
 task team),
@@ -109,6 +154,27 @@ task or Executor point identifier SHALL be rejected with the same
 non-revealing `404` shape used for an unknown identifier, without
 appending any event. No `403` response SHALL be returned for a
 foreign-team probe.
+
+#### Scenario: OpenHands completion precedes delayed Pod cleanup
+
+- **WHEN** OpenHands emits terminal `execution_status = finished`, the
+  K8s Executor posts the task's single `finished` event, and State
+  Registry returns `202 accepted`
+- **THEN** the Executor starts `finished_cleanup_delay`, keeps the
+  still-running agent-server Pod counted against local capacity during
+  that delay, and idempotently deletes the Pod when the delay expires;
+  Pod exit code is not the task-completion signal and cleanup appends no
+  additional terminal task event
+
+#### Scenario: Docker OpenHands uses the same terminal cleanup delay
+
+- **WHEN** the Docker OpenHands Executor receives an accepted terminal
+  OpenHands conversation event
+- **THEN** it selects `finished_cleanup_delay` for `finished` or
+  `failed_cleanup_delay` for `failed`, retains the task container and
+  continues counting it against local capacity for the selected delay,
+  and idempotently stops and removes it afterward without appending
+  another terminal task event
 
 #### Scenario: State Registry claims a task for a K8s Executor
 

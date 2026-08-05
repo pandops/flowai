@@ -56,11 +56,19 @@ events.
 
 ## What Changes
 
-- Add a concrete K8s Executor service named `executor_k8s_<tool>`, where
-  the agent tool is selected before implementation. Its directory, binary,
+- Add the concrete K8s OpenHands Executor service named
+  `executor_k8s_openhands`. Its directory, binary,
   config, import path, wire `executor_type`, slog/probe service name, and
   constant regression test derive from that same concrete identifier. The
   change ID remains `v0005-executor-k8s`.
+- Correct the existing Docker OpenHands concrete service identifier from
+  `executor_docker_opehands` to `executor_docker_openhands` across its
+  directory, command, binary, config, import path, wire `executor_type`,
+  logs/probes, autotest package, current documentation, and active
+  contracts. Keep the Go constant name `ExecutorTypeDockerOpenHands`, change
+  its wire value to `executor_docker_openhands`, provide no compatibility
+  alias for the misspelled wire value, and preserve archived OpenSpec
+  artifacts as historical records.
 - Require every K8s Executor registration to declare exactly one immutable
   `scope` from `{team, system}`, exactly one `authorized_tag`, observed
   `max_capacity`, observed `running_count`, and runtime metadata. Team scope
@@ -133,7 +141,16 @@ older_task_must_be_claimed_first`, and SHALL return to discovery.
   `flowai.executor_scope`, `flowai.resolved_image_source`, and the
   runtime label `flowai.runtime=k8s`. The assigned Executor SHALL emit
   a `running` event after the claim succeeds and SHALL emit exactly one
-  of `finished` or `failed` at terminal state. The Executor SHALL NOT
+  of `finished` or `failed` at terminal state. For OpenHands, the
+  terminal conversation status is authoritative; the long-running
+  agent-server Pod exit code is not a completion signal. After State
+  Registry accepts the terminal event, retain the Pod for configurable
+  non-negative `finished_cleanup_delay` after `finished` or
+  `failed_cleanup_delay` after `failed` (each default `0s`), count it
+  against local capacity during the selected delay, and then delete it
+  idempotently. Add
+  the same terminal-event-to-cleanup delay and ordering to the existing
+  Docker OpenHands Executor's task containers. The Executor SHALL NOT
   append a `created` event itself; the FIRST lifecycle event is
   appended transactionally by the State Registry on claim. Every
   Executor-emitted task or self event SHALL carry `task_id` (when
@@ -226,14 +243,19 @@ seconds`, SHALL verify the literal audience
     Both remain in the `sequence` family; no state-machine, ER, or other
     restricted diagram family is added.
 - Affected test cases: `openspec/changes/v0005-executor-k8s/specs/test-cases/`
-  (nine E2E definitions, contiguous `v0005.1` through `v0005.9`,
+  (eleven E2E definitions, contiguous `v0005.1` through `v0005.11`,
   updated in place to the FIFO claim contract).
-- Affected code: future `executor_k8s_<tool>/` service (new top-level
-  directory; not created by this OpenSpec change).
+- Affected code: new `executor_k8s_openhands/` service (new top-level
+  directory) and terminal cleanup configuration/lifecycle in the existing
+  Docker OpenHands service, which is renamed from
+  `executor_docker_opehands/` to `executor_docker_openhands/` (none is
+  modified by this OpenSpec artifact update itself).
 
 ## Out of scope
 
-- Replace Docker Executor.
+- Replace the Docker Executor's runtime behavior beyond the shared terminal
+  cleanup-delay behavior and the approved concrete-service spelling
+  correction.
 - Add Web UI or auth.
 - Make State Registry call Kubernetes directly.
 - Add a separate team-management API, team CRUD, or team directory in
@@ -246,6 +268,9 @@ seconds`, SHALL verify the literal audience
 - Reintroduce a `dispatched` lifecycle state or `dispatched` event.
 - Provide a K8s-local fallback image when `resolved_image` cannot be
   pulled or started.
+- Reopen a terminal task or guarantee continuation after its Pod/container
+  has been deleted; durable workspace/checkpoint continuation requires a
+  follow-up change.
 
 ## Removed diagrams
 

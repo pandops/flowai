@@ -10,8 +10,15 @@
   or rotates task ownership.
 - The concrete directory, command, config, binary, import path, wire
   `executor_type`, slog/probe service name, and regression constant use
-  `executor_k8s_<tool>`, with the agent tool selected before implementation.
+  `executor_k8s_openhands`; the selected agent tool is OpenHands and the
+  Go wire constant is `ExecutorTypeK8sOpenHands`.
   The OpenSpec change ID remains `v0005-executor-k8s`.
+- As a prerequisite structural correction, the existing Docker OpenHands
+  service is renamed from `executor_docker_opehands` to
+  `executor_docker_openhands`. Its correctly spelled Go constant remains
+  `ExecutorTypeDockerOpenHands`, but its wire value changes to
+  `executor_docker_openhands`. The old wire value receives no compatibility
+  alias; archived OpenSpec artifacts retain their historical spelling.
 - Registration supplies exactly one `authorized_tag`, observed
   `max_capacity`, observed `running_count`, and runtime metadata. Team scope
   also supplies one identity-bound `team_id` and an optional display-only
@@ -68,8 +75,19 @@ command_id)` retry by the original Executor returns the original
   `task_id` and return a non-revealing `404` without appending any
   event and without creating any Pod.
 - The assigned Executor emits a `running` task event before creating
-  the Pod and emits exactly one of `finished` or `failed` at terminal
-  state. Every Executor-emitted task or self event carries `task_id`
+  the Pod. For OpenHands, it treats the terminal conversation event as
+  authoritative: normalized `execution_status = finished` produces the
+  single `finished` event, while `failed`, `error`, `stuck`, or `paused`
+  produces the single `failed` event. The OpenHands agent-server is a
+  long-running server, so its process or Pod exit code is not the task
+  completion signal. After State Registry accepts the terminal event,
+  the Executor selects the configured non-negative
+  `finished_cleanup_delay` after `finished` or `failed_cleanup_delay`
+  after `failed` (each default `0s`), keeps the Pod in its local capacity
+  count during that delay, and then deletes it idempotently.
+  The existing Docker OpenHands Executor gains the same setting and
+  ordering for stop/removal of its task container. Every
+  Executor-emitted task or self event carries `task_id`
   (when applicable), `executor_id`, `team_id` (equal to the team-owned
   Executor's bound team or the system-owned Executor's assigned task team), `event_id`,
   `event_type`, `occurred_at`, and `payload`. The Registry event-denial taxonomy is: an authenticated
@@ -190,6 +208,37 @@ authenticated_executor_id`. The K8s Executor SHALL NOT filter by
   FIRST lifecycle event `created` is appended transactionally by the
   State Registry on successful claim; the Executor appends `running`,
   `finished`, and `failed` only.
+
+## Recovery after terminal cleanup
+
+The cleanup delay is an inspection/retention window, not durable recovery.
+Before cleanup, an operator may still inspect the live runtime, but the task
+is already terminal in State Registry and must not accept new work under the
+same lifecycle.
+
+After a Pod or container is deleted, its writable layer, in-memory
+OpenHands conversation, and process state are gone. Continuing work then
+requires durable state external to that runtime:
+
+1. persist the workspace and OpenHands `persistence_dir` on a
+   team/task-scoped PVC or artifact store; OpenHands stores
+   `base_state.json` plus its append-only conversation event files there;
+2. persist a tool-neutral checkpoint containing the OpenHands conversation
+   identifier, source task, pinned image/tool version, workspace snapshot
+   identity, and any encryption-key reference needed to restore secrets; and
+3. create a new continuation task linked to the terminal source task,
+   then start a new Pod that restores the workspace and resumes or
+   reconstructs the conversation.
+
+Reopening a `finished` task would violate the append-only lifecycle and
+immutable assignment contract. This change therefore does not promise
+post-deletion continuation. A follow-up change should choose between
+workspace-only continuation (simpler, conversation reconstructed from a
+summary) and full OpenHands restoration using the same conversation ID and
+persistence directory (higher fidelity, but it requires compatible agent
+tools/configuration, durable secret handling, and a pinned/tested OpenHands
+persistence contract). Workspace-only continuation is the safer initial
+platform contract; full restoration can be an OpenHands-specific extension.
 
 ## Proposed Diagrams
 

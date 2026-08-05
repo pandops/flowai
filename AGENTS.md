@@ -86,7 +86,7 @@ Rules:
    v0005-executor-k8s and later services land, they each get their own
    top-level directory named following the concrete Executor naming convention
    (see _Concrete Executor service naming_ below) — for example,
-   `executor_k8s_<tool>/` once the K8s tool is chosen. Each is fully
+   `executor_k8s_openhands/` for the selected OpenHands tool. Each is fully
    self-contained. No Router service is planned; durable task intake,
    deduplication, FIFO discovery, atomic claims, and assignments belong to State Registry.
 8. **The mocked task server has been removed.** Executors require the durable
@@ -109,8 +109,8 @@ executor_<runtime>_<tool>
   (`docker`, `k8s`, …). Runtime is a low-level lifecycle owner (containers or
   Pods); it is never the agent tool.
 - **`<tool>`** — the agent runtime / agent SDK the Executor wraps inside the
-  container or Pod. Today `openhands`; future concrete Executors will use the
-  tool selected when the K8s change lands.
+  container or Pod. Today `openhands`; the K8s concrete Executor also uses
+  OpenHands.
 
 Both `<runtime>` and `<tool>` are lowercase, alphanumeric, and joined with `_`
 to one token. The runtime tool stays lowercase too — uppercase is reserved for
@@ -145,8 +145,8 @@ Current concrete services:
   product spelling `OpenHands` stays unchanged everywhere it appears as a
   product name (`internal/openhands`, `flowai.runtime=openhands`, OpenHands
   API/image/env vars, ADRs).
-- Future K8s concrete service — `executor_k8s_<tool>` where `<tool>` is the
-  agent tool selected when `v0005-executor-k8s` lands.
+- K8s concrete service — `executor_k8s_openhands` (runtime = `k8s`, tool =
+  `openhands`).
 
 ## OpenSpec management rules
 
