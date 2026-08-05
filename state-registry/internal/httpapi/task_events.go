@@ -39,32 +39,23 @@ func (h *taskEventHandlers) requireTrustedGateway(next http.Handler) http.Handle
 	return requireTrustedGateway(next)
 }
 
+// requireExecutorIdentity validates the shape of the request-time
+// Executor identity headers. After v0009 the X-FlowAI-Role header is
+// treated as request data; the canonical record lookup in the
+// handler reconciles scope/team against the persisted record.
 func (h *taskEventHandlers) requireExecutorIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role := r.Header.Get(adminRoleHeader)
 		executorID := r.Header.Get(executorIDHeader)
-		if role == "" || executorID == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor authentication is required")
-			return
-		}
-		if role != executorTeamRole && role != executorSysRole {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "Executor authorization is required")
-			return
+		if executorID == "" {
+			executorID = chi.URLParam(r, "executor_id")
 		}
 		if !validListingIdentifier(executorID) {
 			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor identity is invalid")
 			return
 		}
-		if r.Header.Get(executorTeamIDHeader) != "" && role != executorTeamRole {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "system Executor must not carry a team binding")
+		if teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader)); teamID != "" && !validListingIdentifier(teamID) {
+			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor team binding is invalid")
 			return
-		}
-		if role == executorTeamRole {
-			teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader))
-			if teamID == "" || !validListingIdentifier(teamID) {
-				h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "team Executor authentication is required")
-				return
-			}
 		}
 		next.ServeHTTP(w, r)
 	})

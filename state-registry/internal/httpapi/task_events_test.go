@@ -92,7 +92,13 @@ func TestTaskEventHistoryReturnsEmptyPage(t *testing.T) {
 	}
 }
 
-func TestTaskEventHistoryRejectsNonGatewayBeforeRepository(t *testing.T) {
+// TestTaskEventHistoryRequiresGatewayHeaders asserts the v0009
+// contract: the State Registry validates the identifier shape of
+// the Gateway-forwarded context but does not authenticate the
+// Gateway connection. A request without X-FlowAI-Team-Id /
+// X-FlowAI-Operator-Id is rejected with the documented
+// "invalid_request" envelope and never reaches the repository.
+func TestTaskEventHistoryRequiresGatewayHeaders(t *testing.T) {
 	repo := &taskEventRepo{}
 	server := taskEventServer(repo)
 	defer server.Close()
@@ -102,11 +108,11 @@ func TestTaskEventHistoryRejectsNonGatewayBeforeRepository(t *testing.T) {
 		t.Fatalf("get events: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status=%d, want 403", resp.StatusCode)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 (Gateway identifiers required)", resp.StatusCode)
 	}
 	if repo.calls != 0 {
-		t.Fatalf("repository calls=%d, want 0", repo.calls)
+		t.Fatalf("repository calls=%d, want 0 (Gateway identifiers rejected before any DB call)", repo.calls)
 	}
 }
 

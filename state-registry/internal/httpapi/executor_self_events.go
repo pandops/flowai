@@ -37,30 +37,22 @@ func RegisterExecutorSelfEventReads(r chi.Router, logger *slog.Logger, repo stor
 	r.With(h.requireTrustedGateway).Get("/v1/executors/{executor_id}/events", h.list)
 }
 
+// requireExecutorIdentity validates the request-time Executor
+// identity header shape and the URL path executor_id. The X-FlowAI
+// headers are trusted request data after v0009; the canonical
+// record reconciles scope/team in the handler.
 func (h *executorSelfEventHandlers) requireExecutorIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role := r.Header.Get(adminRoleHeader)
 		executorID := r.Header.Get(executorIDHeader)
-		if role == "" || executorID == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor authentication is required")
-			return
-		}
-		if role != executorTeamRole && role != executorSysRole {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "Executor authorization is required")
-			return
+		if executorID == "" {
+			executorID = chi.URLParam(r, "executor_id")
 		}
 		if !validListingIdentifier(executorID) {
 			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor identity is invalid")
 			return
 		}
-		if role == executorTeamRole {
-			teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader))
-			if teamID == "" || !validListingIdentifier(teamID) {
-				h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "team Executor authentication is required")
-				return
-			}
-		} else if r.Header.Get(executorTeamIDHeader) != "" {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "system Executor must not carry a team binding")
+		if teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader)); teamID != "" && !validListingIdentifier(teamID) {
+			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor team binding is invalid")
 			return
 		}
 		pathExecutorID := chi.URLParam(r, "executor_id")

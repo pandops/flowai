@@ -29,30 +29,21 @@ func (h *controlHandlers) requireTrustedGateway(next http.Handler) http.Handler 
 	return requireTrustedGatewayRequestID(next)
 }
 
+// requireExecutorIdentity resolves the request-time Executor
+// identity from the URL path and the X-FlowAI-* headers (trusted
+// request data after v0009). The X-FlowAI-Role header is no longer
+// used to reject non-Executor callers; the canonical record lookup
+// in the handler is the source of truth.
 func (h *controlHandlers) requireExecutorIdentity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role := r.Header.Get(adminRoleHeader)
 		executorID := strings.TrimSpace(r.Header.Get(executorIDHeader))
-		if role == "" || executorID == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor authentication is required")
-			return
-		}
-		if role != executorTeamRole && role != executorSysRole {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "Executor authorization is required")
-			return
-		}
 		if !validListingIdentifier(executorID) {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor authentication is required")
+			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor identity is required")
 			return
 		}
-		if role == executorTeamRole {
-			teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader))
-			if !validListingIdentifier(teamID) {
-				h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor authentication is required")
-				return
-			}
-		} else if r.Header.Get(executorTeamIDHeader) != "" {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "system Executor must not carry a team binding")
+		teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader))
+		if teamID != "" && !validListingIdentifier(teamID) {
+			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor team binding is invalid")
 			return
 		}
 		next.ServeHTTP(w, r)

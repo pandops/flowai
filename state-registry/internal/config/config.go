@@ -20,28 +20,42 @@ const MaxValidPort = 65535
 // documented prefix. The ServiceName is fixed by package and used for
 // logging, probe responses, and the bind host.
 //
+// The HTTP listener is plaintext; external HTTPS terminates at the
+// Ingress. Legacy backend HTTP TLS/mTLS configuration keys are
+// accepted for staged configuration cleanup but are never read and
+// never affect startup. PostgreSQL transport remains secure with
+// server-certificate verification (verify-full).
+//
 // TestMode is true when STATE_REGISTRY_TEST_MODE=true is supplied.
-// Test mode is the only path that allows plaintext HTTP and plaintext
-// Postgres for the existing earlier-slice Playwright harness. In test
-// mode, partial TLS still fails closed so a typo cannot silently drop
-// one half of the transport.
+// Test mode is the only path that allows plaintext Postgres for the
+// existing earlier-slice Playwright harness.
 type Config struct {
-	ServiceName          string
-	BindHost             string
-	BindPort             int
-	PostgresURL          string
-	AESKey               []byte
-	ScopeTokenKeyID      string
-	ScopeTokenKey        []byte
-	ScopeTokenAlgorithm  string
-	ScopeTokenPrevious   string
-	TestMode             bool
-	TLSServerCert        string
-	TLSServerKey         string
-	TLSClientCA          string
-	TLSRequireClientCert bool
-	PostgresTLSCA        string
-	PostgresTLSMode      string
+	ServiceName         string
+	BindHost            string
+	BindPort            int
+	PostgresURL         string
+	AESKey              []byte
+	ScopeTokenKeyID     string
+	ScopeTokenKey       []byte
+	ScopeTokenAlgorithm string
+	ScopeTokenPrevious  string
+	TestMode            bool
+	// LegacyTLS fields are accepted for compatibility. They are
+	// never read and never affect the listener. New deployments
+	// must omit them; existing deployments may set them harmlessly.
+	LegacyTLSServerCert        string
+	LegacyTLSServerKey         string
+	LegacyTLSClientCA          string
+	LegacyTLSRequireClientCert bool
+	// LegacyTLSIgnoredKeys records which legacy TLS keys the
+	// operator supplied so the operator can confirm configuration
+	// cleanup without exposing certificate material. main.go emits
+	// at most one deprecation warning naming the keys.
+	LegacyTLSIgnoredKeys []string
+	// PostgresTLS settings stay active: the State Registry's Go
+	// database client always verifies the Postgres server chain.
+	PostgresTLSCA   string
+	PostgresTLSMode string
 }
 
 // EnvPrefix is the prefix every environment variable must use.
@@ -52,23 +66,23 @@ const EnvPrefix = "STATE_REGISTRY_"
 // 32-byte material is never logged and is wrapped behind the AESKey
 // accessor so callers cannot accidentally pass it to a logging field.
 //
-// In production (STATE_REGISTRY_TEST_MODE unset or false) the State
-// Registry requires:
+// Production requirements:
 //
-//   - STATE_REGISTRY_TLS_SERVER_CERT, STATE_REGISTRY_TLS_SERVER_KEY,
-//     STATE_REGISTRY_TLS_CLIENT_CA, and
-//     STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT=true for the HTTP
-//     listener (mutually-authenticated TLS);
+//   - STATE_REGISTRY_POSTGRES_URL and a 32-byte hex
+//     STATE_REGISTRY_AES_KEY_HEX;
+//   - STATE_REGISTRY_SCOPE_TOKEN_KEY_ID + STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX
+//     (HS256 / HS384 / HS512 allow-list);
 //   - STATE_REGISTRY_POSTGRES_TLS_CA and
 //     STATE_REGISTRY_POSTGRES_TLS_MODE=verify-full for the Postgres
 //     client (server-identity authentication).
 //
-// In test mode (STATE_REGISTRY_TEST_MODE=true) TLS is optional so the
-// existing earlier-slice Playwright harness can run, but partial TLS
-// still fails closed. POSTGRES_TLS_MODE=verify-ca is rejected in
-// every mode because it only validates the certificate chain and
-// accepts any cert the CA signed, which does not authenticate the
-// server identity to the client process.
+// Backend HTTP is plaintext; legacy backend HTTP TLS/mTLS keys
+// (STATE_REGISTRY_TLS_SERVER_CERT, STATE_REGISTRY_TLS_SERVER_KEY,
+// STATE_REGISTRY_TLS_CLIENT_CA, STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT)
+// are accepted but never read. verify-ca is rejected in every mode
+// because it only validates the certificate chain and accepts any
+// cert the CA signed, which does not authenticate the server identity
+// to the client process.
 func Load() (Config, error) {
 	cfg := Config{
 		ServiceName: "state-registry",
@@ -155,57 +169,59 @@ func getEnvInt(key string, fallback int) int {
 }
 
 // loadTLSConfig enforces the State Registry transport contract:
-//   - Production requires mutually-authenticated TLS for the HTTP
-//     listener (server cert, server key, client CA,
-//     TLS_REQUIRE_CLIENT_CERT=true) and verify-full for Postgres.
-//   - Test mode allows the plaintext path the existing earlier-slice
-//     Playwright harness relies on, but partial TLS still fails
-//     closed.
+//
+//   - The HTTP listener is plaintext; backend service-to-service
+//     mTLS is removed (v0009). Legacy TLS keys
+//     (STATE_REGISTRY_TLS_SERVER_CERT, STATE_REGISTRY_TLS_SERVER_KEY,
+//     STATE_REGISTRY_TLS_CLIENT_CA,
+//     STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT) are accepted but their
+//     paths are never read; the listener is never wrapped in
+//     tls.NewListener. Every legacy key supplied is recorded in
+//     cfg.LegacyTLSIgnoredKeys so the operator can confirm
+//     configuration cleanup without exposing certificate material.
+//   - Postgres transport stays secure: when configured, the client
+//     uses verify-full and a CA bundle. Partial configuration fails
+//     closed so a typo cannot silently drop one half of the
+//     transport.
 //   - verify-ca is rejected in every mode; only verify-full is
 //     permitted because verify-ca only checks the chain and accepts
-//     any cert the CA signed, which does not authenticate the server
-//     identity to the client process.
-//   - The server private-key file must not have group or other
-//     permission bits set so a leaked key is not readable by any
-//     process outside the State Registry's owning user. Public
-//     certificates and CA bundles are public material and only need
-//     to be a regular file.
+//     any cert the CA signed, which does not authenticate the
+//     server identity to the client process.
 func loadTLSConfig(cfg *Config, testMode bool) error {
-	cfg.TLSServerCert = getEnv(EnvPrefix+"TLS_SERVER_CERT", "")
-	cfg.TLSServerKey = getEnv(EnvPrefix+"TLS_SERVER_KEY", "")
-	cfg.TLSClientCA = getEnv(EnvPrefix+"TLS_CLIENT_CA", "")
+	// Record legacy TLS keys as ignored. The values themselves are
+	// never logged or stored; only the key names are recorded so
+	// the operator can confirm the cleanup status. Certificate
+	// paths are NEVER read.
+	for _, key := range []string{
+		EnvPrefix + "TLS_SERVER_CERT",
+		EnvPrefix + "TLS_SERVER_KEY",
+		EnvPrefix + "TLS_CLIENT_CA",
+		EnvPrefix + "TLS_REQUIRE_CLIENT_CERT",
+	} {
+		if v := os.Getenv(key); v != "" {
+			cfg.LegacyTLSIgnoredKeys = append(cfg.LegacyTLSIgnoredKeys, key)
+		}
+	}
+	cfg.LegacyTLSServerCert = os.Getenv(EnvPrefix + "TLS_SERVER_CERT")
+	cfg.LegacyTLSServerKey = os.Getenv(EnvPrefix + "TLS_SERVER_KEY")
+	cfg.LegacyTLSClientCA = os.Getenv(EnvPrefix + "TLS_CLIENT_CA")
 	requireClientCert, err := getEnvBool(EnvPrefix+"TLS_REQUIRE_CLIENT_CERT", false)
 	if err != nil {
 		return err
 	}
-	cfg.TLSRequireClientCert = requireClientCert
+	cfg.LegacyTLSRequireClientCert = requireClientCert
 
 	cfg.PostgresTLSCA = getEnv(EnvPrefix+"POSTGRES_TLS_CA", "")
 	cfg.PostgresTLSMode = getEnv(EnvPrefix+"POSTGRES_TLS_MODE", "")
 
-	serverTLSConfigured := cfg.TLSServerCert != "" ||
-		cfg.TLSServerKey != "" ||
-		cfg.TLSClientCA != "" ||
-		cfg.TLSRequireClientCert
 	postgresTLSConfigured := cfg.PostgresTLSCA != "" ||
 		cfg.PostgresTLSMode != ""
 
 	if testMode {
-		// Test mode: plaintext is allowed (the existing earlier-slice
-		// Playwright harness relies on it). Partial TLS still fails
-		// closed so a typo cannot silently drop one half of the
-		// transport.
-		if serverTLSConfigured {
-			if cfg.TLSServerCert == "" {
-				return errors.New("STATE_REGISTRY_TLS_SERVER_CERT is required when TLS is configured")
-			}
-			if cfg.TLSServerKey == "" {
-				return errors.New("STATE_REGISTRY_TLS_SERVER_KEY is required when TLS is configured")
-			}
-			if cfg.TLSRequireClientCert && cfg.TLSClientCA == "" {
-				return errors.New("STATE_REGISTRY_TLS_CLIENT_CA is required when client certificates are required")
-			}
-		}
+		// Test mode: plaintext Postgres is allowed (the existing
+		// earlier-slice Playwright harness relies on it). Partial
+		// Postgres TLS still fails closed so a typo cannot
+		// silently drop one half of the database transport.
 		if postgresTLSConfigured {
 			if cfg.PostgresTLSMode == "" {
 				return errors.New("STATE_REGISTRY_POSTGRES_TLS_MODE is required when PostgreSQL TLS is configured")
@@ -215,24 +231,9 @@ func loadTLSConfig(cfg *Config, testMode bool) error {
 			}
 		}
 	} else {
-		// Production: the State Registry MUST serve mutually
-		// authenticated TLS and verify-full Postgres. There is no
-		// fallback path; the bootstrap is fail-closed.
-		if !serverTLSConfigured {
-			return errors.New("production requires mutually-authenticated TLS: STATE_REGISTRY_TLS_SERVER_CERT, STATE_REGISTRY_TLS_SERVER_KEY, STATE_REGISTRY_TLS_CLIENT_CA, and STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT=true")
-		}
-		if cfg.TLSServerCert == "" {
-			return errors.New("STATE_REGISTRY_TLS_SERVER_CERT is required for production")
-		}
-		if cfg.TLSServerKey == "" {
-			return errors.New("STATE_REGISTRY_TLS_SERVER_KEY is required for production")
-		}
-		if cfg.TLSClientCA == "" {
-			return errors.New("STATE_REGISTRY_TLS_CLIENT_CA is required for production")
-		}
-		if !cfg.TLSRequireClientCert {
-			return errors.New("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT=true is required for production (mutually-authenticated TLS)")
-		}
+		// Production: the State Registry MUST verify the
+		// PostgreSQL server identity. There is no fallback path;
+		// the bootstrap is fail-closed.
 		if !postgresTLSConfigured {
 			return errors.New("production requires PostgreSQL TLS: STATE_REGISTRY_POSTGRES_TLS_CA and STATE_REGISTRY_POSTGRES_TLS_MODE=verify-full")
 		}
@@ -252,23 +253,9 @@ func loadTLSConfig(cfg *Config, testMode bool) error {
 		return fmt.Errorf("STATE_REGISTRY_POSTGRES_TLS_MODE=%q is invalid; expected verify-full", cfg.PostgresTLSMode)
 	}
 
-	// File-presence and permission checks. The private-key file must
-	// not be readable by group or other. Public certificates and CA
-	// bundles are public material and not subject to the
-	// restrictive-permission check.
-	if serverTLSConfigured {
-		if err := requireRegularFile("STATE_REGISTRY_TLS_SERVER_CERT", cfg.TLSServerCert); err != nil {
-			return err
-		}
-		if err := requireRestrictivePrivateKey("STATE_REGISTRY_TLS_SERVER_KEY", cfg.TLSServerKey); err != nil {
-			return err
-		}
-		if cfg.TLSClientCA != "" {
-			if err := requireRegularFile("STATE_REGISTRY_TLS_CLIENT_CA", cfg.TLSClientCA); err != nil {
-				return err
-			}
-		}
-	}
+	// File-presence and permission checks for the Postgres CA. The
+	// CA bundle is public material (mode 0o600 is sufficient; no
+	// restrictive-permission check beyond "regular file").
 	if postgresTLSConfigured {
 		if err := requireRegularFile("STATE_REGISTRY_POSTGRES_TLS_CA", cfg.PostgresTLSCA); err != nil {
 			return err
@@ -296,26 +283,6 @@ func requireRegularFile(name, path string) error {
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("%s=%q is not a regular file", name, path)
-	}
-	return nil
-}
-
-// requireRestrictivePrivateKey rejects a private-key file whose
-// group or other permission bits are set. The 0o077 mask covers
-// group + other read, write, and execute; any of those bits leak
-// the key to a process outside the State Registry's owning user.
-// Public certificates and CA bundles are public material and are
-// not subject to this check.
-func requireRestrictivePrivateKey(name, path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("%s=%q is unavailable: %w", name, path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s=%q is not a regular file", name, path)
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%s=%q has group or other permission bits set (mode=%04o); private-key files MUST be readable only by the owning user", name, path, info.Mode().Perm())
 	}
 	return nil
 }

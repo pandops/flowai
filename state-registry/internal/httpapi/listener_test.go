@@ -199,12 +199,16 @@ func TestListenerIdentityRemainsOpaque(t *testing.T) {
 	}
 }
 
+// TestListenerRequiresIdentityHeader asserts the v0009 contract:
+// the listener headers are request data validated for identifier
+// shape. A missing listener_identity header fails the data
+// validation layer (400 invalid_request), not the auth layer.
 func TestListenerRequiresIdentityHeader(t *testing.T) {
 	h := newListenerHarness(t)
 	headers := listenerAuthHeaders("team-a", "source-system-a", "", "req-missing-listener")
 	resp, raw := h.doIngest(t, headers, marshalIngestion(t, validIngestionBody(t)))
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status=%d, want 401; body=%s", resp.StatusCode, raw)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400 (data validation); body=%s", resp.StatusCode, raw)
 	}
 	if h.repo.ingestCalls() != 0 {
 		t.Errorf("IngestTask calls=%d, want 0 on missing listener identity", h.repo.ingestCalls())
@@ -320,7 +324,7 @@ func TestRoutesMountsListenerInProductionAndTestMode(t *testing.T) {
 		// identity present, the listener's
 		// `requireListenerIdentity` middleware rejects with 401
 		// BEFORE any repository call.
-		{name: "production mode rejects without identity", testMode: false, skipHeaders: true, wantStatus: http.StatusUnauthorized},
+		{name: "production mode rejects without identity via data validation", testMode: false, skipHeaders: true, wantStatus: http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			handler := httpapi.Routes("state-registry", "", logger, ready, httpapi.NewDecryptOps(), tc.testMode, repo)
@@ -401,10 +405,10 @@ func TestListenerTeamBinding(t *testing.T) {
 			wantRepoHit: false,
 		},
 		{
-			name:        "missing X-FlowAI-Team-Id rejected before body parse",
+			name:        "missing X-FlowAI-Team-Id rejected by data validation",
 			authTeamID:  "",
 			bodyTeamID:  "team-a",
-			wantStatus:  http.StatusUnauthorized,
+			wantStatus:  http.StatusBadRequest,
 			wantRepoHit: false,
 		},
 	}
@@ -460,10 +464,10 @@ func TestListenerSourceSystemBinding(t *testing.T) {
 			wantRepoHit: false,
 		},
 		{
-			name:        "missing X-FlowAI-Source-System-Id rejected",
+			name:        "missing X-FlowAI-Source-System-Id rejected by data validation",
 			authSource:  "",
 			bodySource:  "source-system-a",
-			wantStatus:  http.StatusUnauthorized,
+			wantStatus:  http.StatusBadRequest,
 			wantRepoHit: false,
 		},
 	}

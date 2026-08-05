@@ -20,19 +20,14 @@ type executorRegistrationRequest struct {
 	RuntimeMetadata map[string]any `json:"runtime_metadata"`
 }
 
-// RegisterExecutorRegistrationGuard mounts the test-mode precondition needed
-// before full mutually authenticated Executor registration lands:
-// team-scoped registrations must reference an existing team and never create
-// one implicitly. Production startup must not mount this header adapter.
+// RegisterExecutorRegistrationGuard mounts the precondition guard
+// for Executor registration when the full repository implementation
+// is not available. After v0009 the X-FlowAI-Role header is request
+// data; the team_id comes from the body and the canonical team
+// record authorizes the binding. The role header is no longer used
+// to reject non-team-executor callers.
 func RegisterExecutorRegistrationGuard(r chi.Router, logger *slog.Logger, repo store.AdminRepository) {
 	r.Put("/executors/{executor_id}", func(w http.ResponseWriter, req *http.Request) {
-		if req.Header.Get(adminRoleHeader) != "team-executor" {
-			JSON(w, http.StatusForbidden, errorResponse{
-				Code: "not_authorized", Message: "team Executor authorization is required", RequestID: requestID(req),
-			})
-			return
-		}
-
 		var body executorRegistrationRequest
 		if err := decodeAdminJSON(w, req, &body); err != nil || body.Scope != "team" || body.TeamID == nil || !validIdentifier(*body.TeamID) {
 			JSON(w, http.StatusBadRequest, errorResponse{

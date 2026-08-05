@@ -20,11 +20,12 @@ openhands_initial_run: true
 image_pull_policy: if-not-present
 log_level: info
 # State Registry is the Executor's mandatory control plane.
-state_registry_url: "https://127.0.0.1:8443"
-# These three mTLS paths are REQUIRED: production connects to the
-# State Registry is mTLS, so the Executor must present a client
-# keypair and trust the server CA. They MUST point to PEM-encoded
-# files on disk.
+# After v0009 the backend transport is plain HTTP; external HTTPS
+# terminates at the Ingress; the deployment network policy owns
+# the caller boundary. The three legacy mTLS fields below remain
+# accepted for staged configuration cleanup but the Executor
+# never reads them; the values may be empty.
+state_registry_url: "http://127.0.0.1:18443"
 state_registry_tls_client_cert: ""
 state_registry_tls_client_key: ""
 state_registry_tls_server_ca: ""

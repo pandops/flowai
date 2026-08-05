@@ -1,5 +1,5 @@
-// Package stateregistryclient is the v0002 State Registry HTTP client
-// the Docker Executor uses for team/system-scoped registration, FIFO
+// Package stateregistryclient is the State Registry HTTP client the
+// Docker Executor uses for team/system-scoped registration, FIFO
 // discovery, atomic FIFO claim, task and Executor self events,
 // assigned controls, and task-bound environment opens.
 //
@@ -9,11 +9,13 @@
 // internal packages, mirroring the per-service isolation rule
 // documented in AGENTS.md.
 //
-// Every call carries the test-mode transport identity headers
-// (X-FlowAI-Role, X-FlowAI-Executor-Id, X-FlowAI-Team-Id) so the
-// State Registry's request-time identity adapter can authorise the
-// Executor against its registered scope and team binding. Production
-// deployment is expected to keep the same envelope behind mTLS.
+// After v0009 the State Registry does not terminate backend
+// service-to-service mTLS. The X-FlowAI-* request headers are
+// trusted request data supplied by the caller; the deployment
+// network policy owns the caller boundary. The configured
+// `scope`, `team_id`, and `authorized_tag` come from the
+// Executor's local configuration; the server-generated
+// `executor_id` is cached after first registration.
 package stateregistryclient
 
 import (

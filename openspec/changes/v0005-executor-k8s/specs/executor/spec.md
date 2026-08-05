@@ -28,11 +28,17 @@ agent tool, and exactly one immutable ownership
 `scope` from `{team, system}`. It SHALL submit exactly one
 `authorized_tag`, observed `max_capacity`, observed `running_count`, and
 runtime metadata. It SHALL NOT submit an `identity`; State Registry SHALL
-derive and persist the canonical Executor identity exclusively from the
-authenticated mTLS context. Team scope SHALL submit exactly one immutable `team_id`
+generate and persist a server-defined `executor_id` and resolve the
+canonical Executor record by that identifier on every subsequent
+operation. Team scope SHALL submit exactly one immutable `team_id`
 that references an existing team and SHALL NOT submit `team_name`;
 system scope SHALL omit the `team_id` property and have no team binding; it
-SHALL NOT submit explicit null. The K8s Executor
+SHALL NOT submit explicit null. v0009: backend transport is plain HTTP;
+the State Registry does not authenticate the Executor connection — the
+deployment network policy owns the Executor-caller boundary; the
+State Registry validates the canonical record shape (scope, immutable
+`team_id`, exactly one tag) and never derives identity from a peer
+certificate. The K8s Executor
 SHALL refuse any local change to its accepted scope or team binding. It
 SHALL discover eligible `pending` tasks only when the task's `required_tag`
 equals its single `authorized_tag`; team scope SHALL additionally match the
@@ -492,8 +498,7 @@ environment has no project scope), `task_id`, `environment_id`,
 `state-registry.environment.open`), `issued_at`, `expiry`
 (`expiry > issued_at` and `expiry - issued_at <= 5 minutes`), and
 `key_id` selecting a State Registry-controlled active key. The K8s
-Executor SHALL present the token over its authenticated mTLS identity
-bound to its `team_id`. The State Registry SHALL return the authorized
+Executor SHALL present the token over its configured `X-FlowAI-Executor-Id` and `X-FlowAI-Team-Id` request-data headers bound to its `team_id`. v0009: the State Registry does not authenticate the Executor connection — the scope token itself is the cryptographic proof that binds the open-environment response to the assigned task. The State Registry SHALL return the authorized
 env-style values only when it has first verified that the
 protected-header `kid` equals the payload `key_id`, accepted only
 algorithms in the allow-listed HMAC set `HS256`/`HS384`/`HS512`,
@@ -502,8 +507,8 @@ compared it under constant-time comparison, verified the `key_id`
 against the documented active key window (retired keys rejected),
 verified `issued_at <= server_now + 30 seconds`, verified the literal
 expected `audience`, verified the canonical claim shape (including the
-project-scope rule for `project_id`), verified the authenticated
-Executor mTLS identity, the Executor's same-team ownership, the task
+project-scope rule for `project_id`), verified the configured
+Executor `team_id`, the Executor's same-team ownership, the task
 assignment, the task's non-terminal state, and the project/task
 applicability. Every one of those checks SHALL happen BEFORE any
 decrypt operation by the active provider or plaintext disclosure. The
@@ -656,20 +661,18 @@ kernel-managed lock. K8s PVCs and Docker host-backed volumes used for cache
 SHALL support POSIX advisory file locking. State Registry SHALL NOT implement
 an Executor lease or fencing token. Independently copied cache volumes are an
 unsupported operator action outside this local lock's protection.
-Executor mTLS client certificate, private key, and trusted CA bundle SHALL be
-generated before deployment and mounted read-only. K8s SHALL receive them from
-a pre-created Secret volume; Docker SHALL receive explicit read-only file or
-secret mounts. Executors SHALL NOT generate, enroll, rotate, or overwrite
-certificate material at runtime and SHALL fail startup before registration
-when any required file is missing, unreadable, expired, or invalid.
-Each Executor SHALL load certificate material once during process startup and
-SHALL NOT watch, poll, or hot-reload changed certificate files. Updated
-mounted material SHALL take effect only after the Executor process restarts.
-Certificate lifetime and renewal schedule SHALL be owned by external PKI and
-deployment infrastructure and SHALL NOT be configured or enforced as an
-Executor-specific duration. The Executor SHALL rely on normal X.509 validity
-checks and SHALL NOT require a fixed lifetime such as 90 days.
-After restart the Executor SHALL load non-terminal assignments only from this
+Backend transport is plain HTTP. v0009 removes every backend
+service-to-service mTLS contract. Legacy backend HTTP TLS/mTLS
+configuration fields are accepted for staged configuration cleanup
+but are never read and never affect startup. The Executor's HTTP
+client never constructs a `tls.Config`; the deployment network
+policy is the documented caller boundary. External HTTPS
+terminates at the Ingress; PostgreSQL transport stays secure with
+server-certificate verification. Certificate lifetime and renewal
+schedule are owned by external PKI and deployment infrastructure
+where they are still relevant and SHALL NOT be configured or
+enforced as an
+Executor-specific duration. After restart the Executor SHALL load non-terminal assignments only from this
 cache and match cached `owner_command_id` values to immutable Pod labels
 `flowai.command_id`. No State Registry assignments-list endpoint exists or is
 required. If an expected cache is missing, unreadable, or corrupt, the Executor

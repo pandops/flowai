@@ -54,7 +54,6 @@
 // container metadata) instead of silently skipping.
 import * as net from "node:net";
 import * as http from "node:http";
-import * as https from "node:https";
 import * as fs from "node:fs";
 import {
   test,
@@ -83,100 +82,21 @@ import {
   startExecutorBinary,
   type ExecutorHandles,
 } from "../../fixtures/executor_binary";
-import {
-  createEphemeralTlsMaterial,
-  type EphemeralTlsMaterial,
-} from "../../fixtures/tls_transport";
 
 const DOCKER_SOCKET =
   process.env["FLOWAI_DOCKER_SOCKET"] ?? "/run/user/1000/podman/podman.sock";
 
 let worker: RegistryWorker;
-let registryTLSProxy: RegistryTLSProxy;
 
 test.beforeAll(async () => {
   worker = await startRegistryWorker();
-  registryTLSProxy = await startRegistryTLSProxy(worker.baseUrl);
 });
 
 test.afterAll(async () => {
-  if (registryTLSProxy) {
-    await registryTLSProxy.teardown();
-  }
   if (worker) {
     await worker.teardown();
   }
 });
-
-interface RegistryTLSProxy {
-  baseUrl: string;
-  clientCertPath: string;
-  clientKeyPath: string;
-  serverCAPath: string;
-  teardown(): Promise<void>;
-}
-
-async function startRegistryTLSProxy(
-  targetBaseUrl: string,
-): Promise<RegistryTLSProxy> {
-  const material: EphemeralTlsMaterial = await createEphemeralTlsMaterial({
-    lifetimeDays: 1,
-  });
-  const server = https.createServer(
-    {
-      cert: fs.readFileSync(material.serverCertPath),
-      key: fs.readFileSync(material.serverKeyPath),
-      ca: fs.readFileSync(material.caCertPath),
-      requestCert: true,
-      rejectUnauthorized: true,
-      minVersion: "TLSv1.2",
-    },
-    (incoming, outgoing) => {
-      const target = new URL(incoming.url ?? "/", targetBaseUrl);
-      const upstream = http.request(
-        target,
-        { method: incoming.method, headers: incoming.headers },
-        (response) => {
-          outgoing.writeHead(response.statusCode ?? 502, response.headers);
-          response.pipe(outgoing);
-        },
-      );
-      upstream.on("error", () => {
-        if (!outgoing.headersSent) outgoing.writeHead(502);
-        outgoing.end();
-      });
-      incoming.pipe(upstream);
-    },
-  );
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    server.close();
-    await material.cleanup();
-    throw new Error("State Registry mTLS proxy did not expose a TCP address");
-  }
-  let closed = false;
-  return {
-    baseUrl: `https://localhost:${String(address.port)}`,
-    clientCertPath: material.trustedTeamExecutor.certPath,
-    clientKeyPath: material.trustedTeamExecutor.keyPath,
-    serverCAPath: material.caCertPath,
-    async teardown(): Promise<void> {
-      if (closed) return;
-      closed = true;
-      await new Promise<void>((resolve, reject) => {
-        server.close((err) => (err ? reject(err) : resolve()));
-      });
-      await material.cleanup();
-    },
-  };
-}
 
 interface ExecutorRow {
   executor_id: string;
@@ -659,10 +579,7 @@ async function startExecutor(opts: {
   dockerSocket?: string;
 }): Promise<{ handles: ExecutorHandles; redactedLogs(): string }> {
   const handles = await startExecutorBinary({
-    registryUrl: registryTLSProxy.baseUrl,
-    registryTLSClientCertPath: registryTLSProxy.clientCertPath,
-    registryTLSClientKeyPath: registryTLSProxy.clientKeyPath,
-    registryTLSServerCAPath: registryTLSProxy.serverCAPath,
+    registryUrl: worker.baseUrl,
     scope: opts.scope,
     teamId: opts.teamId,
     authorizedTag: opts.authorizedTag,

@@ -1,21 +1,16 @@
 // Package httpapi mounts the State Registry HTTP scaffold. The
 // scaffold exposes the platform health probes (/v1/livez,
-// /v1/readyz), the v0002.20 events-stream transport probe (always
-// mounted behind the verified peer-identity middleware so
-// production traffic on /v1/events/stream only reaches a verified
-// Gateway cert), every documented business surface (admin
-// onboarding + read projections, listener ingestion, Executor
-// registration + discovery + claim, task point read + lifecycle
-// events + Executor self events, trusted-Gateway controls,
-// trusted-Gateway environments + secrets + open environment +
-// audit), and, only in explicit test mode, the temporary
-// observability counter. Production security comes from the
-// verified peer-cert identity adapter in
-// cmd/state-registry/main.go (`withPeerIdentity`), which strips
-// caller-supplied X-FlowAI-* headers and maps only verified peer
-// claims; the per-surface authentication middleware then rejects
-// every request that lacks the documented identity before any
-// repository call is made.
+// /v1/readyz), the v0002.20 events-stream transport probe, and
+// every documented business surface (admin onboarding + read
+// projections, listener ingestion, Executor registration +
+// discovery + claim, task point read + lifecycle events + Executor
+// self events, trusted-Gateway controls, trusted-Gateway
+// environments + secrets + open environment + audit), and, only in
+// explicit test mode, the temporary observability counter. After
+// v0009 the State Registry does not terminate backend
+// service-to-service mTLS or derive identity from peer
+// certificates; the X-FlowAI-* headers are trusted request data,
+// and the deployment network policy owns the caller boundary.
 package httpapi
 
 import (

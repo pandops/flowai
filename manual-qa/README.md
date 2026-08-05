@@ -1,8 +1,8 @@
-# Manual QA — production-mTLS end-to-end runbook
+# Manual QA — production end-to-end runbook
 
 This directory contains a self-contained, runnable manual QA flow that
 exercises the production `state-registry/` + `executor_docker_opehands/`
-pair end to end: PostgreSQL 16 with TLS, mutual-TLS State Registry in
+pair end to end: PostgreSQL 16 with TLS, plain-HTTP State Registry in
 normal untagged production mode, the OpenHands V1 agent-server pulled
 to an immutable digest, and a single in-line task that walks the full
 `pending -> created -> running -> finished | failed` lifecycle.
@@ -12,13 +12,19 @@ can pause, inspect logs, and resume between steps. `run-all.sh` is the
 only wrapper and it is deliberately thin; it never hides the required
 LLM input.
 
-> **The removed mocked task server is not part of this flow.** The current
-> executor expects the real State Registry; the mocked task server is
-> the v0001 wire surface and is not wired to the v0002 client.
-> Likewise, do not set `STATE_REGISTRY_TEST_MODE` and do not pass
-> `curl -k`. The State Registry in production mode rejects both.
+> **v0009 contract.** The State Registry does not terminate backend
+> service-to-service mTLS or derive identity from client certificates.
+> The backend transport is plain HTTP; external HTTPS terminates at the
+> Ingress; the deployment network policy owns the caller boundary.
+> PostgreSQL transport remains secure with server-certificate
+> verification. The legacy backend HTTP TLS/mTLS env vars
+> (`STATE_REGISTRY_TLS_*`, `EXECUTOR_STATE_REGISTRY_TLS_*`) are
+> accepted for staged configuration cleanup but the binaries never
+> read them.
+> Likewise, do not set `STATE_REGISTRY_TEST_MODE`. The State Registry
+> runs in the normal untagged production mode.
 
-Инструкция по запуску ручного тестирования mTLS end-to-end
+Инструкция по запуску ручного тестирования
 (State Registry ↔ Executor ↔ OpenHands ↔ PostgreSQL).
 
 ---
@@ -36,7 +42,7 @@ LLM input.
 - **GNU coreutils with `timeout`.** `mq::openssl_run` requires the
   GNU `timeout` command to bound every OpenSSL subprocess; most Linux
   distributions ship this by default.
-- **`curl`** with TLS + mTLS support. Stock curl with libssl is fine.
+- **`curl`** with TLS support. Stock curl with libssl is fine.
 - **`python3`** is the canonical JSON encoder (and validation
   fallback). `mq::json_encode` also accepts `jq` when present and
   delegates nested-object encoding to it via `--argjson`, but `jq`
@@ -54,10 +60,10 @@ LLM input.
 ## 2. Architecture flow
 
 ```
-        ┌──────────┐  mTLS (verified cert subject) ┌──────────┐
+        ┌──────────┐  plain HTTP (no service auth)     ┌──────────┐
 admin ──┤  POST    ├────────────────────────────────▶│  State   │
-        │  /admin  │                                  │ Registry │  verify-full TLS
-        └──────────┘                                  │ (prod)   ├──────────┐
+        │  /admin  │  (deployment network policy owns  │ Registry │  verify-full TLS
+        └──────────┘   the caller boundary)            │ (prod)   ├──────────┐
                                                        └─────┬────┘          │
                                                          TLS │               │
                                                               ▼               ▼
@@ -65,15 +71,15 @@ admin ──┤  POST    ├─────────────────�
                                                        │ postgres │    │  Exec   │
                                                        │  16 (TLS)│    │  (1 slot│
                                                        └──────────┘    │   )     │
-        ┌──────────┐  mTLS                              ▲             │  rootless│
+        ┌──────────┐  plain HTTP                       ▲             │  rootless│
 listener ┤  POST    ├──────────────────────────────────┘             │  podman  │
         │  /v1/tasks│  (team_id, source_system_id,                   │  + openhands
         └──────────┘   source_id, task_type_id)                       │  image@sha256
                                                                        │   )
                                                                        ▼
-        ┌──────────┐  mTLS (verified cert subject)
+        ┌──────────┐  plain HTTP (Gateway context)
 gateway ┤  GET     ├────────────────────────────────▶   State Registry
-        │  /v1/... │                                        /v1/tasks/{id}
+        │  /v1/... │  (operator_id, team_id, request_id)  /v1/tasks/{id}
         └──────────┘                                        /v1/tasks/{id}/events
 
                                                                 Container with
@@ -82,17 +88,26 @@ gateway ┤  GET     ├──────────────────�
                                                                   labels only
 ```
 
-- **Listener identity** is the verified peer certificate subject
-  `CN=listener-local,OU=listener,O=<team_id>,serialNumber=<source_system_id>`.
-- **Team Executor identity** is `CN=exec-local-openhands,OU=team-executor,O=<team_id>`.
-- **Gateway identity** is `CN=operator-local,OU=gateway,O=<team_id>`.
-- **System administrator identity** is `CN=system-admin,OU=admin`.
+- **Listener** submits configured `team_id`, `source_system_id`,
+  `task_type_id`, and payload as request data; the State Registry
+  validates the canonical record shape.
+- **Team Executor** submits configured `scope`, `team_id`, and one
+  `authorized_tag`; the State Registry generates the `executor_id`
+  and resolves subsequent operations by that identifier.
+- **Gateway** forwards operator context (`operator_id`, `team_id`,
+  `request_id`, display-only `team_name`) as request data; the State
+  Registry applies the team filter and audit rules.
+- **System administrator** requests reach `/admin/*` only by operator
+  policy; the State Registry validates only the body and the
+  canonical records.
 - The State Registry and PostgreSQL server certs carry SAN
-  `DNS:localhost,IP:127.0.0.1` and EKU `serverAuth`. Client certs
-  carry EKU `clientAuth`.
+  `DNS:localhost,IP:127.0.0.1` and EKU `serverAuth`. The
+  PostgreSQL server cert is signed by a CA the State Registry trusts
+  for `verify-full`.
 - The Executor's own platform health surface (`/v1/livez`,
-  `/v1/readyz`) is **plaintext HTTP** on `127.0.0.1:8020`; mTLS is
-  reserved for the State Registry.
+  `/v1/readyz`) and the State Registry's `/v1/*` surfaces are
+  **plaintext HTTP** on `127.0.0.1`. External HTTPS terminates at the
+  Ingress.
 
 ## 3. Usage order
 
@@ -134,7 +149,7 @@ cd <repo-root>/manual-qa
 #    register team / source-system / task-type.
 ./01-prepare.sh
 
-# 2) Start the executor against the State Registry over mTLS.
+# 2) Start the executor against the State Registry over plain HTTP.
 #    The LLM input is read from manual-qa/.env (or the shell
 #    environment, which wins). It is NEVER persisted to disk or to
 #    the runtime state directory.
@@ -199,7 +214,7 @@ Keys that DO reach the Executor subprocess:
 | runtime state      | `OPENHANDS_HOST_PORT_START`, `OPENHANDS_HOST_PORT_END`                                                                                                               | `.env` / shell env, with the YAML defaults as fallback                                                        |
 | runtime state      | `OPENHANDS_WORKSPACE`                                                                                                                                                | `.env` / shell env, with `/workspace/project` as fallback                                                     |
 | script-assembled   | `EXECUTOR_API_BIND`, `EXECUTOR_POLL_INTERVAL`                                                                                                                        | hard-coded in `02-start-executor.sh`                                                                          |
-| script-assembled   | `EXECUTOR_STATE_REGISTRY_URL`, `EXECUTOR_STATE_REGISTRY_TLS_CLIENT_CERT`, `EXECUTOR_STATE_REGISTRY_TLS_CLIENT_KEY`, `EXECUTOR_STATE_REGISTRY_TLS_SERVER_CA`          | mTLS material path bundle from `state/certs/`                                                                 |
+| script-assembled   | `EXECUTOR_STATE_REGISTRY_URL=http://...`                                                                                                                            | State Registry base URL on `127.0.0.1:18443`                                                                 |
 | script-assembled   | `EXECUTOR_SCOPE=team`, `EXECUTOR_TEAM_ID`, `EXECUTOR_AUTHORIZED_TAG=openhands`, `EXECUTOR_MAX_CONTAINERS=1`, `OPENHANDS_INITIAL_RUN=true`, `FLOWAI_CLEANUP_ID_DIR=…` | derived from the State Registry admin onboarding performed by `01-prepare.sh`                                 |
 | shell env          | `PATH`, `HOME`                                                                                                                                                       | the only inherited keys `env -i` re-adds, so the Executor can locate shared libraries and its own `~/.config` |
 
@@ -211,13 +226,19 @@ Keys that DO **NOT** reach the Executor subprocess:
 - The Postgres password and DSN (the Executor does not talk to
   Postgres; only the State Registry does).
 - The Listener / Operator / Admin client certificates and keys
-  (these are identities of OTHER services, not of the Executor).
+  (these identities are no longer material; v0009 removes backend
+  HTTP mTLS and the State Registry consumes configured
+  `team_id` / `source_system_id` / `scope` / `authorized_tag` from
+  the request body and the X-FlowAI-* request-data headers).
 - The runtime state directory's `state/env.sh`, `state/certs/*`, and
   `logs/*` (none of these are mounted into the Executor process).
 - The `manual-qa/.env` file itself. The dotenv loader parses it inside
   the operator shell and exports the values into `EXEC_ENV`; the
   parser never sources the file and the file is not mounted into the
   OpenHands child container.
+- The legacy `EXECUTOR_STATE_REGISTRY_TLS_*` env vars. v0009 accepts
+  them for staged configuration cleanup but the binary never reads
+  them; this manual QA flow does NOT set them.
 
 Keys that reach the OpenHands V1 child container:
 
@@ -258,12 +279,13 @@ Executor or the OpenHands child.
   explicitly empty exports — always win over values from the dotenv
   file.
 - All admin / listener / gateway / Executor requests to the State
-  Registry go over mTLS with `--fail-with-body --cacert --cert --key`.
-  There is no `curl -k`, no `InsecureSkipVerify`, no plaintext
-  fallback for the State Registry surfaces.
+  Registry go over plain HTTP on the loopback address. There is no
+  `curl -k`, no `InsecureSkipVerify`, no client-cert path. The
+  deployment network policy (and the Ingress, for any non-loopback
+  caller) owns the caller boundary.
 - `STATE_REGISTRY_TEST_MODE` is never set; the State Registry runs in
-  the normal untagged production mode and the verified peer certificate
-  is the sole source of identity headers.
+  the normal untagged production mode and canonical records authorize
+  every protected surface.
 - The Postgres connection string carries `sslmode=verify-full` so the
   State Registry's Go client (pgx) verifies the server chain against
   the **`ca.crt` bundle**, not the Postgres leaf cert. The custom
@@ -276,15 +298,14 @@ Executor or the OpenHands child.
   `--entrypoint /bin/bash /etc/flowai/pg-tls/custom-entrypoint.sh postgres -c ssl=on ...`
   so the bash shebang is not required to point at the in-image
   interpreter path.
-- The Listener certificate carries the team's `O=` and the
-  source-system's `serialNumber=`. The Team Executor certificate
-  carries `O=<team_id>` and `CN=exec-local-openhands` (matches the
-  pinned `executor_id` in the Executor YAML). The Gateway certificate
-  carries `O=<team_id>` and `CN=operator-local`. The Admin certificate
-  carries `CN=system-admin,OU=admin` with no `O=`, no `serialNumber=`.
-  `03-submit-task.sh` validates the listener cert's `O=` and
-  `serialNumber=` equal the persisted `FLOWAI_TEAM_ID` and
-  `FLOWAI_SOURCE_SYSTEM_ID` before issuing the POST.
+- The Listener, Team Executor, Gateway, and System Administrator
+  identities are no longer material in v0009; the State Registry
+  consumes the configured `team_id`, `source_system_id`, `scope`,
+  and `authorized_tag` from the request body and the X-FlowAI-*
+  request-data headers. `03-submit-task.sh` validates the listener
+  body `team_id` and `source_system_id` equal the persisted
+  `FLOWAI_TEAM_ID` and `FLOWAI_SOURCE_SYSTEM_ID` before issuing the
+  POST.
 - LLM API keys are forwarded to the Executor subprocess via `env -i`,
   never written to a state file, and never logged.
 - All `openssl` subprocesses are bounded by GNU `timeout` and an
@@ -354,9 +375,9 @@ the listener / source-system / team identity are stable.
   `podman rm -f $(podman ps -aq --filter label=flowai.executor_id=exec-local-openhands)`.
 - **Executor probe fails on `/v1/livez`** — the executor binds
   **plaintext HTTP** on `127.0.0.1:8020`. Probe with
-  `curl http://127.0.0.1:8020/v1/livez`, never with `--cacert`. mTLS
-  is only used against the State Registry on
-  `https://localhost:18443`.
+  `curl http://127.0.0.1:8020/v1/livez`. The State Registry is also
+  plaintext HTTP on `127.0.0.1:18443`; v0009 removed backend HTTP
+  mTLS.
 
 ## 9. Cleanup
 

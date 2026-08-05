@@ -78,7 +78,7 @@ info:
 
 servers:
   - url: https://state-registry.internal
-    description: Mutually authenticated internal service endpoint
+    description: Plaintext HTTP internal service endpoint (external HTTPS terminates at Ingress)
 
 security: []
 
@@ -112,8 +112,6 @@ paths:
         The team resource is create-only: there is no `PUT`, `PATCH`, or
         `DELETE` team endpoint, and no path may alter `team_name`,
         `default_image`, or any other team field after creation.
-      security:
-        - SystemAdministratorMTLS: []
       requestBody:
         required: true
         content:
@@ -152,8 +150,6 @@ paths:
         same team, a different team, or any other variation that reuses
         the same `listener_identity` value SHALL be rejected without
         persistence.
-      security:
-        - SystemAdministratorMTLS: []
       requestBody:
         required: true
         content:
@@ -198,8 +194,6 @@ paths:
         The body requires a `team_id` that references an existing team and a
         required `execution_tag`; the Registry persists an immutable
         `task_type_id` and the optional `default_image`.
-      security:
-        - SystemAdministratorMTLS: []
       requestBody:
         required: true
         content:
@@ -245,8 +239,6 @@ paths:
         broadens, selects, or weakens any tenant authorization. Equal
         `execution_tag` strings appearing under different `team_id`s
         SHALL NOT grant cross-team authority.
-      security:
-        - SystemAdministratorMTLS: []
       parameters:
         - $ref: "#/components/parameters/AdminTagTeamIdFilter"
         - $ref: "#/components/parameters/AdminTagTagFilter"
@@ -300,8 +292,6 @@ paths:
         tenant authorization. Equal `required_tag` strings appearing
         under different `team_id`s SHALL NOT grant cross-team
         authority.
-      security:
-        - SystemAdministratorMTLS: []
       parameters:
         - $ref: "#/components/parameters/AdminTaskTeamIdFilter"
         - $ref: "#/components/parameters/AdminTaskStateFilter"
@@ -351,8 +341,6 @@ paths:
         immutable. A retry of `(team_id, source_system_id, source_id)`
         returns the existing canonical task with `200` and appends no
         event.
-      security:
-        - ListenerMTLS: []
       requestBody:
         required: true
         content:
@@ -394,8 +382,6 @@ paths:
         tampered, cross-endpoint, cross-scope, or changed-filter cursors
         with the same non-revealing `400 invalid_pagination` shape before
         any protected query runs.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/GatewayOperatorId"
         - $ref: "#/components/parameters/GatewayTeamId"
@@ -425,8 +411,6 @@ paths:
       summary: Read a canonical task
       operationId: getTask
       description: A foreign-team task identifier returns the same `404 task_unknown` response as an unknown identifier.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -460,8 +444,6 @@ paths:
         have an `(occurred_at, event_id)` tuple strictly greater than the
         latest accepted tuple. `accepted_sequence` and other recovery
         overrides are not accepted.
-      security:
-        - ExecutorMTLS: []
       parameters:
         - $ref: "#/components/parameters/TaskId"
       requestBody:
@@ -506,8 +488,6 @@ paths:
         any claimed task is `created` and carries a non-null `executor_id`
         that identifies the claiming Executor; Executor-emitted events have
         non-null `executor_id` and required `team_id`.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -540,8 +520,6 @@ paths:
         mTLS identity and request body, generates an immutable UUID
         `executor_id`, persists the canonical Executor, and returns it. The
         request body carries neither `executor_id` nor `identity`.
-      security:
-        - ExecutorMTLS: []
       requestBody:
         required: true
         content:
@@ -566,8 +544,6 @@ paths:
       summary: List Executors in the operator team
       operationId: listExecutors
       description: Team filtering precedes tag, type, cursor, total, and page shaping.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/GatewayOperatorId"
         - $ref: "#/components/parameters/GatewayTeamId"
@@ -610,8 +586,6 @@ paths:
         `identity`; State Registry derives and persists the canonical
         Executor identity exclusively from the authenticated mTLS context.
         Refresh never creates an Executor or creates or updates a team.
-      security:
-        - ExecutorMTLS: []
       parameters:
         - $ref: "#/components/parameters/ExecutorId"
       requestBody:
@@ -644,8 +618,6 @@ paths:
       summary: Read a canonical Executor
       operationId: getExecutor
       description: A foreign-team Executor identifier returns the same `404 executor_unknown` response as an unknown identifier.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/ExecutorId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -683,8 +655,6 @@ paths:
         reserves or assigns a task and never reads or enforces capacity.
         If only foreign-team tasks match, the result is `204` (or an empty
         `200` page) without count, cursor, or timing disclosure.
-      security:
-        - ExecutorMTLS: []
       parameters:
         - $ref: "#/components/parameters/ExecutorId"
         - name: tag
@@ -745,8 +715,6 @@ paths:
         command_id)` of an existing claim) returns non-revealing `404
         task_unknown`. Capacity observations are not read or evaluated.
         Image strings are not team-owned resources and never authorize.
-      security:
-        - ExecutorMTLS: []
       parameters:
         - $ref: "#/components/parameters/ExecutorId"
       requestBody:
@@ -786,8 +754,6 @@ paths:
         `capacity_observed` payload are mirrored to the Executor row in
         the same transaction but never gate work. An identical retry
         returns the original `202` result without duplication.
-      security:
-        - ExecutorMTLS: []
       parameters:
         - $ref: "#/components/parameters/ExecutorId"
       requestBody:
@@ -825,8 +791,6 @@ paths:
       summary: Read ordered Executor self-event history
       operationId: listExecutorEvents
       description: Team filtering is applied before event pagination and serialization.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/ExecutorId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -860,8 +824,6 @@ paths:
         operator_id, action)`. A foreign task returns the same `404
         task_unknown` response as unknown and creates neither a control
         nor a domain event.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -900,8 +862,6 @@ paths:
         not_assigned`. The task's `team_id` carries immutable ownership;
         the same-team check applies to the envelope `team_id` when
         `scope = team`.
-      security:
-        - ExecutorMTLS: []
       parameters:
         - $ref: "#/components/parameters/TaskId"
       responses:
@@ -924,8 +884,6 @@ paths:
       summary: Read one control through API Gateway
       operationId: getTaskControl
       description: Foreign task or control identifiers return the same non-revealing `404` shape as unknown identifiers.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/TaskId"
         - $ref: "#/components/parameters/ControlId"
@@ -956,8 +914,6 @@ paths:
         Stores non-secret `KEY=value` entries and optional project/task
         applicability in the trusted Gateway team. The body cannot select a
         tenant. The write appends a plaintext-free audit entry.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/GatewayOperatorId"
         - $ref: "#/components/parameters/GatewayTeamId"
@@ -987,8 +943,6 @@ paths:
       summary: List team-owned environment definitions
       operationId: listEnvironments
       description: Team filtering occurs before project/task filters, totals, cursors, and pages.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/GatewayOperatorId"
         - $ref: "#/components/parameters/GatewayTeamId"
@@ -1022,8 +976,6 @@ paths:
         references only. It never returns secret plaintext, decrypted values,
         ciphertext, authentication tag bytes, or decryption material. A
         foreign identifier is the same `404` shape as unknown.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -1048,8 +1000,6 @@ paths:
       summary: Replace a team-owned non-secret environment definition
       operationId: replaceEnvironment
       description: A foreign environment returns non-revealing `404` and causes no decrypt operation.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -1082,8 +1032,6 @@ paths:
       summary: Delete a team-owned environment definition
       operationId: deleteEnvironment
       description: Marks the definition deleted and appends an audit entry; foreign is indistinguishable from unknown.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -1116,8 +1064,6 @@ paths:
         and returns only identifiers and non-sensitive version metadata. A
         foreign environment returns non-revealing `404` before any
         encrypt operation.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -1150,8 +1096,6 @@ paths:
       summary: List logical secret metadata for an environment
       operationId: listEnvironmentSecrets
       description: Returns references and version metadata only; no plaintext, ciphertext, nonce, or tag.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -1180,8 +1124,6 @@ paths:
       summary: Read logical secret metadata
       operationId: getEnvironmentSecret
       description: Returns no plaintext, decrypted value, ciphertext, nonce, tag, or decryption material.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/SecretId"
@@ -1213,8 +1155,6 @@ paths:
         `key_version` metadata, and returns version metadata only.
         Foreign parent or secret identifiers return `404` before any
         encrypt operation.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/SecretId"
@@ -1248,8 +1188,6 @@ paths:
       summary: Revoke a logical secret reference
       operationId: revokeEnvironmentSecret
       description: Retains immutable version history, stores no plaintext, and appends a plaintext-free audit entry.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/SecretId"
@@ -1273,8 +1211,6 @@ paths:
       summary: List immutable secret-version metadata
       operationId: listSecretVersions
       description: Version metadata is team-filtered and contains no plaintext, ciphertext, nonce, or tag.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/SecretId"
@@ -1304,8 +1240,6 @@ paths:
       summary: Read immutable secret-version metadata
       operationId: getSecretVersion
       description: A foreign version identifier returns the same `404` shape as unknown and never exposes plaintext or ciphertext.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - $ref: "#/components/parameters/SecretId"
@@ -1396,8 +1330,6 @@ paths:
 
         On success, State Registry returns env-style values and appends
         a plaintext-free audit entry. Plaintext remains in memory only.
-      security:
-        - ExecutorMTLS: []
       parameters:
         - $ref: "#/components/parameters/EnvironmentId"
         - name: X-FlowAI-Scope-Token
@@ -1442,8 +1374,6 @@ paths:
       summary: List plaintext-free audit entries in the operator team
       operationId: listAuditEntries
       description: Team filtering occurs before actor/resource/time filters, totals, cursors, aggregation, or serialization.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/GatewayOperatorId"
         - $ref: "#/components/parameters/GatewayTeamId"
@@ -1483,8 +1413,6 @@ paths:
       summary: Read one plaintext-free audit entry
       operationId: getAuditEntry
       description: A foreign audit identifier returns the same `404` shape as unknown and discloses no entry.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/AuditId"
         - $ref: "#/components/parameters/GatewayOperatorId"
@@ -1521,8 +1449,6 @@ paths:
         fan-out, and every frame. Each `WebSocketEventFrame` requires the
         same `team_id`. A filter naming a foreign resource is treated as
         unknown and emits no existence signal or foreign frame.
-      security:
-        - GatewayMTLS: []
       parameters:
         - $ref: "#/components/parameters/GatewayOperatorId"
         - $ref: "#/components/parameters/GatewayTeamId"
@@ -1574,31 +1500,7 @@ paths:
           $ref: "#/components/responses/ResourceNotFound"
 
 components:
-  securitySchemes:
-    SystemAdministratorMTLS:
-      type: mutualTLS
-      description: |
-        Mutual TLS transport identity used to reach `/admin/*` endpoints
-        (team, source-system, task-type creation). The State Registry
-        requires that the authenticated transport identity be the one
-        deployment has authorized as a system administrator; HOW that
-        authenticated transport identity is mapped/authorized to the
-        system-administrator role (subject, SAN, claim, group, header,
-        token shape, or any other rule) is deployment-defined and outside
-        this contract. The contract does not define a caller-supplied
-        admin header, token shape, certificate subject, claim, or role
-        mapping. Only an authenticated system-administrator transport
-        identity may reach `/admin/*`; no listener, Executor, or Gateway
-        path may create or update a team, source system, or task type.
-    ListenerMTLS:
-      type: mutualTLS
-      description: Trusted listener certificate bound to exactly one immutable team and one immutable source system.
-    ExecutorMTLS:
-      type: mutualTLS
-      description: Trusted Executor certificate. A team-owned Executor is bound to exactly one immutable team_id referencing an existing team; a system-owned Executor has no team binding and is filtered by the single registered tag only.
-    GatewayMTLS:
-      type: mutualTLS
-      description: Trusted API Gateway certificate. Internal context headers are trusted only with this identity.
+  securitySchemes: {}
 
   parameters:
     TaskId:
@@ -1648,7 +1550,7 @@ components:
       name: X-FlowAI-Operator-ID
       in: header
       required: true
-      description: Gateway-verified operator identifier. Trusted only with `GatewayMTLS`; one operator context has exactly one team.
+      description: Gateway-forwarded operator identifier; one operator context has exactly one team.
       schema:
         $ref: "#/components/schemas/Identifier"
     GatewayTeamId:

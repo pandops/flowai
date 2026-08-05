@@ -408,15 +408,15 @@ func TestExecutorTeamRegistration(t *testing.T) {
 			allowTeamReads: true,
 		},
 		{
-			name:       "missing identity X-FlowAI-Team-Id rejected before team lookup",
+			name:       "missing identity X-FlowAI-Team-Id resolved from body team_id (v0009)",
 			authTeamID: "",
 			body: func() ([]byte, executorPutBody) {
 				b := validTeamRegistrationBody(execID, "team-a", "openhands")
 				return marshalExecutorBody(t, b), b
 			},
-			wantStatus:     http.StatusUnauthorized,
-			wantCode:       "unauthenticated",
-			allowTeamReads: false,
+			wantStatus:     http.StatusOK,
+			wantCode:       "",
+			allowTeamReads: true,
 		},
 		{
 			name:       "omitted body team_id rejected with 400 missing_team_id",

@@ -65,7 +65,12 @@ test.describe("redact.sanitize", () => {
     );
   });
 
-  test("redacts STATE_REGISTRY_TLS_SERVER_CERT, TLS_SERVER_KEY, and TLS_CLIENT_CA env var values", () => {
+  test("v0009: STATE_REGISTRY_TLS_* HTTP listener env vars are accepted but never read; the redactor still redactions paths so misconfigured operator logs do not leak the operator's file layout", () => {
+    // After v0009 the State Registry never constructs a tls.Config
+    // for the HTTP listener; these env vars are accepted-but-ignored
+    // compatibility inputs. The redactor must still scrub the
+    // operator's file layout from any log line so a future
+    // listener that misreads them does not surface the path.
     const lines = [
       "STATE_REGISTRY_TLS_SERVER_CERT=/tmp/flowai-v0002-20-tls-abc123/server.crt",
       "STATE_REGISTRY_TLS_SERVER_KEY=/tmp/flowai-v0002-20-tls-abc123/server.key",

@@ -2,18 +2,19 @@
 // reads configuration from environment variables, opens a PostgreSQL
 // connection, starts the readiness probe goroutine, and serves
 // /v1/livez, /v1/readyz, and the implementation-active business
-// routes. mTLS is mandatory in production startup; the verified
-// peer certificate subject drives every X-FlowAI-* identity header
-// (see withPeerIdentity) and the header-trusting test-mode opt-in
-// (STATE_REGISTRY_TEST_MODE=true) is gated by the
-// state_registry_test_harness build tag — a normal production
+// routes. The HTTP listener is plaintext; external HTTPS terminates
+// at the Ingress. The State Registry does NOT terminate backend
+// service-to-service mTLS, derive identity from peer certificates,
+// or load any HTTP certificate, key, or CA file. PostgreSQL
+// transport remains secure with server-certificate verification.
+//
+// The test-mode opt-in (STATE_REGISTRY_TEST_MODE=true) is gated by
+// the state_registry_test_harness build tag — a normal production
 // binary rejects the env var outright.
 package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -33,7 +34,6 @@ import (
 	"github.com/flowai/platform/state-registry/internal/httpapi"
 	"github.com/flowai/platform/state-registry/internal/logging"
 	"github.com/flowai/platform/state-registry/internal/migrations"
-	"github.com/flowai/platform/state-registry/internal/peerauth"
 	"github.com/flowai/platform/state-registry/internal/store"
 )
 
@@ -55,25 +55,27 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("load cursor keyring: %w", err)
 	}
-	tlsConfig, err := serverTLSConfig(cfg)
-	if err != nil {
-		return fmt.Errorf("load server TLS: %w", err)
-	}
 	postgresURL, err := postgresURLWithTLS(cfg)
 	if err != nil {
 		return fmt.Errorf("load postgres TLS: %w", err)
 	}
 
 	logger := logging.New(logging.LevelInfo)
+	if len(cfg.LegacyTLSIgnoredKeys) > 0 {
+		// Emit at most one deprecation warning naming only the
+		// keys that were supplied. Never log the values; never
+		// read the referenced paths.
+		logger.Warn(
+			"state-registry: legacy backend HTTP TLS configuration keys are ignored; backend transport is plaintext and external HTTPS terminates at Ingress",
+			"ignored_keys", cfg.LegacyTLSIgnoredKeys,
+		)
+	}
 
 	listener, actualPort, err := bindLoopback(cfg.BindHost, cfg.BindPort)
 	if err != nil {
 		return fmt.Errorf("bind: %w", err)
 	}
 	cfg.BindPort = actualPort
-	if tlsConfig != nil {
-		listener = tls.NewListener(listener, tlsConfig)
-	}
 
 	logger.Info("starting state-registry",
 		"bind", cfg.BindAddress(),
@@ -110,14 +112,10 @@ func run() error {
 	}
 	adminStore := store.NewWithScopeTokenKeyring(db, cfg.AESKey, scopeKeyring)
 	handler := httpapi.RoutesWithKeyring(serviceName, "", logger, checker, ops, cursorKeyring, cfg.TestMode, adminStore)
-	if tlsConfig != nil {
-		handler = withPeerIdentity(handler)
-	}
 
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
-		TLSConfig:         tlsConfig,
 	}
 
 	errCh := make(chan error, 1)
@@ -195,36 +193,6 @@ func scopeTokenAlgorithm(cfg *config.Config) store.ScopeTokenAlgorithm {
 	}
 }
 
-func serverTLSConfig(cfg config.Config) (*tls.Config, error) {
-	if cfg.TLSServerCert == "" && cfg.TLSServerKey == "" && cfg.TLSClientCA == "" {
-		return nil, nil
-	}
-	certificate, err := tls.LoadX509KeyPair(cfg.TLSServerCert, cfg.TLSServerKey)
-	if err != nil {
-		return nil, fmt.Errorf("load STATE_REGISTRY_TLS_SERVER_CERT/STATE_REGISTRY_TLS_SERVER_KEY: %w", err)
-	}
-	clientCAs := x509.NewCertPool()
-	if cfg.TLSClientCA != "" {
-		encoded, err := os.ReadFile(cfg.TLSClientCA)
-		if err != nil {
-			return nil, fmt.Errorf("read STATE_REGISTRY_TLS_CLIENT_CA: %w", err)
-		}
-		if !clientCAs.AppendCertsFromPEM(encoded) {
-			return nil, errors.New("STATE_REGISTRY_TLS_CLIENT_CA contains no certificates")
-		}
-	}
-	clientAuth := tls.VerifyClientCertIfGiven
-	if cfg.TLSRequireClientCert {
-		clientAuth = tls.RequireAndVerifyClientCert
-	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{certificate},
-		ClientCAs:    clientCAs,
-		ClientAuth:   clientAuth,
-		MinVersion:   tls.VersionTLS12,
-	}, nil
-}
-
 func postgresURLWithTLS(cfg config.Config) (string, error) {
 	parsed, err := validatePostgresNetworkURL(cfg.PostgresURL)
 	if err != nil {
@@ -257,26 +225,4 @@ func validatePostgresNetworkURL(raw string) (*url.URL, error) {
 		}
 	}
 	return parsed, nil
-}
-
-func withPeerIdentity(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Caller-supplied identity headers are NEVER authority.
-		// Strip every documented header BEFORE mapping verified
-		// peer-cert claims so a copy-pasted header can never widen
-		// team authority across a missing / forged certificate.
-		for _, name := range []string{
-			"X-FlowAI-Role", "X-FlowAI-Team-Id", "X-FlowAI-Executor-Id",
-			"X-FlowAI-Listener-Identity", "X-FlowAI-Source-System-Id",
-			"X-FlowAI-Operator-Id", "X-FlowAI-Admin-Subject",
-		} {
-			r.Header.Del(name)
-		}
-		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-			next.ServeHTTP(w, r)
-			return
-		}
-		peerauth.Parse(r.TLS.PeerCertificates[0]).Apply(r.Header)
-		next.ServeHTTP(w, r)
-	})
 }

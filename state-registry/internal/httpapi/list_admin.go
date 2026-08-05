@@ -35,14 +35,16 @@ type cursorKeyring interface {
 const maxListRawQueryLength = 2048
 
 // RegisterAdminList mounts GET /admin/tags and GET /admin/tasks on
-// the supplied router. The handlers are scoped under the existing
-// /admin/* route so the system-administrator middleware already
-// gates non-admin identities before the request reaches the handler.
+// the supplied router. After v0009 the State Registry does not
+// authenticate the system-administrator identity; the deployment
+// network policy owns the /admin/* caller boundary, and the
+// handlers validate the X-FlowAI-Admin-Subject header (if present)
+// as audit attribution data only.
 func RegisterAdminList(r chi.Router, logger *slog.Logger, repo store.ListRepository, keyring cursorKeyring) {
 	h := &adminListHandlers{logger: logger, repo: repo, keyring: keyring}
 	auth := &adminHandlers{logger: logger, repo: repo}
-	r.With(auth.requireSystemAdministrator).Get("/admin/tags", h.listTags)
-	r.With(auth.requireSystemAdministrator).Get("/admin/tasks", h.listTasks)
+	r.With(auth.requireAdminHeaders).Get("/admin/tags", h.listTags)
+	r.With(auth.requireAdminHeaders).Get("/admin/tasks", h.listTasks)
 }
 
 // adminCursorIdentity returns the system-administrator scope. The

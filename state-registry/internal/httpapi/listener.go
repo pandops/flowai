@@ -16,16 +16,14 @@ import (
 	"github.com/flowai/platform/state-registry/internal/store"
 )
 
-// The listener adapter reads the documented test-mode request headers.
-// Production startup MUST NOT mount the listener route; the headers
-// are deliberately untrusted in production and only meaningful inside
-// explicit test mode.
+// The listener adapter reads caller-supplied X-FlowAI-* request
+// headers as request data; the v0009 transport is plaintext and the
+// State Registry never authenticates the listener connection.
 const (
 	listenerHdrTeamID       = "X-FlowAI-Team-Id"
 	listenerHdrIdentity     = "X-FlowAI-Listener-Identity"
 	listenerHdrSourceSystem = "X-FlowAI-Source-System-Id"
 	listenerHdrRequiredTag  = "X-FlowAI-Required-Tag"
-	listenerRole            = "listener"
 	maxListenerRequestBytes = 64 << 10
 	maxListenerSourceID     = 256
 )
@@ -33,63 +31,39 @@ const (
 // listenerHandlers owns the listener ingestion handler. The handler
 // rejects any presence of a listener-supplied required_tag (header or
 // JSON key) BEFORE the typed decode, validates the request, and only
-// then calls the repository. The adapter therefore never trusts
-// listener-supplied authoritative identifiers beyond the immutable
-// authenticated binding.
+// then calls the repository. The X-FlowAI-* headers are trusted
+// request data, not authentication; canonical team/source-system
+// records authorize the ingestion.
 type listenerHandlers struct {
 	logger *slog.Logger
 	repo   store.ListenerRepository
 }
 
-// RegisterListener mounts POST /v1/tasks on the supplied router in
-// test mode only. The route is intentionally NOT mounted in production
-// because the headers used here are not authentication credentials —
-// production routes require mutually authenticated service identity.
+// RegisterListener mounts POST /v1/tasks on the supplied router. After
+// v0009 the route is mounted in every mode; the State Registry
+// validates the body and headers, and the deployment network policy
+// owns the listener-caller boundary.
 func RegisterListener(r chi.Router, logger *slog.Logger, repo store.ListenerRepository) {
 	if logger == nil || repo == nil {
-		// Defense in depth: if either dependency is missing, the
-		// listener adapter cannot operate safely. We deliberately
-		// refuse to mount rather than panic so existing tests that
-		// pass nil ops keep working.
 		return
 	}
 	h := &listenerHandlers{logger: logger, repo: repo}
-	r.With(h.requireListenerIdentity).Post("/v1/tasks", h.ingestTask)
+	r.With(h.requireListenerHeaders).Post("/v1/tasks", h.ingestTask)
 }
 
-// requireListenerIdentity enforces the test-mode listener identity
-// envelope. The boundary rejects missing identity components with 401
-// and a non-empty wrong role with 403. No body parsing happens in this
-// middleware so a malformed request that carries the correct headers
-// still reaches the handler.
-func (h *listenerHandlers) requireListenerIdentity(next http.Handler) http.Handler {
+func (h *listenerHandlers) requireListenerHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role := r.Header.Get(adminRoleHeader)
-		if role == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "listener authentication is required")
-			return
-		}
-		if role != listenerRole {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "listener authorization is required")
-			return
-		}
 		teamID := r.Header.Get(listenerHdrTeamID)
 		sourceSystemID := r.Header.Get(listenerHdrSourceSystem)
 		listenerIdentity := r.Header.Get(listenerHdrIdentity)
 		if teamID == "" || sourceSystemID == "" || listenerIdentity == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "listener identity is required")
+			h.writeError(w, r, http.StatusBadRequest, "invalid_request", "listener team_id, source_system_id, and listener_identity are required")
 			return
 		}
 		if !validIdentifier(teamID) || !validIdentifier(sourceSystemID) || !validText(listenerIdentity, 512) {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "listener identity is invalid")
+			h.writeError(w, r, http.StatusBadRequest, "invalid_request", "listener identity is invalid")
 			return
 		}
-		// Reject the presence (including empty value) of the
-		// X-FlowAI-Required-Tag header before any body parsing so
-		// the listener cannot smuggle a required_tag through the
-		// header surface. Go's net/http canonicalizes header keys
-		// (X-FlowAI-Required-Tag → X-Flowai-Required-Tag); the
-		// canonical form is the only key stored on the map.
 		if _, present := r.Header[textproto.CanonicalMIMEHeaderKey(listenerHdrRequiredTag)]; present {
 			h.writeError(w, r, http.StatusBadRequest, "listener_supplied_required_tag_forbidden", "listener_supplied_required_tag_forbidden")
 			return

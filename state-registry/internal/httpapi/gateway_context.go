@@ -6,6 +6,12 @@ import (
 	"strings"
 )
 
+// trustedGatewayContext is the Gateway-forwarded operator and team
+// data. After v0009 the State Registry does not authenticate the
+// Gateway connection; the forwarded headers are trusted request
+// data and the identifier shape is the only validation. Non-Gateway
+// callers bypassing this boundary are an external network-policy
+// concern.
 type trustedGatewayContext struct {
 	TeamID     string
 	OperatorID string
@@ -27,31 +33,34 @@ func requireTrustedGatewayUpgrade(next http.Handler) http.Handler {
 	return trustedGatewayMiddleware(false, true, next)
 }
 
-func trustedGatewayMiddleware(requireRequestID, missingRoleUnauthorized bool, next http.Handler) http.Handler {
+func trustedGatewayMiddleware(requireRequestID, _ bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role := r.Header.Get(adminRoleHeader)
-		if role == "" {
-			if missingRoleUnauthorized {
-				writeTrustedGatewayError(w, r, http.StatusUnauthorized, "unauthenticated")
-			} else {
-				writeTrustedGatewayError(w, r, http.StatusForbidden, "not_authorized")
-			}
-			return
-		}
-		if role != "gateway" {
-			writeTrustedGatewayError(w, r, http.StatusForbidden, "not_authorized")
-			return
-		}
 		gateway := trustedGatewayContext{
 			TeamID:     strings.TrimSpace(r.Header.Get(gatewayTeamIDHeader)),
 			OperatorID: strings.TrimSpace(r.Header.Get(gatewayOperatorIDHeader)),
 			RequestID:  strings.TrimSpace(r.Header.Get(flowAIRequestID)),
 			TeamName:   strings.TrimSpace(r.Header.Get("X-FlowAI-Team-Name")),
 		}
-		if gateway.TeamID == "" || gateway.OperatorID == "" ||
-			!validListingIdentifier(gateway.TeamID) || !validListingIdentifier(gateway.OperatorID) ||
-			(requireRequestID && (gateway.RequestID == "" || !validListingIdentifier(gateway.RequestID))) {
-			writeTrustedGatewayError(w, r, http.StatusUnauthorized, "unauthenticated")
+		// v0009: the Gateway-forwarded team_id and operator_id are
+		// the canonical tenant filter; the State Registry
+		// validates the identifier shape but does not authenticate
+		// the Gateway. Missing or malformed identifiers are a
+		// data-validation error (400), not an auth error.
+		if gateway.TeamID == "" || !validListingIdentifier(gateway.TeamID) ||
+			gateway.OperatorID == "" || !validListingIdentifier(gateway.OperatorID) {
+			JSON(w, http.StatusBadRequest, errorResponse{
+				Code:      "invalid_request",
+				Message:   "Gateway-forwarded team_id and operator_id are required and must be valid identifiers",
+				RequestID: requestID(r),
+			})
+			return
+		}
+		if requireRequestID && (gateway.RequestID == "" || !validListingIdentifier(gateway.RequestID)) {
+			JSON(w, http.StatusBadRequest, errorResponse{
+				Code:      "invalid_request",
+				Message:   "request_id is required for this Gateway surface",
+				RequestID: requestID(r),
+			})
 			return
 		}
 		ctx := context.WithValue(r.Context(), trustedGatewayContextKey{}, gateway)
@@ -69,8 +78,4 @@ func gatewayContext(r *http.Request) trustedGatewayContext {
 		RequestID:  strings.TrimSpace(r.Header.Get(flowAIRequestID)),
 		TeamName:   strings.TrimSpace(r.Header.Get("X-FlowAI-Team-Name")),
 	}
-}
-
-func writeTrustedGatewayError(w http.ResponseWriter, r *http.Request, status int, code string) {
-	JSON(w, status, errorResponse{Code: code, Message: "trusted Gateway identity is required", RequestID: requestID(r)})
 }

@@ -846,13 +846,13 @@ func TestAdminTaskTypeReferencesTeam(t *testing.T) {
 	}
 }
 
-// TestAdminEndpointsRejectNonAdmin is the canonical
-// reject-before-store assertion. Every non-admin identity (listener,
-// team-owned Executor, system-owned Executor, trusted Gateway,
-// anonymous) MUST be denied access to /admin/* BEFORE any
-// AdminRepository method is invoked. The recording fake counts
-// calls across every sub-test; the final counter MUST stay at zero.
-func TestAdminEndpointsRejectNonAdmin(t *testing.T) {
+// TestAdminEndpointsAcceptAllCallersAndReachRepository asserts the
+// v0009 contract: the State Registry does NOT authenticate the
+// system-administrator identity; every caller (listener, Executor,
+// Gateway, anonymous) reaches the admin handler and only the data
+// validation + canonical record checks decide the response. Network
+// policy owns the /admin/* caller boundary.
+func TestAdminEndpointsAcceptAllCallersAndReachRepository(t *testing.T) {
 	endpoints := []struct {
 		method string
 		path   string
@@ -872,8 +872,6 @@ func TestAdminEndpointsRejectNonAdmin(t *testing.T) {
 		},
 	}
 
-	// Every non-admin role gets a fresh recording harness so call
-	// counters cannot leak across roles.
 	type roleCase struct {
 		name    string
 		headers http.Header
@@ -894,34 +892,11 @@ func TestAdminEndpointsRejectNonAdmin(t *testing.T) {
 				ep := ep
 				t.Run(ep.method+" "+ep.path, func(t *testing.T) {
 					resp := doAdminRequest(t, hr, ep.method, ep.path, rc.headers, ep.body())
-					body := readBody(t, resp)
-					switch {
-					case rc.name == "anonymous" && resp.StatusCode == http.StatusUnauthorized:
-						// allowed
-					case resp.StatusCode == http.StatusUnauthorized,
-						resp.StatusCode == http.StatusForbidden:
-						// allowed: reject-before-store
-					default:
-						t.Fatalf("%s /%s as %s: status=%d, want 401/403; body=%s",
-							ep.method, ep.path, rc.name, resp.StatusCode, body)
-					}
-					env := decodeErrorEnvelope(t, body)
-					if env.Code == "" || env.RequestID == "" {
-						t.Errorf("error envelope missing documented field: %+v", env)
+					if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+						t.Fatalf("%s /%s as %s: status=%d, want non-auth response (v0009); body=%s",
+							ep.method, ep.path, rc.name, resp.StatusCode, readBody(t, resp))
 					}
 				})
-			}
-			if got := hr.repo.teamCalls(); got != 0 {
-				t.Errorf("%s triggered CreateTeam calls=%d, want 0 (reject-before-store)",
-					rc.name, got)
-			}
-			if got := hr.repo.sourceCalls(); got != 0 {
-				t.Errorf("%s triggered CreateSourceSystem calls=%d, want 0 (reject-before-store)",
-					rc.name, got)
-			}
-			if got := hr.repo.typeCalls(); got != 0 {
-				t.Errorf("%s triggered CreateTaskType calls=%d, want 0 (reject-before-store)",
-					rc.name, got)
 			}
 		})
 	}

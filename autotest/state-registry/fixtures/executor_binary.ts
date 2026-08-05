@@ -76,12 +76,16 @@ export interface ExecutorStartOptions {
    * variable; v0001 ingores it entirely.
    */
   registryUrl?: string;
-  /** Client certificate presented to the State Registry mTLS endpoint. */
-  registryTLSClientCertPath?: string;
-  /** Private key paired with registryTLSClientCertPath. */
-  registryTLSClientKeyPath?: string;
-  /** CA bundle used to verify the State Registry server certificate. */
-  registryTLSServerCAPath?: string;
+  /**
+   * Legacy backend HTTP TLS/mTLS env vars the binary may accept
+   * for staged configuration cleanup. v0009: the binary never
+   * reads them; the deployment network policy owns the
+   * caller boundary.
+   */
+  legacyTLSServerCert?: string;
+  legacyTLSServerKey?: string;
+  legacyTLSClientCA?: string;
+  legacyTLSRequireClientCert?: string;
   /**
    * Ownership scope. Future-facing: surface as EXECUTOR_SCOPE.
    * v0001 ingores it.
@@ -354,17 +358,24 @@ export async function startExecutorBinary(
   const v0002Options: Record<string, string> = {};
   if (opts.registryUrl)
     v0002Options["EXECUTOR_STATE_REGISTRY_URL"] = opts.registryUrl;
-  if (opts.registryTLSClientCertPath) {
+  // v0009: the legacy backend HTTP TLS/mTLS env vars are accepted
+  // for staged configuration cleanup. The binary never reads
+  // them; the deployment network policy owns the caller boundary.
+  if (opts.legacyTLSServerCert) {
     v0002Options["EXECUTOR_STATE_REGISTRY_TLS_CLIENT_CERT"] =
-      opts.registryTLSClientCertPath;
+      opts.legacyTLSServerCert;
   }
-  if (opts.registryTLSClientKeyPath) {
+  if (opts.legacyTLSServerKey) {
     v0002Options["EXECUTOR_STATE_REGISTRY_TLS_CLIENT_KEY"] =
-      opts.registryTLSClientKeyPath;
+      opts.legacyTLSServerKey;
   }
-  if (opts.registryTLSServerCAPath) {
+  if (opts.legacyTLSClientCA) {
     v0002Options["EXECUTOR_STATE_REGISTRY_TLS_SERVER_CA"] =
-      opts.registryTLSServerCAPath;
+      opts.legacyTLSClientCA;
+  }
+  if (opts.legacyTLSRequireClientCert) {
+    v0002Options["EXECUTOR_STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT"] =
+      opts.legacyTLSRequireClientCert;
   }
   if (opts.scope) v0002Options["EXECUTOR_SCOPE"] = opts.scope;
   if (opts.teamId) v0002Options["EXECUTOR_TEAM_ID"] = opts.teamId;

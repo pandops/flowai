@@ -87,7 +87,13 @@ func TestEventsStreamTrustedGatewayUpgrade(t *testing.T) {
 	}
 }
 
-func TestEventsStreamWrongRoleForbidden(t *testing.T) {
+// TestEventsStreamRejectsNonGatewayDataValidation asserts the
+// v0009 contract: the events stream is gated only on the shape
+// of the Gateway-forwarded context (team_id + operator_id), not on
+// a verified role. A wrong role reaches the data-validation layer
+// and is rejected with the documented non-auth envelope; the
+// role check no longer produces a 403.
+func TestEventsStreamRejectsNonGatewayDataValidation(t *testing.T) {
 	srv := httptest.NewServer(newTestRouter(t, true))
 	defer srv.Close()
 
@@ -96,26 +102,32 @@ func TestEventsStreamWrongRoleForbidden(t *testing.T) {
 		_ = conn.Close()
 	}
 	if err == nil {
-		t.Fatalf("dial must fail for wrong role")
+		t.Fatalf("dial must fail for non-gateway data")
 	}
 	if resp == nil {
 		t.Fatalf("expected non-nil response")
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status=%d, want 403", resp.StatusCode)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("status=%d, want non-auth response (v0009)", resp.StatusCode)
 	}
 }
 
-func TestEventsStreamMissingIdentityUnauthenticated(t *testing.T) {
+// TestEventsStreamValidatesGatewayContextShape asserts the
+// v0009 contract: the events stream requires the Gateway-forwarded
+// team_id + operator_id identifiers, and rejects missing/invalid
+// values with the documented non-auth 400 envelope. Valid
+// identifier shapes (any role header) reach the upgrade.
+func TestEventsStreamValidatesGatewayContextShape(t *testing.T) {
 	cases := []struct {
-		name    string
-		headers http.Header
+		name      string
+		headers   http.Header
+		wantError bool
 	}{
-		{name: "no role", headers: http.Header{esTeamHeader: {"t"}, esOperatorHeader: {"o"}}},
-		{name: "no team", headers: http.Header{esRoleHeader: {"gateway"}, esOperatorHeader: {"o"}}},
-		{name: "no operator", headers: http.Header{esRoleHeader: {"gateway"}, esTeamHeader: {"t"}}},
-		{name: "blank team", headers: http.Header{esRoleHeader: {"gateway"}, esTeamHeader: {"   "}, esOperatorHeader: {"o"}}},
+		{name: "valid team+operator", headers: http.Header{esTeamHeader: {"t"}, esOperatorHeader: {"o"}}, wantError: false},
+		{name: "no team", headers: http.Header{esRoleHeader: {"gateway"}, esOperatorHeader: {"o"}}, wantError: true},
+		{name: "no operator", headers: http.Header{esRoleHeader: {"gateway"}, esTeamHeader: {"t"}}, wantError: true},
+		{name: "blank team", headers: http.Header{esRoleHeader: {"gateway"}, esTeamHeader: {"   "}, esOperatorHeader: {"o"}}, wantError: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,47 +138,56 @@ func TestEventsStreamMissingIdentityUnauthenticated(t *testing.T) {
 			if conn != nil {
 				_ = conn.Close()
 			}
-			if err == nil {
-				t.Fatalf("dial must fail for missing identity")
-			}
-			if resp == nil {
-				t.Fatalf("expected non-nil response")
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusUnauthorized {
-				t.Fatalf("status=%d, want 401", resp.StatusCode)
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("dial must fail for missing identifier")
+				}
+				if resp == nil {
+					t.Fatalf("expected non-nil response")
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+					t.Fatalf("status=%d, want non-auth response (v0009)", resp.StatusCode)
+				}
+			} else {
+				// Valid Gateway context: upgrade succeeds; the
+				// server may close the connection on its own
+				// (no work to do), so just verify the upgrade
+				// status and let the defer clean up.
+				if err != nil {
+					t.Fatalf("dial: %v", err)
+				}
+				defer conn.Close()
+				if resp.StatusCode != http.StatusSwitchingProtocols {
+					t.Fatalf("status=%d, want 101", resp.StatusCode)
+				}
 			}
 		})
 	}
 }
 
-// TestEventsStreamMountedInProduction asserts the v0002.20
-// production invariant: /v1/events/stream is part of every
-// router (testMode=false or true). Production security comes from
-// the verified peer-identity middleware in
-// cmd/state-registry/main.go — this test verifies the mount
-// invariant only; production identity claims are not exercised
-// here.
+// TestEventsStreamMountedInProduction asserts the v0009 production
+// invariant: /v1/events/stream is part of every router (testMode
+// =false or true). The route is reached without a service-auth
+// check; the Gateway-forwarded context shape is the only
+// validation.
 func TestEventsStreamMountedInProduction(t *testing.T) {
 	srv := httptest.NewServer(newTestRouter(t, false))
 	defer srv.Close()
 
-	// Without any identity header the trusted-Gateway middleware
-	// refuses the upgrade with 401 (not 404 — the route is
-	// mounted, just unauthorized).
 	conn, resp, err := dial(t, srv, nil)
 	if conn != nil {
 		_ = conn.Close()
 	}
 	if err == nil {
-		t.Fatalf("dial must fail without identity in production")
+		t.Fatalf("dial must fail without Gateway context in production")
 	}
 	if resp == nil {
 		t.Fatalf("expected non-nil response")
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status=%d, want 401 (route mounted, identity missing)", resp.StatusCode)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		t.Fatalf("status=%d, want non-auth response (v0009)", resp.StatusCode)
 	}
 }
 

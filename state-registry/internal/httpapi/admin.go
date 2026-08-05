@@ -42,34 +42,28 @@ type errorResponse struct {
 	RequestID string `json:"request_id"`
 }
 
-// RegisterAdmin mounts the header-authenticated admin onboarding adapter used
-// by explicit test-mode startup. Production startup must not mount this
-// adapter because request headers are not authentication credentials.
+// RegisterAdmin mounts the admin onboarding adapter. After v0009 the
+// State Registry does not authenticate the system-administrator
+// identity; the X-FlowAI-Admin-Subject header is treated as audit
+// attribution data, and the deployment network policy owns the
+// /admin/* caller boundary. The X-FlowAI-Role header is no longer
+// used to reject non-administrator callers; the Registry trusts
+// Gateway or operator context and the operational policy that gates
+// /admin/* traffic.
 func RegisterAdmin(r chi.Router, logger *slog.Logger, repo store.AdminRepository) {
 	h := &adminHandlers{logger: logger, repo: repo}
 	r.Route("/admin", func(admin chi.Router) {
-		admin.Use(h.requireSystemAdministrator)
+		admin.Use(h.requireAdminHeaders)
 		admin.Post("/teams", h.createTeam)
 		admin.Post("/source-systems", h.createSourceSystem)
 		admin.Post("/task-types", h.createTaskType)
 	})
 }
 
-func (h *adminHandlers) requireSystemAdministrator(next http.Handler) http.Handler {
+func (h *adminHandlers) requireAdminHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		role := r.Header.Get(adminRoleHeader)
-		if role == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "system administrator authentication is required")
-			return
-		}
-		if role != "admin" {
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "system administrator authorization is required")
-			return
-		}
-		if strings.TrimSpace(r.Header.Get(adminSubjectHeader)) == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "system administrator authentication is required")
-			return
-		}
+		// admin subject is optional (audit-only); do not reject the
+		// request when it is missing.
 		next.ServeHTTP(w, r)
 	})
 }

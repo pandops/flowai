@@ -5,7 +5,7 @@
 //
 // The un-tagged counterpart (config_test.go) rejects every non-empty
 // STATE_REGISTRY_TEST_MODE value to fail-closed in production.
-//
+
 //go:build state_registry_test_harness
 
 package config
@@ -51,11 +51,7 @@ func TestHarnessParsesTestMode(t *testing.T) {
 			t.Setenv(testModeEnv, tc.value)
 			t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 			t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-			cert, key, ca := baseProductionTLSDir(t)
-			t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-			t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-			t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-			t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
+			ca := baseProductionPostgresTLSDir(t)
 			t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 			t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
 			cfg, err := Load()
@@ -81,11 +77,11 @@ func TestHarnessAcceptsTestModePlaintext(t *testing.T) {
 	if !cfg.TestMode {
 		t.Fatal("TestMode=false, want true in harness build")
 	}
-	if cfg.TLSServerCert != "" || cfg.TLSServerKey != "" || cfg.TLSClientCA != "" || cfg.TLSRequireClientCert {
-		t.Fatalf("expected no server TLS in test mode, got %+v", cfg)
-	}
 	if cfg.PostgresTLSCA != "" || cfg.PostgresTLSMode != "" {
 		t.Fatalf("expected no postgres TLS in test mode, got %+v", cfg)
+	}
+	if len(cfg.LegacyTLSIgnoredKeys) != 0 {
+		t.Fatalf("expected no legacy TLS keys recorded in test mode, got %+v", cfg.LegacyTLSIgnoredKeys)
 	}
 }
 
@@ -101,20 +97,6 @@ func TestHarnessRejectsVerifyCA(t *testing.T) {
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "verify-ca") {
 		t.Fatalf("error=%v, want mention of verify-ca", err)
-	}
-}
-
-// TestHarnessRejectsPartialServerTLS asserts harness test-mode
-// partial TLS fails closed (a typo cannot silently drop one half
-// of the transport).
-func TestHarnessRejectsPartialServerTLS(t *testing.T) {
-	setTestModeEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", writeConfigFile(t, t.TempDir(), "server.crt"))
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "TLS_SERVER_KEY") {
-		t.Fatalf("error=%v, want mention of TLS_SERVER_KEY (partial TLS must fail closed in test mode)", err)
 	}
 }
 
@@ -180,51 +162,22 @@ func TestHarnessAcceptsBindPortZero(t *testing.T) {
 	}
 }
 
-// TestHarnessRejectsIncompleteTLSConfig mirrors the production test
-// in config_test.go for harness-only TLS incomplete cases (server
-// key missing, client CA missing with REQUIRE=true).
-func TestHarnessRejectsIncompleteTLSConfig(t *testing.T) {
-	dir := t.TempDir()
-	cert := writeConfigFile(t, dir, "server.crt")
-	tests := []struct {
-		name string
-		env  map[string]string
-		want string
-	}{
-		{
-			name: "server cert without key",
-			env:  map[string]string{"STATE_REGISTRY_TLS_SERVER_CERT": cert},
-			want: "TLS_SERVER_KEY",
-		},
-		{
-			name: "required client cert without CA",
-			env: map[string]string{
-				"STATE_REGISTRY_TLS_SERVER_CERT":         cert,
-				"STATE_REGISTRY_TLS_SERVER_KEY":          cert,
-				"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT": "true",
-			},
-			want: "TLS_CLIENT_CA",
-		},
+// TestHarnessIgnoresLegacyBackendTLSKeys asserts that legacy
+// HTTP TLS/mTLS keys are accepted but ignored in the harness
+// build (mirrors the production counterpart).
+func TestHarnessIgnoresLegacyBackendTLSKeys(t *testing.T) {
+	setTestModeEnv(t)
+	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
+	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
+	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", "/var/run/flowai/legacy-server-cert-does-not-exist.pem")
+	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", "/var/run/flowai/legacy-server-key-does-not-exist.pem")
+	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", "/var/run/flowai/legacy-client-ca-does-not-exist.pem")
+	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v (legacy keys must be ignored, not validated)", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-			t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-			setTestModeEnv(t)
-			for _, key := range []string{
-				"STATE_REGISTRY_TLS_SERVER_CERT", "STATE_REGISTRY_TLS_SERVER_KEY",
-				"STATE_REGISTRY_TLS_CLIENT_CA", "STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT",
-				"STATE_REGISTRY_POSTGRES_TLS_CA", "STATE_REGISTRY_POSTGRES_TLS_MODE",
-			} {
-				t.Setenv(key, "")
-			}
-			for key, value := range tc.env {
-				t.Setenv(key, value)
-			}
-			_, err := Load()
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error=%v, want containing %q", err, tc.want)
-			}
-		})
+	if len(cfg.LegacyTLSIgnoredKeys) != 4 {
+		t.Fatalf("LegacyTLSIgnoredKeys=%v, want 4 entries", cfg.LegacyTLSIgnoredKeys)
 	}
 }

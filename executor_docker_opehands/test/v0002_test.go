@@ -13,16 +13,8 @@ package integration_test
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"log/slog"
-	"math/big"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -413,33 +405,14 @@ func (s *v0002Stub) taskEventTypes(taskID string) []string {
 	return out
 }
 
-// setupV0002Env stands up a v0002 stub behind a TLS httptest.Server that
-// requires a trusted client certificate; the helper builds a
-// minimal CA + server leaf + client leaf PKI on disk and points
-// the Executor config at them so Config.Validate + register's
-// mTLS helper run end-to-end.
+// setupV0002Env stands up a v0002 stub behind a plain HTTP
+// httptest.Server. After v0009 the backend transport is plaintext;
+// the legacy mTLS material is not used by the Executor.
 func setupV0002Env(t *testing.T, mutate func(*executor.Config)) (*v0002Stub, *executor.Executor, *fakedocker.FakeDocker, *executor.Config) {
 	t.Helper()
 	stub := newV0002Stub()
 
-	// Production mTLS: stand up a TLS server that requires a
-	// trusted client cert. The PKI is generated fresh per test so
-	// no fixture file leaks across runs.
-	pki := newTestPKI(t)
-	caPool := pki.caPool
-	serverCert := tls.Certificate{
-		Certificate: [][]byte{pki.serverLeaf.Raw},
-		PrivateKey:  pki.serverKey,
-		Leaf:        pki.serverLeaf,
-	}
-	stubSrv := httptest.NewUnstartedServer(stub.routes())
-	stubSrv.TLS = &tls.Config{
-		Certificates: []tls.Certificate{serverCert},
-		ClientCAs:    caPool,
-		ClientAuth:   tls.RequireAndVerifyClientCert,
-		MinVersion:   tls.VersionTLS12,
-	}
-	stubSrv.StartTLS()
+	stubSrv := httptest.NewServer(stub.routes())
 	t.Cleanup(stubSrv.Close)
 
 	cfg := &executor.Config{
@@ -464,10 +437,6 @@ func setupV0002Env(t *testing.T, mutate func(*executor.Config)) (*v0002Stub, *ex
 		OpenHandsLLMModel:    "test-model",
 		OpenHandsLLMAPIKey:   "test-key",
 		OpenHandsLLMUsageID:  "flowai-executor",
-		// mTLS material pointing at the test PKI on disk.
-		StateRegistryTLSCertPath:     pki.clientCertPath,
-		StateRegistryTLSKeyPath:      pki.clientKeyPath,
-		StateRegistryTLSServerCAPath: pki.caPath,
 	}
 	if mutate != nil {
 		mutate(cfg)
@@ -746,157 +715,8 @@ func contains(items []string, want string) bool {
 	return false
 }
 
-// testPKI is the minimal CA + server leaf + client leaf bundle the
-// v0002 integration tests stand up so Config.Validate + the
-// stateregistryclient.NewMTLSClient helper round-trip a real mTLS
-// handshake end to end. Each test gets a fresh bundle so no fixture
-// file leaks across runs.
-type testPKI struct {
-	caCert         *x509.Certificate
-	caPool         *x509.CertPool
-	serverLeaf     *x509.Certificate
-	serverKey      *rsa.PrivateKey
-	clientCertPEM  []byte
-	clientKeyPEM   []byte
-	caPath         string
-	clientCertPath string
-	clientKeyPath  string
-}
-
-func newTestPKI(t *testing.T) *testPKI {
-	t.Helper()
-	caCert, caKey := signSelfSigned(t, "flowai-state-registry-test-ca", true, nil)
-	caPool := x509.NewCertPool()
-	caPool.AddCert(caCert)
-
-	serverLeaf, serverKey := signSignedBy(t, caCert, caKey, "127.0.0.1",
-		[]string{"127.0.0.1"}, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
-	clientCertPEM, clientKeyPEM := signSignedByPEM(t, caCert, caKey, "flowai-state-registry-test-client",
-		nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
-
-	dir := t.TempDir()
-	caPath := dir + "/ca.crt"
-	clientCertPath := dir + "/client.crt"
-	clientKeyPath := dir + "/client.key"
-	pkiWrite(t, caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}))
-	pkiWrite(t, clientCertPath, clientCertPEM)
-	pkiWrite(t, clientKeyPath, clientKeyPEM)
-
-	return &testPKI{
-		caCert:         caCert,
-		caPool:         caPool,
-		serverLeaf:     serverLeaf,
-		serverKey:      serverKey,
-		clientCertPEM:  clientCertPEM,
-		clientKeyPEM:   clientKeyPEM,
-		caPath:         caPath,
-		clientCertPath: clientCertPath,
-		clientKeyPath:  clientKeyPath,
-	}
-}
-
-// signSelfSigned returns a (cert, key) pair whose subject matches
-// cn, marked as a CA when isCA=true, signed with its own private
-// key. Used to mint the test trust anchor.
-func signSelfSigned(t *testing.T, cn string, isCA bool, dnsSANs []string) (*x509.Certificate, *rsa.PrivateKey) {
-	t.Helper()
-	key := pkiKey(t)
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(time.Now().UnixNano()),
-		Subject:               pkix.Name{CommonName: cn},
-		NotBefore:             time.Now().Add(-time.Minute),
-		NotAfter:              time.Now().Add(10 * time.Minute),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-		DNSNames:              dnsSANs,
-		BasicConstraintsValid: true,
-		IsCA:                  isCA,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("create self-signed: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("parse self-signed: %v", err)
-	}
-	return cert, key
-}
-
-// signSignedBy returns (cert, key) for a leaf signed by parent.
-// parent+parentKey define the issuer. sans is the DNS SAN list.
-// eku narrows the leaf's Extended Key Usage (ServerAuth or
-// ClientAuth).
-func signSignedBy(t *testing.T, parent *x509.Certificate, parentKey *rsa.PrivateKey, cn string, dnsSANs []string, eku []x509.ExtKeyUsage) (*x509.Certificate, *rsa.PrivateKey) {
-	t.Helper()
-	key := pkiKey(t)
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(time.Now().UnixNano()),
-		Subject:               pkix.Name{CommonName: cn},
-		NotBefore:             time.Now().Add(-time.Minute),
-		NotAfter:              time.Now().Add(10 * time.Minute),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           eku,
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-		DNSNames:              dnsSANs,
-		BasicConstraintsValid: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
-	if err != nil {
-		t.Fatalf("create leaf: %v", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		t.Fatalf("parse leaf: %v", err)
-	}
-	return cert, key
-}
-
-// signSignedByPEM is the file-shaped twin of signSignedBy: returns
-// ready-to-pem-to-disk cert/key bytes so the on-disk fixtures
-// stateregistryclient.NewMTLSClient reads at registration time are
-// generated by the same code path that produced the in-memory
-// server identity.
-func signSignedByPEM(t *testing.T, parent *x509.Certificate, parentKey *rsa.PrivateKey, cn string, dnsSANs []string, eku []x509.ExtKeyUsage) (certPEM, keyPEM []byte) {
-	t.Helper()
-	key := pkiKey(t)
-	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(time.Now().UnixNano()),
-		Subject:               pkix.Name{CommonName: cn},
-		NotBefore:             time.Now().Add(-time.Minute),
-		NotAfter:              time.Now().Add(10 * time.Minute),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           eku,
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-		DNSNames:              dnsSANs,
-		BasicConstraintsValid: true,
-	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, parentKey)
-	if err != nil {
-		t.Fatalf("create leaf: %v", err)
-	}
-	certDER, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal key: %v", err)
-	}
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: certDER})
-	return certPEM, keyPEM
-}
-
-func pkiKey(t *testing.T) *rsa.PrivateKey {
-	t.Helper()
-	k, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("rsa key: %v", err)
-	}
-	return k
-}
-
-func pkiWrite(t *testing.T, path string, data []byte) {
-	t.Helper()
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
+// setupV0002Env above is the v0009 standup. The legacy testPKI
+// generator + mTLS helper functions (testPKI, newTestPKI,
+// signSelfSigned, signSignedBy, signSignedByPEM, pkiKey, pkiWrite)
+// were removed in v0009 because the backend transport is now
+// plaintext and the Executor never reads certificate material.

@@ -85,13 +85,12 @@ type Config struct {
 	PollInterval         time.Duration `yaml:"poll_interval"`
 	WebSocketDialTimeout time.Duration `yaml:"websocket_dial_timeout"`
 
-	// State Registry mTLS material. REQUIRED whenever StateRegistryURL
-	// is configured: production connections to State Registry are
-	// mutually authenticated TLS, so the Executor must present a
-	// client keypair and verify the server chain against a trusted
-	// CA bundle. Operator-supplied paths; the binaries are read once
-	// at registration. The Executor NEVER accepts an
-	// InsecureSkipVerify escape hatch.
+	// Legacy State Registry TLS material. Accepted for staged
+	// configuration cleanup but never read: the backend transport
+	// is plaintext after v0009. The Executor's HTTP client never
+	// constructs a tls.Config; the values below stay as no-op
+	// compatibility inputs. A later change may remove them from
+	// the schema after deployments converge.
 	StateRegistryTLSCertPath     string `yaml:"state_registry_tls_client_cert"`
 	StateRegistryTLSKeyPath      string `yaml:"state_registry_tls_client_key"`
 	StateRegistryTLSServerCAPath string `yaml:"state_registry_tls_server_ca"`
@@ -177,9 +176,8 @@ func overrideEnv(cfg *Config) {
 	cfg.AuthorizedTag = envOr("EXECUTOR_AUTHORIZED_TAG", cfg.AuthorizedTag)
 	cfg.PollInterval = envDur("EXECUTOR_POLL_INTERVAL", cfg.PollInterval)
 	cfg.WebSocketDialTimeout = envDur("OPENHANDS_WS_DIAL_TIMEOUT_SECONDS", cfg.WebSocketDialTimeout)
-	// mTLS material env overrides. Operator-controlled so the
-	// production deployment does not require a YAML reload for cert
-	// rotation.
+	// Legacy State Registry TLS material env overrides. Accepted
+	// for staged configuration cleanup but never read after v0009.
 	cfg.StateRegistryTLSCertPath = envOr("EXECUTOR_STATE_REGISTRY_TLS_CLIENT_CERT", cfg.StateRegistryTLSCertPath)
 	cfg.StateRegistryTLSKeyPath = envOr("EXECUTOR_STATE_REGISTRY_TLS_CLIENT_KEY", cfg.StateRegistryTLSKeyPath)
 	cfg.StateRegistryTLSServerCAPath = envOr("EXECUTOR_STATE_REGISTRY_TLS_SERVER_CA", cfg.StateRegistryTLSServerCAPath)
@@ -221,24 +219,13 @@ func (c *Config) Validate() error {
 		if c.AuthorizedTag == "" {
 			return errors.New("EXECUTOR_AUTHORIZED_TAG must be non-empty")
 		}
-		// Production State Registry connections use mutually
-		// authenticated TLS identities (AGENTS.md / v0002 spec):
-		// the URL must be https and the operator must supply the
-		// three mTLS artefacts (client cert, matching private key,
-		// server CA bundle). Any drop closes the gate before
-		// NewMTLSClient attempts to load the files.
+		// v0009: the State Registry transport is plain HTTP. Legacy
+		// backend TLS/mTLS fields are accepted but never read and
+		// never validated. A later change may remove them from
+		// the schema after deployments converge.
 		stateRegistryURL, err := url.Parse(c.StateRegistryURL)
-		if err != nil || stateRegistryURL.Scheme != "https" || stateRegistryURL.Hostname() == "" {
-			return fmt.Errorf("EXECUTOR_STATE_REGISTRY_URL must use https scheme, got %q", c.StateRegistryURL)
-		}
-		if c.StateRegistryTLSCertPath == "" {
-			return errors.New("EXECUTOR_STATE_REGISTRY_TLS_CLIENT_CERT (or state_registry_tls_client_cert) is required when EXECUTOR_STATE_REGISTRY_URL is set")
-		}
-		if c.StateRegistryTLSKeyPath == "" {
-			return errors.New("EXECUTOR_STATE_REGISTRY_TLS_CLIENT_KEY (or state_registry_tls_client_key) is required when EXECUTOR_STATE_REGISTRY_URL is set")
-		}
-		if c.StateRegistryTLSServerCAPath == "" {
-			return errors.New("EXECUTOR_STATE_REGISTRY_TLS_SERVER_CA (or state_registry_tls_server_ca) is required when EXECUTOR_STATE_REGISTRY_URL is set")
+		if err != nil || (stateRegistryURL.Scheme != "http" && stateRegistryURL.Scheme != "https") || stateRegistryURL.Hostname() == "" {
+			return fmt.Errorf("EXECUTOR_STATE_REGISTRY_URL must use http or https scheme, got %q", c.StateRegistryURL)
 		}
 	}
 	if c.WebSocketDialTimeout <= 0 {
@@ -564,20 +551,11 @@ func (e *Executor) register(ctx context.Context) error {
 	if e.cfg.Scope == "team" {
 		ident.TeamID = e.cfg.TeamID
 	}
-	// Production connections to State Registry use mutually
-	// authenticated TLS identities (AGENTS.md + v0002 OpenSpec).
-	// Config.Validate already enforces https + the three mTLS
-	// artefacts, so by the time execution reaches this branch the
-	// helper is guaranteed to read three valid on-disk PEMs.
-	httpClient, err := stateregistryclient.NewMTLSClient(stateregistryclient.MTLSClientConfig{
-		ServerCAPath:   e.cfg.StateRegistryTLSServerCAPath,
-		ClientCertPath: e.cfg.StateRegistryTLSCertPath,
-		ClientKeyPath:  e.cfg.StateRegistryTLSKeyPath,
-	})
-	if err != nil {
-		return fmt.Errorf("build state registry mTLS client: %w", err)
-	}
-	client, err := stateregistryclient.New(e.cfg.StateRegistryURL, ident, httpClient)
+	// v0009: backend connections use plain HTTP. The HTTP client
+	// stays nil so stateregistryclient.New constructs the default
+	// 30s-timeout client; legacy TLS material fields stay as
+	// compatibility inputs that the client never reads.
+	client, err := stateregistryclient.New(e.cfg.StateRegistryURL, ident, nil)
 	if err != nil {
 		return err
 	}

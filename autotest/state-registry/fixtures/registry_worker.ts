@@ -40,9 +40,11 @@ import { sanitize, truncateTail } from "./redact";
 export interface RegistryWorkerOptions {
   binary?: string;
   /**
-   * Launch the normal untagged binary with test mode unset. Production mode
-   * requires HTTPS+mTLS; it exists so transport tests exercise the real
-   * production route graph instead of the header-authenticated harness.
+   * v0009: launch the normal untagged binary with test mode unset.
+   * Production transport is plain HTTP; the deployment network
+   * policy and the Ingress own the TLS boundary. The worker
+   * defaults to plain HTTP and only switches to HTTPS when
+   * `tlsServerCertPath` is supplied.
    */
   productionMode?: boolean;
   postgresImage?: string;
@@ -51,21 +53,18 @@ export interface RegistryWorkerOptions {
   startupTimeoutMs?: number;
   omitAesKey?: boolean;
   /**
-   * v0002.20 opt-in: TLS-mode startup. When ANY TLS option is set,
-   * the worker forwards STATE_REGISTRY_TLS_* env vars to the Go
-   * process and switches the readiness probe + baseUrl to HTTPS
-   * with mTLS (require-and-verify-client-cert when the trusted
-   * client CA is also provided). The default startRegistryWorker()
-   * call (no TLS options) is byte-for-byte behavior compatible
-   * with the plain-HTTP harness used by every other contract
-   * test; no existing test is affected.
+   * v0009 opt-in: the legacy backend HTTP TLS/mTLS env vars the
+   * State Registry accepts but never reads. The worker forwards
+   * them to the Go process; startup succeeds even when they
+   * reference nonexistent files. Used to assert the v0009
+   * "accept-and-ignore" contract.
    */
-  tlsServerCertPath?: string;
-  tlsServerKeyPath?: string;
-  tlsClientCaPath?: string;
-  tlsRequireClientCert?: boolean;
+  legacyTLSServerCert?: string;
+  legacyTLSServerKey?: string;
+  legacyTLSClientCA?: string;
+  legacyTLSRequireClientCert?: string;
   /**
-   * v0002.20 opt-in: Postgres server-chain verification. When set,
+   * v0009 opt-in: Postgres server-chain verification. When set,
    * the worker forwards STATE_REGISTRY_POSTGRES_TLS_* env vars
    * and the State Registry is expected to refuse to start (or
    * refuse to report ready) when the configured chain is
@@ -73,7 +72,7 @@ export interface RegistryWorkerOptions {
    */
   tlsPostgresCaPath?: string;
   /**
-   * v0002.20 opt-in: the postgres SERVER cert + key the fixture
+   * v0009 opt-in: the postgres SERVER cert + key the fixture
    * stages into the ephemeral postgres:16 container so the
    * container presents a verifiable server chain. When ANY
    * postgres-TLS option is set, the worker forwards BOTH cert
@@ -85,20 +84,6 @@ export interface RegistryWorkerOptions {
   tlsPostgresServerCertPath?: string;
   tlsPostgresServerKeyPath?: string;
   tlsPostgresVerifyMode?: "verify-ca" | "verify-full";
-  /**
-   * Trusted client cert/key used by the readiness probe to verify
-   * the HTTPS+mTLS listener. Required when tlsServerCertPath is
-   * set; the worker uses the supplied cert/key to perform the
-   * readiness request and to verify the server hostname.
-   */
-  tlsClientCertPath?: string;
-  tlsClientKeyPath?: string;
-  /**
-   * Hostname the readiness probe uses for SNI + x509 hostname
-   * verification. Default 'localhost'. The server cert's SAN
-   * must include this value (or the OS-assigned 127.0.0.1 IP).
-   */
-  tlsServername?: string;
 }
 
 export interface RegistryWorker {
@@ -225,111 +210,35 @@ export async function startRegistryWorker(
   let bindCapture: BoundedCapture = new BoundedCapture(CaptureMaxBytes);
   let restartCount = 0;
 
-  const tlsMode =
-    opts.tlsServerCertPath !== undefined ||
-    opts.tlsServerKeyPath !== undefined ||
-    opts.tlsClientCaPath !== undefined ||
-    opts.tlsRequireClientCert !== undefined ||
-    opts.tlsPostgresCaPath !== undefined ||
-    opts.tlsPostgresServerCertPath !== undefined ||
-    opts.tlsPostgresServerKeyPath !== undefined ||
-    opts.tlsPostgresVerifyMode !== undefined;
-
-  if (opts.productionMode && !tlsMode) {
-    throw new Error(
-      "startRegistryWorker productionMode requires complete TLS configuration",
-    );
-  }
+  const tlsMode = false; // v0009: backend transport is plaintext HTTP.
+  // The legacy backend HTTP TLS env vars are accepted-but-ignored
+  // compatibility inputs; they do not change the listener.
 
   const readyUrl = (port: number): string =>
-    tlsMode ? `https://${BindHost}:${port}` : `http://${BindHost}:${port}`;
+    `http://${BindHost}:${port}`;
 
-  // The probe materials the readiness check uses. The TLS-mode
-  // worker refuses to start when these are missing or when the
-  // files do not exist on disk, so the harness never accidentally
-  // probes with rejectUnauthorized=false or with the wrong
-  // identity.
-  const tlsProbeCertPath = opts.tlsClientCertPath ?? null;
-  const tlsProbeKeyPath = opts.tlsClientKeyPath ?? null;
-  const tlsProbeCaPath = opts.tlsClientCaPath ?? null;
-  const tlsProbeServername = opts.tlsServername ?? "localhost";
-
-  // The TLS-mode startup contract is fail-closed: a worker that
-  // is asked to serve mTLS must (a) receive every required file
-  // path AND (b) have every file present on disk. We validate
-  // here so the contract test cannot accidentally probe with
-  // rejectUnauthorized=false or with the wrong identity.
-  {
-    if (tlsMode || tlsProbeCertPath || tlsProbeKeyPath || tlsProbeCaPath) {
-      const required: string[] = [];
-      if (tlsMode) {
-        if (!opts.tlsServerCertPath) required.push("tlsServerCertPath");
-        if (!opts.tlsServerKeyPath) required.push("tlsServerKeyPath");
-        if (!opts.tlsClientCaPath) required.push("tlsClientCaPath");
-      }
-      if (tlsMode || tlsProbeCertPath || tlsProbeKeyPath) {
-        if (!tlsProbeCertPath) required.push("tlsClientCertPath");
-        if (!tlsProbeKeyPath) required.push("tlsClientKeyPath");
-        if (!tlsProbeCaPath) required.push("tlsClientCaPath");
-      }
-      // Postgres-TLS opt-in: when ANY postgres-TLS knob is set
-      // (CA, server-cert, server-key, or verify-mode), the
-      // server-cert + key must be supplied together so the
-      // fixture can stage them into the postgres container.
-      if (
-        opts.tlsPostgresCaPath !== undefined ||
-        opts.tlsPostgresServerCertPath !== undefined ||
-        opts.tlsPostgresServerKeyPath !== undefined ||
-        opts.tlsPostgresVerifyMode !== undefined
-      ) {
-        if (!opts.tlsPostgresServerCertPath)
-          required.push("tlsPostgresServerCertPath");
-        if (!opts.tlsPostgresServerKeyPath)
-          required.push("tlsPostgresServerKeyPath");
-      }
-      if (required.length > 0) {
-        throw new Error(
-          `startRegistryWorker TLS-mode contract is incomplete: missing ${required.join(", ")}; ` +
-            "supplying the file-path is required to opt in",
-        );
-      }
-      const pathsToCheck: Array<[string, string | null | undefined]> = [
-        ["tlsServerCertPath", opts.tlsServerCertPath],
-        ["tlsServerKeyPath", opts.tlsServerKeyPath],
-        ["tlsClientCaPath", opts.tlsClientCaPath],
-        ["tlsClientCertPath", tlsProbeCertPath],
-        ["tlsClientKeyPath", tlsProbeKeyPath],
-        ["tlsPostgresServerCertPath", opts.tlsPostgresServerCertPath],
-        ["tlsPostgresServerKeyPath", opts.tlsPostgresServerKeyPath],
-      ];
-      const { existsSync } = require("node:fs") as typeof import("node:fs");
-      const missing: string[] = [];
-      for (const [name, path] of pathsToCheck) {
-        if (path && !existsSync(path)) missing.push(`${name}=${path}`);
-      }
-      if (missing.length > 0) {
-        throw new Error(
-          `startRegistryWorker TLS-mode paths do not exist on disk: ${missing.join(", ")}`,
-        );
-      }
-    }
-  }
+  // v0009: no TLS-mode probe material is needed. Backend
+  // transport is plaintext HTTP; the readiness probe uses the
+  // default Node fetch API.
 
   const tlsEnv = (): Record<string, string> => {
     const out: Record<string, string> = {};
-    if (opts.tlsServerCertPath) {
-      out["STATE_REGISTRY_TLS_SERVER_CERT"] = opts.tlsServerCertPath;
+    // v0009: legacy backend HTTP TLS/mTLS env vars are accepted
+    // for staged configuration cleanup. The State Registry never
+    // reads them. They are forwarded here so the v0009
+    // "accept-and-ignore" contract can be asserted end-to-end.
+    if (opts.legacyTLSServerCert) {
+      out["STATE_REGISTRY_TLS_SERVER_CERT"] = opts.legacyTLSServerCert;
     }
-    if (opts.tlsServerKeyPath) {
-      out["STATE_REGISTRY_TLS_SERVER_KEY"] = opts.tlsServerKeyPath;
+    if (opts.legacyTLSServerKey) {
+      out["STATE_REGISTRY_TLS_SERVER_KEY"] = opts.legacyTLSServerKey;
     }
-    if (opts.tlsClientCaPath) {
-      out["STATE_REGISTRY_TLS_CLIENT_CA"] = opts.tlsClientCaPath;
+    if (opts.legacyTLSClientCA) {
+      out["STATE_REGISTRY_TLS_CLIENT_CA"] = opts.legacyTLSClientCA;
     }
-    if (opts.tlsRequireClientCert !== undefined) {
-      out["STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT"] = opts.tlsRequireClientCert
-        ? "true"
-        : "false";
+    if (opts.legacyTLSRequireClientCert) {
+      out["STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT"] =
+        opts.legacyTLSRequireClientCert;
     }
     if (opts.tlsPostgresCaPath) {
       out["STATE_REGISTRY_POSTGRES_TLS_CA"] = opts.tlsPostgresCaPath;
@@ -439,65 +348,6 @@ export async function startRegistryWorker(
     });
   }
 
-  // httpsProbeReady issues ONE HTTPS request to the worker with
-  // mTLS. The probe never disables rejectUnauthorized and never
-  // falls back to plain HTTP. The returned promise resolves with
-  // { status, body, ok } on success and rejects with the raw TLS
-  // error otherwise. The contract test consumes this when the
-  // worker is in TLS mode and the Go scaffold has not yet
-  // implemented HTTPS, so the rejection becomes a precise
-  // behavior-specific RED.
-  async function httpsProbeReady(
-    url: string,
-    timeoutMs: number,
-  ): Promise<{ status: number; body: string }> {
-    if (!tlsProbeCertPath || !tlsProbeKeyPath || !tlsProbeCaPath) {
-      throw new Error(
-        "httpsProbeReady called without tlsClientCertPath/tlsClientKeyPath/tlsClientCaPath",
-      );
-    }
-    const { Agent: HttpsAgent, request: nodeHttpsRequest } = await import(
-      "node:https"
-    );
-    const { readFileSync } = await import("node:fs");
-    const agent = new HttpsAgent({
-      cert: readFileSync(tlsProbeCertPath),
-      key: readFileSync(tlsProbeKeyPath),
-      ca: readFileSync(tlsProbeCaPath),
-      servername: tlsProbeServername,
-      rejectUnauthorized: true,
-      keepAlive: false,
-    });
-    const timeout = Math.max(timeoutMs, FetchTimeoutMs);
-    return await new Promise<{ status: number; body: string }>(
-      (resolve, reject) => {
-        const req = nodeHttpsRequest(
-          `${url}/v1/readyz`,
-          { method: "GET", agent, timeout },
-          (res) => {
-            const chunks: Buffer[] = [];
-            res.on("data", (chunk: Buffer) => chunks.push(chunk));
-            res.on("end", () =>
-              resolve({
-                status: res.statusCode ?? 0,
-                body: Buffer.concat(chunks).toString("utf-8"),
-              }),
-            );
-          },
-        );
-        req.on("error", (err) => reject(err));
-        req.on("timeout", () => {
-          req.destroy(
-            new Error(
-              `httpsProbeReady timed out after ${timeout}ms url=${url}`,
-            ),
-          );
-        });
-        req.end();
-      },
-    );
-  }
-
   async function waitForReady(url: string, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     let lastErr: unknown;
@@ -505,29 +355,14 @@ export async function startRegistryWorker(
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), FetchTimeoutMs);
       try {
-        if (tlsMode) {
-          try {
-            const probe = await httpsProbeReady(url, FetchTimeoutMs);
-            if (probe.status === 200) {
-              clearTimeout(timer);
-              return;
-            }
-            lastErr = new Error(
-              `readyz status=${String(probe.status)} body=${probe.body.slice(0, 256)}`,
-            );
-          } catch (err) {
-            lastErr = err;
-          }
-        } else {
-          const resp = await fetch(`${url}/v1/readyz`, { signal: ctl.signal });
-          if (resp.status === 200) {
-            await drainResponse(resp);
-            clearTimeout(timer);
-            return;
-          }
-          lastErr = new Error(`readyz status=${String(resp.status)}`);
+        const resp = await fetch(`${url}/v1/readyz`, { signal: ctl.signal });
+        if (resp.status === 200) {
           await drainResponse(resp);
+          clearTimeout(timer);
+          return;
         }
+        lastErr = new Error(`readyz status=${String(resp.status)}`);
+        await drainResponse(resp);
       } catch (err) {
         lastErr = err;
       } finally {
@@ -537,15 +372,6 @@ export async function startRegistryWorker(
     }
     const lastErrMsg =
       lastErr instanceof Error ? lastErr.message : String(lastErr);
-    if (tlsMode) {
-      throw new Error(
-        `state-registry TLS-mode readiness probe never reached 200 within ${timeoutMs}ms ` +
-          `(last err=${lastErrMsg}); verify that the HTTPS/mTLS listener is bound on ${url} ` +
-          `and that State Registry received STATE_REGISTRY_TLS_SERVER_CERT, ` +
-          `STATE_REGISTRY_TLS_SERVER_KEY, STATE_REGISTRY_TLS_CLIENT_CA, and ` +
-          `STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT=true with a client cert trusted by that CA.`,
-      );
-    }
     throw new Error(
       `state-registry never reported ready within ${timeoutMs}ms (last err=${lastErrMsg})`,
     );
@@ -683,7 +509,7 @@ export async function startRegistryWorker(
       if (p === null) {
         throw new Error("baseUrl unavailable: worker has no current bind port");
       }
-      return tlsMode ? `https://${BindHost}:${p}` : `http://${BindHost}:${p}`;
+      return `http://${BindHost}:${p}`;
     },
     workerExe: binary,
     get restartCount(): number {

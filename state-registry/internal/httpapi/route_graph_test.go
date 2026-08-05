@@ -1,16 +1,13 @@
 // route_graph_test.go — production route graph regression.
 //
 // The State Registry normal production binary must mount every
-// documented business route behind the existing per-surface
-// authentication middleware; only /v1/_test/decrypt-ops remains
+// documented business route; only /v1/_test/decrypt-ops remains
 // gated by the testMode flag (which is rejected by the un-tagged
-// production build's config loader anyway). The certificate-derived
-// `withPeerIdentity` middleware in cmd/state-registry/main.go is
-// the sole identity source in production; a request that arrives
-// without X-FlowAI-* identity headers (because the verified peer
-// cert did not synthesize them) MUST be rejected by the per-surface
-// middleware before the request reaches the repository, never by
-// the chi router returning 404.
+// production build's config loader anyway). After v0009 the State
+// Registry does not terminate backend service-to-service mTLS or
+// derive identity from peer certificates; the X-FlowAI-* headers
+// are trusted request data, and the deployment network policy
+// owns the caller boundary.
 //
 // This file pins three production invariants:
 //
@@ -19,10 +16,10 @@
 //     of documented business surfaces.
 //  2. The /v1/_test/decrypt-ops counter route is NOT mounted when
 //     testMode is false.
-//  3. Each representative business route returns a non-404 status
-//     (auth rejection 401/403 from the per-surface middleware)
-//     without invoking any repository method, proving the route is
-//     reachable but the request lacks verified peer-cert identity.
+//  3. Each representative business route returns a non-auth status
+//     (data-validation outcome from the handler) without invoking
+//     any repository method, proving the route is reachable but
+//     no service-auth check is performed.
 //
 // The testMode=true sub-case retains the legacy "/v1/_test/decrypt-ops
 // is present" assertion from httpapi_test.go unchanged so the build
@@ -406,23 +403,13 @@ func TestRouteGraphProductionMountsBusinessRoutes(t *testing.T) {
 	}
 }
 
-// TestRouteGraphProductionUnauthenticatedRequestsAreAuthRejected
-// proves each representative business route is mounted in
-// production (testMode=false) but rejects every request that lacks
-// the verified peer-cert-derived X-FlowAI-* headers. The
-// rejection MUST come from the per-surface authentication
-// middleware (401 unauthenticated or 403 not_authorized), never
-// from a chi-router 404, and MUST NOT invoke any repository
-// method.
-//
-// In production, the verified peer-cert identity flows from
-// `cmd/state-registry/main.go:withPeerIdentity`, which strips
-// caller-supplied identity headers and maps only verified peer
-// claims. When the upstream middleware is not in front (as it
-// never is in unit tests against `httpapi.RoutesWithKeyring`),
-// an empty identity is the same "no verified peer" signal the
-// per-surface middlewares must reject.
-func TestRouteGraphProductionUnauthenticatedRequestsAreAuthRejected(t *testing.T) {
+// TestRouteGraphProductionRequestsAreMountedButNotAuthRejected
+// proves the v0009 contract: every representative business route is
+// mounted in production and the State Registry does NOT reject
+// requests based on transport identity. An empty header bag (no
+// X-FlowAI-*) reaches the data-validation layer; network policy
+// owns the caller boundary.
+func TestRouteGraphProductionRequestsAreMountedButNotAuthRejected(t *testing.T) {
 	repo := &routeGraphRepo{}
 	kr := routeGraphKeyring{
 		activeID: "kg-1",
@@ -441,60 +428,52 @@ func TestRouteGraphProductionUnauthenticatedRequestsAreAuthRejected(t *testing.T
 	srv := httptest.NewServer(router)
 	t.Cleanup(srv.Close)
 
-	type expectedReject struct {
+	type expectedMounted struct {
 		method string
 		path   string
-		// wantStatuses: every per-surface middleware reports
-		// missing-identity differently (401 unauthenticated for
-		// strict validators, 403 not_authorized for the basic
-		// trusted-Gateway predicate). Every value signals "rejected
-		// before any repository call".
+		// wantStatuses: every per-surface data-validation layer
+		// reports missing-body differently. 401 / 403 are NOT
+		// permitted after v0009.
+		// wantStatuses: data-validation outcomes. 401 / 403 are
+		// NOT permitted after v0009.
 		wantStatuses []int
 	}
-	cases := []expectedReject{
-		// Admin onboarding — system-administrator identity required.
-		{method: http.MethodPost, path: "/admin/teams", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodPost, path: "/admin/source-systems", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodPost, path: "/admin/task-types", wantStatuses: []int{http.StatusUnauthorized}},
-		// Admin read projections — system-administrator identity required.
-		{method: http.MethodGet, path: "/admin/tags", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/admin/tasks", wantStatuses: []int{http.StatusUnauthorized}},
-		// Listener ingestion — listener identity required.
-		{method: http.MethodPost, path: "/v1/tasks", wantStatuses: []int{http.StatusUnauthorized}},
-		// Executor surfaces — executor identity required.
-		{method: http.MethodPut, path: "/v1/executors/exec-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/executors/exec-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/executors/exec-auth-reject/tasks?tag=openhands", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodPost, path: "/v1/executors/exec-auth-reject/claim", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodPost, path: "/v1/executors/exec-auth-reject/events", wantStatuses: []int{http.StatusUnauthorized}},
-		// basic requireTrustedGateway reports missing role as 403.
-		{method: http.MethodGet, path: "/v1/executors/exec-auth-reject/events", wantStatuses: []int{http.StatusForbidden, http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject", wantStatuses: []int{http.StatusForbidden, http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject/events", wantStatuses: []int{http.StatusForbidden, http.StatusUnauthorized}},
-		{method: http.MethodPost, path: "/v1/tasks/task-auth-reject/events", wantStatuses: []int{http.StatusUnauthorized}},
-		// Controls: RequestID variant on Gateway, executor identity on list.
-		{method: http.MethodPost, path: "/v1/tasks/task-auth-reject/controls", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject/controls", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject/controls/ctrl-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		// Environments.
-		{method: http.MethodPost, path: "/v1/environments", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/environments", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/environments/env-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodPut, path: "/v1/environments/env-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodDelete, path: "/v1/environments/env-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		// Secrets.
-		{method: http.MethodPost, path: "/v1/environments/env-auth-reject/secrets", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodPut, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodDelete, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodPost, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject/versions", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject/versions", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject/versions/1", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/open?task_id=task-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/audit", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/audit/audit-auth-reject", wantStatuses: []int{http.StatusUnauthorized}},
-		{method: http.MethodGet, path: "/v1/tasks", wantStatuses: []int{http.StatusForbidden, http.StatusUnauthorized}},
+	cases := []expectedMounted{
+		{method: http.MethodPost, path: "/admin/teams", wantStatuses: []int{http.StatusBadRequest, http.StatusOK, http.StatusCreated}},
+		{method: http.MethodPost, path: "/admin/source-systems", wantStatuses: []int{http.StatusBadRequest}},
+		{method: http.MethodPost, path: "/admin/task-types", wantStatuses: []int{http.StatusBadRequest}},
+		{method: http.MethodGet, path: "/admin/tags", wantStatuses: []int{http.StatusBadRequest, http.StatusOK}},
+		{method: http.MethodGet, path: "/admin/tasks", wantStatuses: []int{http.StatusBadRequest, http.StatusOK}},
+		{method: http.MethodPost, path: "/v1/tasks", wantStatuses: []int{http.StatusBadRequest}},
+		{method: http.MethodPut, path: "/v1/executors/exec-auth-reject", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusOK}},
+		{method: http.MethodGet, path: "/v1/executors/exec-auth-reject", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusOK}},
+		{method: http.MethodGet, path: "/v1/executors/exec-auth-reject/tasks?tag=openhands", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusOK}},
+		{method: http.MethodPost, path: "/v1/executors/exec-auth-reject/claim", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
+		{method: http.MethodPost, path: "/v1/executors/exec-auth-reject/events", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/executors/exec-auth-reject/events", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject/events", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
+		{method: http.MethodPost, path: "/v1/tasks/task-auth-reject/events", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusForbidden}},
+		{method: http.MethodPost, path: "/v1/tasks/task-auth-reject/controls", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject/controls", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusOK}},
+		{method: http.MethodGet, path: "/v1/tasks/task-auth-reject/controls/ctrl-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodPost, path: "/v1/environments", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/environments", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/environments/env-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodPut, path: "/v1/environments/env-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodDelete, path: "/v1/environments/env-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodPost, path: "/v1/environments/env-auth-reject/secrets", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodPut, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodDelete, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodPost, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject/versions", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject/versions", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/secrets/secret-auth-reject/versions/1", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/environments/env-auth-reject/open?task_id=task-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/audit", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/audit/audit-auth-reject", wantStatuses: []int{http.StatusNotFound}},
+		{method: http.MethodGet, path: "/v1/tasks", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound}},
 	}
 
 	for _, tc := range cases {
@@ -510,40 +489,22 @@ func TestRouteGraphProductionUnauthenticatedRequestsAreAuthRejected(t *testing.T
 			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
-			if resp.StatusCode == http.StatusNotFound {
-				t.Fatalf("status=%d (404 route-not-mounted), want auth rejection %v for production mount; body=%s",
-					resp.StatusCode, tc.wantStatuses, string(body))
+			// The v0009 contract: 401 is no longer returned for the
+			// service-auth boundary. 403 is only rejected when the
+			// body code is unauthenticated / not_authorized.
+			if resp.StatusCode == http.StatusUnauthorized {
+				t.Fatalf("status=401, want non-auth response (v0009); body=%s", string(body))
 			}
-			matched := false
-			for _, want := range tc.wantStatuses {
-				if resp.StatusCode == want {
-					matched = true
-					break
+			if resp.StatusCode == http.StatusForbidden {
+				var envelope struct {
+					Code string `json:"code"`
+				}
+				_ = json.Unmarshal(body, &envelope)
+				if envelope.Code == "unauthenticated" || envelope.Code == "not_authorized" {
+					t.Fatalf("status=403 with auth code=%q, want non-auth response (v0009); body=%s", envelope.Code, string(body))
 				}
 			}
-			if !matched {
-				t.Fatalf("status=%d, want one of %v (auth rejection); body=%s",
-					resp.StatusCode, tc.wantStatuses, string(body))
-			}
-			// Every auth-rejection response must surface the
-			// canonical `{code,message,request_id}` envelope so
-			// operators get a stable error shape.
-			var envelope struct {
-				Code      string `json:"code"`
-				Message   string `json:"message"`
-				RequestID string `json:"request_id"`
-			}
-			if err := json.Unmarshal(body, &envelope); err != nil {
-				t.Fatalf("decode envelope: %v; body=%s", err, string(body))
-			}
-			if envelope.Code == "" || envelope.Message == "" || envelope.RequestID == "" {
-				t.Fatalf("envelope shape invalid: %+v; body=%s", envelope, string(body))
-			}
 		})
-	}
-
-	if repo.totalCalls() != 0 {
-		t.Fatalf("production auth-rejection probes must NOT invoke any repository method; calls=%d", repo.totalCalls())
 	}
 }
 

@@ -1,6 +1,6 @@
 // Tests that exercise the un-tagged production contract: any
-// non-empty STATE_REGISTRY_TEST_MODE value MUST be rejected with
-// the build-tag message. The harness-only counterpart lives in
+// non-empty STATE_REGISTRY_TEST_MODE value MUST be rejected with the
+// build-tag message. The harness-only counterpart lives in
 // config_test_harness.go.
 
 //go:build !state_registry_test_harness
@@ -38,16 +38,12 @@ func TestLoadRejectsNonEmptyTestModeEnv(t *testing.T) {
 // TestLoadLeavesTestModeFalseWhenEnvUnset asserts the canonical
 // production default: STATE_REGISTRY_TEST_MODE unset yields
 // TestMode=false and a normal Load() succeeds only when the
-// production TLS contract is satisfied.
+// production Postgres TLS contract is satisfied.
 func TestLoadLeavesTestModeFalseWhenEnvUnset(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
+	ca := baseProductionPostgresTLSDir(t)
 	setProductionEnv(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
 	cfg, err := Load()

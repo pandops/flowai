@@ -29,8 +29,10 @@ type executorHandlers struct {
 	repo   store.ExecutorRepository
 }
 
-// RegisterExecutor mounts the test-mode Executor identity adapter. Production
-// startup remains fail-closed until the mTLS transport supplies this identity.
+// RegisterExecutor mounts the Executor adapter. After v0009 the
+// State Registry does not authenticate the Executor connection; the
+// canonical Executor record (looked up by URL executor_id) is the
+// source of truth for scope/team predicates.
 func RegisterExecutor(r chi.Router, logger *slog.Logger, admin store.AdminRepository, repo store.ExecutorRepository) {
 	h := &executorHandlers{logger: logger, admin: admin, repo: repo}
 	r.Put("/executors/{executor_id}", h.register)
@@ -41,7 +43,7 @@ func RegisterExecutor(r chi.Router, logger *slog.Logger, admin store.AdminReposi
 
 func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
 	executorID := chi.URLParam(r, "executor_id")
-	identity, ok := h.authenticate(w, r, executorID)
+	identity, ok := h.resolveExecutorIdentity(w, r, executorID)
 	if !ok {
 		return
 	}
@@ -85,17 +87,16 @@ func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusBadRequest, "missing_team_id", "team-scoped registration requires team_id")
 			return
 		}
-		if identity.TeamID == nil {
-			if _, err := h.repo.RegisterExecutor(r.Context(), executorID, req, identity); errors.Is(err, store.ErrExecutorScopeConflict) {
-				h.writeError(w, r, http.StatusBadRequest, "scope_change_forbidden", "Executor scope is immutable")
-				return
-			}
-			h.writeError(w, r, http.StatusForbidden, "not_authorized", "team Executor authorization is required")
+		if identity.TeamID != nil && *identity.TeamID != *req.TeamID {
+			h.writeError(w, r, http.StatusForbidden, "team_binding_mismatch", "team_id does not match the configured Executor binding")
 			return
 		}
-		if *identity.TeamID != *req.TeamID {
-			h.writeError(w, r, http.StatusForbidden, "team_binding_mismatch", "team_id does not match the authenticated Executor")
-			return
+		// For first registration, derive identity team_id from
+		// the body when the header is missing.
+		if identity.TeamID == nil {
+			teamID := *req.TeamID
+			identity.TeamID = &teamID
+			identity.Scope = platform.ExecutorScopeTeam
 		}
 		exists, err := h.admin.TeamExists(r.Context(), *req.TeamID)
 		if err != nil {
@@ -132,11 +133,11 @@ func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
 
 func (h *executorHandlers) get(w http.ResponseWriter, r *http.Request) {
 	executorID := chi.URLParam(r, "executor_id")
-	if r.Header.Get(adminRoleHeader) == "gateway" {
+	if strings.TrimSpace(r.Header.Get(gatewayTeamIDHeader)) != "" {
 		h.getForGateway(w, r, executorID)
 		return
 	}
-	identity, ok := h.authenticate(w, r, executorID)
+	identity, ok := h.resolveExecutorIdentity(w, r, executorID)
 	if !ok {
 		return
 	}
@@ -181,7 +182,7 @@ func (h *executorHandlers) getForGateway(w http.ResponseWriter, r *http.Request,
 
 func (h *executorHandlers) discover(w http.ResponseWriter, r *http.Request) {
 	executorID := chi.URLParam(r, "executor_id")
-	identity, ok := h.authenticate(w, r, executorID)
+	identity, ok := h.resolveExecutorIdentity(w, r, executorID)
 	if !ok {
 		return
 	}
@@ -227,40 +228,41 @@ func (h *executorHandlers) discover(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, platform.TaskDiscoveryPage{Items: items})
 }
 
-func (h *executorHandlers) authenticate(w http.ResponseWriter, r *http.Request, pathExecutorID string) (platform.ExecutorIdentity, bool) {
-	role := r.Header.Get(adminRoleHeader)
+// resolveExecutorIdentity builds the request-time Executor identity
+// from the URL path and the caller-supplied X-FlowAI-Executor-Id /
+// X-FlowAI-Team-Id / X-FlowAI-Role headers. After v0009 the
+// X-FlowAI-Role header is request data, not authentication; the
+// canonical Executor record reconciles any disagreement.
+func (h *executorHandlers) resolveExecutorIdentity(w http.ResponseWriter, r *http.Request, pathExecutorID string) (platform.ExecutorIdentity, bool) {
 	headerExecutorID := r.Header.Get(executorIDHeader)
-	if role == "" || headerExecutorID == "" {
-		h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "Executor authentication is required")
-		return platform.ExecutorIdentity{}, false
-	}
-	if role != executorTeamRole && role != executorSysRole {
-		h.writeError(w, r, http.StatusForbidden, "not_authorized", "Executor authorization is required")
-		return platform.ExecutorIdentity{}, false
+	if headerExecutorID == "" {
+		headerExecutorID = pathExecutorID
 	}
 	if headerExecutorID != pathExecutorID {
 		h.writeError(w, r, http.StatusNotFound, "executor_unknown", "Executor is unknown")
 		return platform.ExecutorIdentity{}, false
 	}
+	role := r.Header.Get(adminRoleHeader)
 	identity := platform.ExecutorIdentity{ExecutorID: headerExecutorID, Scope: platform.ExecutorScopeSystem}
-	if role == executorTeamRole {
-		teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader))
-		if teamID == "" {
-			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "team Executor authentication is required")
-			return platform.ExecutorIdentity{}, false
-		}
+	teamID := strings.TrimSpace(r.Header.Get(executorTeamIDHeader))
+	switch {
+	case role == executorTeamRole && teamID != "":
 		identity.Scope = platform.ExecutorScopeTeam
 		identity.TeamID = &teamID
-	} else if r.Header.Get(executorTeamIDHeader) != "" {
-		h.writeError(w, r, http.StatusForbidden, "not_authorized", "system Executor must not carry a team binding")
-		return platform.ExecutorIdentity{}, false
+	case role == executorTeamRole:
+		return identity, true
+	case role == executorSysRole:
+		identity.Scope = platform.ExecutorScopeSystem
+	case teamID != "":
+		identity.Scope = platform.ExecutorScopeTeam
+		identity.TeamID = &teamID
 	}
 	return identity, true
 }
 
 func (h *executorHandlers) claim(w http.ResponseWriter, r *http.Request) {
 	executorID := chi.URLParam(r, "executor_id")
-	identity, ok := h.authenticate(w, r, executorID)
+	identity, ok := h.resolveExecutorIdentity(w, r, executorID)
 	if !ok {
 		return
 	}

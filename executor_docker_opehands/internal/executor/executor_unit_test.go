@@ -11,9 +11,14 @@ import (
 	"github.com/flowai/platform/executor_docker_opehands/internal/platform"
 )
 
+// setRequiredStateRegistryEnv sets every State Registry env var
+// the operator must configure for the v0009 contract. The
+// EXECUTOR_STATE_REGISTRY_TLS_* env vars are accepted-but-ignored
+// legacy keys; they are set here to assert that the operator can
+// keep them during staged configuration cleanup.
 func setRequiredStateRegistryEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("EXECUTOR_STATE_REGISTRY_URL", "https://state-registry.example.com")
+	t.Setenv("EXECUTOR_STATE_REGISTRY_URL", "http://state-registry.example.com")
 	t.Setenv("EXECUTOR_SCOPE", "team")
 	t.Setenv("EXECUTOR_TEAM_ID", "team-a")
 	t.Setenv("EXECUTOR_AUTHORIZED_TAG", "openhands")
@@ -141,94 +146,62 @@ func TestLoadConfigPreservesExplicitOpenHandsAPIKey(t *testing.T) {
 	}
 }
 
-// validStateRegistryConfig returns a baseline cfg that satisfies every
-// pre-existing Validate rule plus a complete mTLS material triple. Tests
-// that want to drop a single piece of the triple call the returned cfg
-// mutator to clear it and then assert Validate fails closed.
+// validStateRegistryConfig returns a baseline cfg that satisfies
+// every Validate rule. The legacy State Registry TLS material
+// fields are accepted but never read after v0009; tests that want
+// to assert missing-field handling should not be tied to those
+// fields.
 func validStateRegistryConfig() *Config {
 	return &Config{
-		ExecutorID:                   "exec-1",
-		MaxContainers:                1,
-		OpenHandsPortStart:           19000,
-		OpenHandsPortEnd:             19001,
-		OpenHandsWorkspace:           "/workspace/project",
-		OpenHandsLLMModel:            "m",
-		OpenHandsLLMAPIKey:           "k",
-		OpenHandsLLMUsageID:          "u",
-		OpenHandsStartupTO:           30 * time.Second,
-		OpenHandsDrainTO:             30 * time.Second,
-		WebSocketDialTimeout:         5 * time.Second,
-		StateRegistryURL:             "https://state-registry.example.com",
-		Scope:                        "team",
-		TeamID:                       "team-a",
-		AuthorizedTag:                "openhands",
-		StateRegistryTLSCertPath:     "/etc/flowai/client.crt",
-		StateRegistryTLSKeyPath:      "/etc/flowai/client.key",
-		StateRegistryTLSServerCAPath: "/etc/flowai/server-ca.crt",
+		ExecutorID:           "exec-1",
+		MaxContainers:        1,
+		OpenHandsPortStart:   19000,
+		OpenHandsPortEnd:     19001,
+		OpenHandsWorkspace:   "/workspace/project",
+		OpenHandsLLMModel:    "m",
+		OpenHandsLLMAPIKey:   "k",
+		OpenHandsLLMUsageID:  "u",
+		OpenHandsStartupTO:   30 * time.Second,
+		OpenHandsDrainTO:     30 * time.Second,
+		WebSocketDialTimeout: 5 * time.Second,
+		StateRegistryURL:     "http://state-registry.example.com",
+		Scope:                "team",
+		TeamID:               "team-a",
+		AuthorizedTag:        "openhands",
 	}
 }
 
-// TestConfigValidateRequiresHTTPSWhenStateRegistryConfigured asserts
-// that a non-empty StateRegistryURL forces a https URL. Production
-// connect to the State Registry is mTLS and mTLS requires TLS.
-func TestConfigValidateRequiresHTTPSWhenStateRegistryConfigured(t *testing.T) {
+// TestConfigValidateAcceptsPlainHTTP asserts the v0009 contract:
+// the State Registry transport is plaintext (http://) and the
+// https-only / mTLS-material requirements are removed.
+func TestConfigValidateAcceptsPlainHTTP(t *testing.T) {
 	cases := []struct {
 		name string
 		url  string
 	}{
 		{"http scheme", "http://state-registry.example.com"},
 		{"loopback http", "http://127.0.0.1:9443"},
-		{"http with port", "http://state-registry.example.com:9443"},
+		{"https still valid", "https://state-registry.example.com:9443"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := validStateRegistryConfig()
 			cfg.StateRegistryURL = tc.url
-			if err := cfg.Validate(); err == nil {
-				t.Fatalf("expected https-only validation error for %q", tc.url)
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("expected http(s) URL to validate, got %v", err)
 			}
 		})
 	}
 }
 
-// TestConfigValidateRequiresClientCertKeyAndServerCA asserts that
-// when StateRegistryURL is set, all three TLS material paths are
-// required: the operator-supplied client cert, the matching private
-// key, and the server CA bundle that anchors the State Registry
-// server certificate. Dropping any one of them must fail closed.
-func TestConfigValidateRequiresClientCertKeyAndServerCA(t *testing.T) {
-	base := validStateRegistryConfig()
-	if err := base.Validate(); err != nil {
-		t.Fatalf("baseline mTLS config rejected: %v", err)
-	}
-	cases := []struct {
-		name   string
-		mutate func(*Config)
-	}{
-		{"empty client cert", func(c *Config) { c.StateRegistryTLSCertPath = "" }},
-		{"empty client key", func(c *Config) { c.StateRegistryTLSKeyPath = "" }},
-		{"empty server CA", func(c *Config) { c.StateRegistryTLSServerCAPath = "" }},
-		{"only cert present", func(c *Config) {
-			c.StateRegistryTLSKeyPath = ""
-			c.StateRegistryTLSServerCAPath = ""
-		}},
-		{"only key present", func(c *Config) {
-			c.StateRegistryTLSCertPath = ""
-			c.StateRegistryTLSServerCAPath = ""
-		}},
-		{"only server ca present", func(c *Config) {
-			c.StateRegistryTLSCertPath = ""
-			c.StateRegistryTLSKeyPath = ""
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg := validStateRegistryConfig()
-			tc.mutate(cfg)
-			if err := cfg.Validate(); err == nil {
-				t.Fatalf("expected validate to reject incomplete mTLS material (%s)", tc.name)
-			}
-		})
+// TestConfigValidateIgnoresLegacyTLSTriple asserts the v0009
+// contract: the legacy EXECUTOR_STATE_REGISTRY_TLS_* env vars
+// are accepted but never read or validated. A baseline config
+// validates without them.
+func TestConfigValidateIgnoresLegacyTLSTriple(t *testing.T) {
+	cfg := validStateRegistryConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("baseline config without legacy TLS material rejected: %v", err)
 	}
 }
 

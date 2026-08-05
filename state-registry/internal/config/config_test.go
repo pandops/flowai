@@ -22,16 +22,13 @@ func randomHexKey(t *testing.T) string {
 	return hex.EncodeToString(buf)
 }
 
-// baseProductionTLSDir stages a complete mutually-authenticated TLS
-// bundle in a temp dir. The server key is written with mode 0o600
-// so the restrictive-permission check accepts the baseline.
-func baseProductionTLSDir(t *testing.T) (cert, key, ca string) {
+// baseProductionPostgresTLSDir stages a verify-full Postgres CA
+// bundle in a temp dir. Public material; no permission check.
+func baseProductionPostgresTLSDir(t *testing.T) (ca string) {
 	t.Helper()
 	dir := t.TempDir()
-	cert = writeConfigFile(t, dir, "server.crt")
-	key = writeConfigFile(t, dir, "server.key")
 	ca = writeConfigFile(t, dir, "ca.crt")
-	return cert, key, ca
+	return ca
 }
 
 func TestLoadRequiresAESKeyHex(t *testing.T) {
@@ -67,15 +64,11 @@ func TestLoadRequiresPostgresURL(t *testing.T) {
 }
 
 func TestLoadAcceptsValidConfig(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
+	ca := baseProductionPostgresTLSDir(t)
 	keyHex := randomHexKey(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", keyHex)
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://u:p@host:5432/db?sslmode=disable")
 	t.Setenv("STATE_REGISTRY_BIND_PORT", "18999")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
 	t.Setenv("STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX", randomHexKey(t))
@@ -94,6 +87,9 @@ func TestLoadAcceptsValidConfig(t *testing.T) {
 	}
 	if cfg.TestMode {
 		t.Fatal("TestMode=true, want false in un-tagged production build")
+	}
+	if len(cfg.LegacyTLSIgnoredKeys) != 0 {
+		t.Fatalf("LegacyTLSIgnoredKeys=%v, want empty when no legacy keys are set", cfg.LegacyTLSIgnoredKeys)
 	}
 }
 
@@ -130,17 +126,13 @@ func TestLoadRejectsInvalidBindPort(t *testing.T) {
 }
 
 func TestLoadAcceptsBindPortZero(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
+	ca := baseProductionPostgresTLSDir(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
 	t.Setenv("STATE_REGISTRY_BIND_PORT", "0")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
-	t.Setenv("STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
+	t.Setenv("STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX", randomHexKey(t))
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -152,15 +144,9 @@ func TestLoadAcceptsBindPortZero(t *testing.T) {
 
 func TestLoadAcceptsCompleteTLSConfig(t *testing.T) {
 	dir := t.TempDir()
-	cert := writeConfigFile(t, dir, "server.crt")
-	key := writeConfigFile(t, dir, "server.key")
 	ca := writeConfigFile(t, dir, "ca.crt")
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
 	t.Setenv("STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX", randomHexKey(t))
@@ -169,93 +155,48 @@ func TestLoadAcceptsCompleteTLSConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.TLSServerCert != cert || cfg.TLSServerKey != key || cfg.TLSClientCA != ca {
-		t.Fatalf("unexpected server TLS config: %+v", cfg)
-	}
-	if !cfg.TLSRequireClientCert {
-		t.Fatal("TLSRequireClientCert=false, want true")
-	}
 	if cfg.PostgresTLSCA != ca || cfg.PostgresTLSMode != "verify-full" {
 		t.Fatalf("unexpected postgres TLS config: %+v", cfg)
 	}
+	if cfg.LegacyTLSServerCert != "" || cfg.LegacyTLSServerKey != "" || cfg.LegacyTLSClientCA != "" || cfg.LegacyTLSRequireClientCert {
+		t.Fatalf("unexpected legacy TLS config: %+v", cfg)
+	}
 }
 
-func TestLoadRejectsIncompleteTLSConfig(t *testing.T) {
-	dir := t.TempDir()
-	cert := writeConfigFile(t, dir, "server.crt")
-	key := writeConfigFile(t, dir, "server.key")
-	ca := writeConfigFile(t, dir, "ca.crt")
+func TestLoadRejectsIncompletePostgresTLSConfig(t *testing.T) {
 	tests := []struct {
 		name string
 		env  map[string]string
 		want string
 	}{
 		{
-			name: "server key missing",
-			env: map[string]string{
-				"STATE_REGISTRY_TLS_SERVER_CERT":         cert,
-				"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT": "true",
-				"STATE_REGISTRY_TLS_CLIENT_CA":           ca,
-				"STATE_REGISTRY_POSTGRES_TLS_CA":         ca,
-				"STATE_REGISTRY_POSTGRES_TLS_MODE":       "verify-full",
-			},
-			want: "TLS_SERVER_KEY",
-		},
-		{
-			name: "required client cert without CA",
-			env: map[string]string{
-				"STATE_REGISTRY_TLS_SERVER_CERT":         cert,
-				"STATE_REGISTRY_TLS_SERVER_KEY":          key,
-				"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT": "true",
-				"STATE_REGISTRY_POSTGRES_TLS_CA":         ca,
-				"STATE_REGISTRY_POSTGRES_TLS_MODE":       "verify-full",
-			},
-			want: "TLS_CLIENT_CA",
-		},
-		{
 			name: "verify full without postgres CA",
 			env: map[string]string{
-				"STATE_REGISTRY_TLS_SERVER_CERT":         cert,
-				"STATE_REGISTRY_TLS_SERVER_KEY":          key,
-				"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT": "true",
-				"STATE_REGISTRY_TLS_CLIENT_CA":           ca,
-				"STATE_REGISTRY_POSTGRES_TLS_MODE":       "verify-full",
+				"STATE_REGISTRY_POSTGRES_TLS_MODE": "verify-full",
 			},
 			want: "POSTGRES_TLS_CA",
 		},
 		{
 			name: "unknown postgres TLS mode",
 			env: map[string]string{
-				"STATE_REGISTRY_TLS_SERVER_CERT":         cert,
-				"STATE_REGISTRY_TLS_SERVER_KEY":          key,
-				"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT": "true",
-				"STATE_REGISTRY_TLS_CLIENT_CA":           ca,
-				"STATE_REGISTRY_POSTGRES_TLS_CA":         ca,
-				"STATE_REGISTRY_POSTGRES_TLS_MODE":       "trust-me",
+				"STATE_REGISTRY_POSTGRES_TLS_CA":   writeConfigFile(t, t.TempDir(), "ca.crt"),
+				"STATE_REGISTRY_POSTGRES_TLS_MODE": "trust-me",
 			},
 			want: "POSTGRES_TLS_MODE",
 		},
 		{
 			name: "missing configured CA file",
 			env: map[string]string{
-				"STATE_REGISTRY_TLS_SERVER_CERT":         cert,
-				"STATE_REGISTRY_TLS_SERVER_KEY":          key,
-				"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT": "true",
-				"STATE_REGISTRY_TLS_CLIENT_CA":           ca,
-				"STATE_REGISTRY_POSTGRES_TLS_CA":         filepath.Join(dir, "missing.crt"),
-				"STATE_REGISTRY_POSTGRES_TLS_MODE":       "verify-full",
+				"STATE_REGISTRY_POSTGRES_TLS_CA":   filepath.Join(t.TempDir(), "missing.crt"),
+				"STATE_REGISTRY_POSTGRES_TLS_MODE": "verify-full",
 			},
 			want: "POSTGRES_TLS_CA",
 		},
 		{
 			name: "valid CA baseline",
 			env: map[string]string{
-				"STATE_REGISTRY_TLS_SERVER_CERT":         cert,
-				"STATE_REGISTRY_TLS_SERVER_KEY":          key,
-				"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT": "true",
-				"STATE_REGISTRY_TLS_CLIENT_CA":           ca,
-				"STATE_REGISTRY_POSTGRES_TLS_CA":         ca,
-				"STATE_REGISTRY_POSTGRES_TLS_MODE":       "verify-full",
+				"STATE_REGISTRY_POSTGRES_TLS_CA":   writeConfigFile(t, t.TempDir(), "ca.crt"),
+				"STATE_REGISTRY_POSTGRES_TLS_MODE": "verify-full",
 			},
 		},
 	}
@@ -300,22 +241,6 @@ func writeConfigFile(t *testing.T, dir, name string) string {
 	return path
 }
 
-// writeConfigFileAs writes a regular file and then enforces the
-// requested mode via chmod so the test does not depend on the
-// process umask. Used by the private-key permission tests to stage
-// a server key with deliberately loose permissions.
-func writeConfigFileAs(t *testing.T, dir, name string, mode os.FileMode) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("test"), mode); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
-	if err := os.Chmod(path, mode); err != nil {
-		t.Fatalf("chmod %s: %v", name, err)
-	}
-	return path
-}
-
 // setProductionEnv clears every TLS env var so each
 // production-transport test starts from a known blank slate.
 func setProductionEnv(t *testing.T) {
@@ -346,95 +271,7 @@ func TestLoadRejectsPlainHTTPInProduction(t *testing.T) {
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
 	_, err := Load()
 	if err == nil {
-		t.Fatal("Load accepted plain HTTP in production, want error")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "TLS_SERVER_CERT") && !strings.Contains(msg, "mutually-authenticated") {
-		t.Fatalf("error=%v, want mention of TLS_SERVER_CERT or mutually-authenticated", err)
-	}
-}
-
-func TestLoadRequiresServerCertInProduction(t *testing.T) {
-	_, key, ca := baseProductionTLSDir(t)
-	setProductionEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "TLS_SERVER_CERT") {
-		t.Fatalf("error=%v, want mention of TLS_SERVER_CERT", err)
-	}
-}
-
-func TestLoadRequiresServerKeyInProduction(t *testing.T) {
-	cert, _, ca := baseProductionTLSDir(t)
-	setProductionEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "TLS_SERVER_KEY") {
-		t.Fatalf("error=%v, want mention of TLS_SERVER_KEY", err)
-	}
-}
-
-func TestLoadRequiresClientCAInProduction(t *testing.T) {
-	cert, key, _ := baseProductionTLSDir(t)
-	setProductionEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", writeConfigFile(t, t.TempDir(), "ca.crt"))
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "TLS_CLIENT_CA") {
-		t.Fatalf("error=%v, want mention of TLS_CLIENT_CA", err)
-	}
-}
-
-func TestLoadRequiresClientCertInProduction(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
-	setProductionEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "false")
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load accepted TLS_REQUIRE_CLIENT_CERT=false in production, want error")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "TLS_REQUIRE_CLIENT_CERT") && !strings.Contains(msg, "mutually-authenticated") {
-		t.Fatalf("error=%v, want mention of TLS_REQUIRE_CLIENT_CERT or mutually-authenticated", err)
-	}
-}
-
-func TestLoadRejectsPostgresPlaintextInProduction(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
-	setProductionEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load accepted plaintext postgres in production, want error")
+		t.Fatal("Load accepted plaintext Postgres in production, want error")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "POSTGRES_TLS_CA") && !strings.Contains(msg, "POSTGRES_TLS_MODE") && !strings.Contains(msg, "verify-full") && !strings.Contains(msg, "PostgreSQL TLS") {
@@ -443,14 +280,9 @@ func TestLoadRejectsPostgresPlaintextInProduction(t *testing.T) {
 }
 
 func TestLoadRequiresPostgresCAInProduction(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
 	setProductionEnv(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "POSTGRES_TLS_CA") {
@@ -459,14 +291,10 @@ func TestLoadRequiresPostgresCAInProduction(t *testing.T) {
 }
 
 func TestLoadRequiresPostgresModeInProduction(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
+	ca := baseProductionPostgresTLSDir(t)
 	setProductionEnv(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	_, err := Load()
 	if err == nil {
@@ -479,14 +307,10 @@ func TestLoadRequiresPostgresModeInProduction(t *testing.T) {
 }
 
 func TestLoadRejectsVerifyCAInProduction(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
+	ca := baseProductionPostgresTLSDir(t)
 	setProductionEnv(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-ca")
 	_, err := Load()
@@ -495,20 +319,16 @@ func TestLoadRejectsVerifyCAInProduction(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsVerifyCAInTestMode, TestLoadRejectsPartialServerTLSEvenInTestMode,
-// and TestLoadRejectsPartialPostgresTLSEvenInTestMode live in the
+// TestLoadRejectsVerifyCAInTestMode and
+// TestLoadRejectsPartialPostgresTLSEvenInTestMode live in the
 // harness-tagged config_test_harness.go because they require
 // STATE_REGISTRY_TEST_MODE=true, which the un-tagged build rejects.
 
 func TestLoadAcceptsCompleteTLSInProduction(t *testing.T) {
-	cert, key, ca := baseProductionTLSDir(t)
+	ca := baseProductionPostgresTLSDir(t)
 	setProductionEnv(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
 	cfg, err := Load()
@@ -518,75 +338,50 @@ func TestLoadAcceptsCompleteTLSInProduction(t *testing.T) {
 	if cfg.TestMode {
 		t.Fatal("TestMode=true, want false in production")
 	}
-	if !cfg.TLSRequireClientCert {
-		t.Fatal("TLSRequireClientCert=false, want true")
-	}
 	if cfg.PostgresTLSMode != "verify-full" {
 		t.Fatalf("PostgresTLSMode=%q, want verify-full", cfg.PostgresTLSMode)
 	}
 }
 
-func TestLoadRejectsWorldReadableServerKey(t *testing.T) {
-	cert := writeConfigFile(t, t.TempDir(), "server.crt")
-	ca := writeConfigFile(t, t.TempDir(), "ca.crt")
-	dir := t.TempDir()
-	looseKey := writeConfigFileAs(t, dir, "server.key", 0o644)
+func TestLoadIgnoresLegacyBackendTLSKeys(t *testing.T) {
+	ca := baseProductionPostgresTLSDir(t)
 	setProductionEnv(t)
 	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
 	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", looseKey)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
 	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load accepted world-readable server key, want error")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "TLS_SERVER_KEY") && !strings.Contains(msg, "permission") {
-		t.Fatalf("error=%v, want mention of TLS_SERVER_KEY or permission", err)
-	}
-}
-
-func TestLoadRejectsGroupReadableServerKey(t *testing.T) {
-	cert := writeConfigFile(t, t.TempDir(), "server.crt")
-	ca := writeConfigFile(t, t.TempDir(), "ca.crt")
-	dir := t.TempDir()
-	looseKey := writeConfigFileAs(t, dir, "server.key", 0o640)
-	setProductionEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", looseKey)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
+	// Reference nonexistent paths on purpose: Load() must never
+	// touch them and the operator must never see an "unavailable"
+	// or permission failure for the legacy fields.
+	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", "/var/run/flowai/legacy-server-cert-does-not-exist.pem")
+	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", "/var/run/flowai/legacy-server-key-does-not-exist.pem")
+	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", "/var/run/flowai/legacy-client-ca-does-not-exist.pem")
 	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
-	_, err := Load()
-	if err == nil {
-		t.Fatal("Load accepted group-readable server key, want error")
+	t.Setenv("STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX", randomHexKey(t))
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v (legacy keys must be ignored, not validated)", err)
 	}
-	if !strings.Contains(err.Error(), "TLS_SERVER_KEY") {
-		t.Fatalf("error=%v, want mention of TLS_SERVER_KEY", err)
+	wantKeys := []string{
+		"STATE_REGISTRY_TLS_SERVER_CERT",
+		"STATE_REGISTRY_TLS_SERVER_KEY",
+		"STATE_REGISTRY_TLS_CLIENT_CA",
+		"STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT",
 	}
-}
-
-func TestLoadAcceptsRestrictiveServerKey(t *testing.T) {
-	cert := writeConfigFile(t, t.TempDir(), "server.crt")
-	key := writeConfigFileAs(t, t.TempDir(), "server.key", 0o600)
-	ca := writeConfigFile(t, t.TempDir(), "ca.crt")
-	setProductionEnv(t)
-	t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
-	t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://example/db")
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_CERT", cert)
-	t.Setenv("STATE_REGISTRY_TLS_SERVER_KEY", key)
-	t.Setenv("STATE_REGISTRY_TLS_CLIENT_CA", ca)
-	t.Setenv("STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT", "true")
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", ca)
-	t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
-	if _, err := Load(); err != nil {
-		t.Fatalf("Load: %v", err)
+	if len(cfg.LegacyTLSIgnoredKeys) != len(wantKeys) {
+		t.Fatalf("LegacyTLSIgnoredKeys=%v, want %v", cfg.LegacyTLSIgnoredKeys, wantKeys)
+	}
+	for i, k := range wantKeys {
+		if cfg.LegacyTLSIgnoredKeys[i] != k {
+			t.Fatalf("LegacyTLSIgnoredKeys[%d]=%q, want %q", i, cfg.LegacyTLSIgnoredKeys[i], k)
+		}
+	}
+	// Legacy fields are recorded only as compatibility values; they
+	// do not affect the listener or Postgres client.
+	if cfg.LegacyTLSServerCert == "" || cfg.LegacyTLSServerKey == "" || cfg.LegacyTLSClientCA == "" {
+		t.Fatalf("legacy value passthrough missing: %+v", cfg)
+	}
+	if !cfg.LegacyTLSRequireClientCert {
+		t.Fatal("LegacyTLSRequireClientCert=false, want true (legacy boolean passthrough)")
 	}
 }
