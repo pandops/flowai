@@ -9,4 +9,4 @@ FROM ${AGENT_SERVER_IMAGE}
 LABEL org.opencontainers.image.source="https://github.com/OpenHands/software-agent-sdk" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.title="flowai-agent-openhands-image" \
-      org.opencontainers.image.description="Real OpenHands V1 agent-server for executor_docker_opehands e2e"
+      org.opencontainers.image.description="Real OpenHands V1 agent-server for Docker and K8s Executor smoke tests"

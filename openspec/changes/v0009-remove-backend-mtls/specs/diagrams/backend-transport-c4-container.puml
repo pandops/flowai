@@ -1,0 +1,26 @@
+' diagram-type: c4-container
+@startuml
+title FlowAI transport boundaries after backend mTLS removal
+
+actor "Operator" as operator_actor
+rectangle "Ingress\nHTTPS termination" as ingress_boundary
+rectangle "API Gateway\nuser authentication" as api_gateway
+rectangle "State Registry\nHTTP / WS, no service auth" as state_registry
+rectangle "Docker OpenHands Executor\nHTTP, no service auth" as docker_executor
+rectangle "K8s OpenHands Executor\nHTTP, no service auth" as kubernetes_executor
+rectangle "Automation / listeners\nHTTP, no service auth" as task_listeners
+database "PostgreSQL\nTLS + server verification" as state_database
+
+operator_actor --> ingress_boundary : HTTPS
+ingress_boundary --> api_gateway : HTTP
+api_gateway --> state_registry : HTTP / WS\nforwarded operator context
+docker_executor --> state_registry : HTTP\nconfigured scope / team / tag
+kubernetes_executor --> state_registry : HTTP\nconfigured scope / team / tag
+task_listeners --> state_registry : HTTP\nconfigured team / source
+state_registry --> state_database : TLS
+
+note right of state_registry
+  Backend callers are not authenticated.
+  Network isolation is outside v0009.
+end note
+@enduml

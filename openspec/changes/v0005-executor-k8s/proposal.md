@@ -29,8 +29,7 @@ The change applies the current Executor ownership contract to the K8s
 implementation: one immutable `scope` from `{team, system}`, one
 `authorized_tag`, and, only for `scope = team`, one immutable `team_id`
 bound to the authenticated Executor service identity. The State Registry
-treats `team_id` as authoritative for task ownership and treats
-`team_name` as a display-only label.
+treats `team_id` as authoritative for task ownership.
 Cross-team interactions are non-revealing in two distinct ways:
 collection-level discovery (the read-side task list) is filtered by
 `team_id` BEFORE result shaping, so a tag whose matching `pending`
@@ -61,6 +60,28 @@ events.
   config, import path, wire `executor_type`, slog/probe service name, and
   constant regression test derive from that same concrete identifier. The
   change ID remains `v0005-executor-k8s`.
+- Have State Registry generate `executor_id` as a UUID in the first-start
+  `POST /v1/executors` response, atomically persist it in the recovery cache
+  before task intake, and reuse it through PUT on every restart. Store the K8s cache on a PVC and the Docker Executor cache on a
+  required host-backed volume.
+- Prevent two local processes from using the same persistent cache by holding
+  a non-blocking exclusive OS lock on `<cache_dir>/executor.lock` for the full
+  process lifetime. Lock contention fails unhealthy before registration. Do
+  not add State Registry lease/fencing; independently copied volumes remain an
+  unsupported operator action.
+- Persist identity, assignments, and event outbox in a transactional bbolt
+  database at `<cache_dir>/executor.db` using versioned buckets and fail closed
+  on corruption or unsupported schema.
+- Require pre-generated mTLS client certificate, private key, and CA bundle,
+  mounted read-only through a K8s Secret volume or Docker file/secret mounts;
+  Executors never generate or rotate certificates at runtime and load changed
+  mounted material only on process restart, with no hot reload. Certificate
+  lifetime and renewal cadence remain external PKI/deployment policy rather
+  than an Executor contract.
+- Persist a stable claim intent in the bbolt `assignments` bucket before the
+  claim request, commit the claimed assignment before `running` or runtime
+  creation, and persist every event before sending it. Store no environment or
+  secret plaintext in the cache.
 - Correct the existing Docker OpenHands concrete service identifier from
   `executor_docker_opehands` to `executor_docker_openhands` across its
   directory, command, binary, config, import path, wire `executor_type`,
@@ -72,9 +93,12 @@ events.
 - Require every K8s Executor registration to declare exactly one immutable
   `scope` from `{team, system}`, exactly one `authorized_tag`, observed
   `max_capacity`, observed `running_count`, and runtime metadata. Team scope
-  requires exactly one immutable identity-bound `team_id` and permits an
-  optional display-only `team_name`; system scope requires no `team_id` and
-  no team binding.
+  requires exactly one immutable identity-bound `team_id`; system scope
+  omits the `team_id` property and has no team binding; explicit null is
+  rejected. The registration body carries
+  neither `identity` nor `team_name`; State
+  Registry derives and persists it exclusively from the authenticated mTLS
+  context.
 - Make `team_id` authoritative for a team-owned Executor: the value
   supplied at registration MUST match the team bound to the
   authenticated identity, MUST be stored on the canonical Executor
@@ -143,14 +167,22 @@ older_task_must_be_claimed_first`, and SHALL return to discovery.
   a `running` event after the claim succeeds and SHALL emit exactly one
   of `finished` or `failed` at terminal state. For OpenHands, the
   terminal conversation status is authoritative; the long-running
-  agent-server Pod exit code is not a completion signal. After State
+  agent-server Pod exit code is not a completion signal. Every `failed`
+  event carries a machine-readable `failure_reason`; an agent-container
+  restart before the OpenHands `finished` signal produces
+  `failure_reason = "pod_restarted_before_finish"` and is never resumed or
+  recreated. After State
   Registry accepts the terminal event, retain the Pod for configurable
   non-negative `finished_cleanup_delay` after `finished` or
   `failed_cleanup_delay` after `failed` (each default `0s`), count it
   against local capacity during the selected delay, and then delete it
   idempotently. Add
   the same terminal-event-to-cleanup delay and ordering to the existing
-  Docker OpenHands Executor's task containers. The Executor SHALL NOT
+  Docker OpenHands Executor's task containers. A Docker task-container exit
+  before OpenHands `finished` produces exactly one `failed` event with
+  `failure_reason = "container_exited_before_finish"` regardless of exit
+  code; exit code `0` is not success, and the execution is not resumed or
+  recreated. The Executor SHALL NOT
   append a `created` event itself; the FIRST lifecycle event is
   appended transactionally by the State Registry on claim. Every
   Executor-emitted task or self event SHALL carry `task_id` (when
@@ -218,17 +250,22 @@ seconds`, SHALL verify the literal audience
   Executor in the Executor's bound `team_id`. Controls for tasks
   assigned to a different Executor or a different team are never read
   or applied.
-- Reconcile to State Registry after restart by re-reading claimed,
-  non-terminal tasks from durable state using the canonical assignment
-  identity `tasks.executor_id = authenticated_executor_id` (NEVER
-  filtering by `tasks.owner_command_id` during the re-read query), and
-  then matching each returned task's immutable `tasks.owner_command_id`
-  to the existing Pod's `flowai.command_id` label to identify which
-  in-flight Pod to continue observing. The K8s Executor SHALL NOT
+- Reconcile after restart exclusively from persistent cache by matching each
+  cached `owner_command_id` to the existing Pod's `flowai.command_id` label.
+  Store and reuse the State Registry-generated stable `executor_id` in that
+  cache. The cache is the versioned bbolt database
+  `<cache_dir>/executor.db`; an unknown newer schema or open failure makes
+  the Executor unhealthy. No State Registry assignments-list endpoint is
+  added. The K8s Executor SHALL NOT
   re-discover and SHALL NOT re-claim already-claimed tasks. A
   restarted K8s Executor SHALL NOT create a duplicate Pod for an
   already-running task and SHALL NOT emit a duplicate `running` event
-  for it.
+  for it. Persist assignment, Pod, OpenHands connection, and event-outbox
+  recovery state on durable storage. After restart reconcile cached state and
+  labeled Pods; reconnect to the
+  existing conversation at its current progress and retry unaccepted events
+  with their original `event_id`. Executor-process restart alone is not task
+  failure.
 
 ## Impact
 
@@ -250,9 +287,30 @@ seconds`, SHALL verify the literal audience
   Docker OpenHands service, which is renamed from
   `executor_docker_opehands/` to `executor_docker_openhands/` (none is
   modified by this OpenSpec artifact update itself).
+- Verification creates one fresh, uniquely named local `kind` cluster per
+  Playwright suite run and uses Docker Engine for Docker. The harness captures
+  Kubernetes diagnostics before teardown and deletes its cluster on both pass
+  and failure; it never attaches to a pre-existing cluster. OpenHands API edge
+  cases use a deterministic compatible mock; a
+  separate smoke gate runs the same real short task in the real
+  `autotest/agent-openhands-image` through both Pod and container runtimes.
+  That real agent-server calls a local deterministic OpenAI-compatible mock
+  LLM which scripts the marker-writing tool call and terminal response. The
+  smoke gate requires no external LLM or CI API-key secret.
+- The E2E K8s Executor runs as a single-replica Deployment inside the temporary
+  cluster with a dedicated ServiceAccount, namespace-scoped RBAC, and a PVC
+  mounted at `<cache_dir>`. Executor Pod replacement preserves the bbolt
+  cache and lock file while already-running task Pods survive independently;
+  task Pods are not owned by the ephemeral Executor Pod.
+- The temporary cluster installs a pinned local-path provisioner. The cache
+  uses a dynamically provisioned `ReadWriteOnce` PVC with an explicitly named
+  test StorageClass, so the suite does not depend on any pre-existing/default
+  StorageClass or manually prepared hostPath PV.
 
 ## Out of scope
 
+- Define a fixed Executor mTLS certificate lifetime or renewal schedule;
+  external PKI and deployment infrastructure own both.
 - Replace the Docker Executor's runtime behavior beyond the shared terminal
   cleanup-delay behavior and the approved concrete-service spelling
   correction.

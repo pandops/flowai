@@ -27,9 +27,12 @@ service and wire identifier `executor_k8s_openhands`, with OpenHands as its
 agent tool, and exactly one immutable ownership
 `scope` from `{team, system}`. It SHALL submit exactly one
 `authorized_tag`, observed `max_capacity`, observed `running_count`, and
-runtime metadata. Team scope SHALL submit exactly one immutable `team_id`
-that references an existing team and MAY submit a display-only `team_name`;
-system scope SHALL submit no `team_id` or team binding. The K8s Executor
+runtime metadata. It SHALL NOT submit an `identity`; State Registry SHALL
+derive and persist the canonical Executor identity exclusively from the
+authenticated mTLS context. Team scope SHALL submit exactly one immutable `team_id`
+that references an existing team and SHALL NOT submit `team_name`;
+system scope SHALL omit the `team_id` property and have no team binding; it
+SHALL NOT submit explicit null. The K8s Executor
 SHALL refuse any local change to its accepted scope or team binding. It
 SHALL discover eligible `pending` tasks only when the task's `required_tag`
 equals its single `authorized_tag`; team scope SHALL additionally match the
@@ -73,9 +76,10 @@ emit a capacity-based rejection.
 - **WHEN** a K8s Executor process starts
 - **THEN** it registers `executor_type = "executor_k8s_openhands"`, exactly
   one immutable scope from `{team, system}`, exactly one `authorized_tag`,
-  observed `max_capacity`, observed `running_count`, and metadata; team scope
-  includes exactly one identity-bound `team_id` and optional display-only
-  `team_name`, while system scope includes no team binding
+  observed `max_capacity`, observed `running_count`, and metadata, with no
+  `identity` or `team_name` field in the request body; team scope includes
+  exactly one identity-bound `team_id`, while system scope includes no team
+  binding
 
 #### Scenario: K8s Executor discovers a same-team pending task
 
@@ -123,7 +127,11 @@ task-completion signal. A terminal OpenHands status of `failed`,
 SHALL produce `failed`. Other agent tools SHALL define an equally
 explicit tool-level terminal-success signal before implementation. The
 Executor SHALL produce exactly one of `finished` or `failed` for the
-task.
+task. Every `failed` event payload SHALL carry a non-empty,
+machine-readable `failure_reason`. If the Pod's agent container restarts
+before OpenHands emits terminal `execution_status = finished`, the Executor
+SHALL NOT continue or recreate the execution and SHALL emit exactly one
+`failed` event with `failure_reason = "pod_restarted_before_finish"`.
 
 After State Registry accepts the terminal event with `202`, the K8s
 Executor SHALL select the cleanup delay by the accepted event type:
@@ -139,7 +147,12 @@ delete SHALL NOT append a second terminal task event and SHALL be
 retried or surfaced as an Executor self event. The Docker OpenHands
 Executor SHALL implement the same configuration and ordering for its
 task container: accepted terminal conversation event, configurable
-delay, then idempotent stop/removal. Every Executor-emitted task or
+delay, then idempotent stop/removal. If that Docker task container exits
+before OpenHands emits terminal `execution_status = finished`, the Docker
+Executor SHALL emit exactly one `failed` event with non-empty
+`failure_reason = "container_exited_before_finish"`; it SHALL NOT infer
+success from exit code `0` and SHALL NOT resume or recreate the execution.
+Every Executor-emitted task or
 self event SHALL carry
 `task_id` (when task-scoped), `executor_id`, `team_id` (equal to the
 team-owned Executor's bound team or the system-owned Executor's assigned
@@ -166,6 +179,15 @@ foreign-team probe.
   Pod exit code is not the task-completion signal and cleanup appends no
   additional terminal task event
 
+#### Scenario: Pod restarts before OpenHands finishes
+
+- **WHEN** the assigned task Pod's agent container restart count increases
+  before OpenHands emits terminal `execution_status = finished`
+- **THEN** the K8s Executor emits exactly one `failed` event whose payload
+  carries `failure_reason = "pod_restarted_before_finish"`, does not resume
+  or recreate the execution, and applies `failed_cleanup_delay` after State
+  Registry returns `202 accepted`
+
 #### Scenario: Docker OpenHands uses the same terminal cleanup delay
 
 - **WHEN** the Docker OpenHands Executor receives an accepted terminal
@@ -175,6 +197,14 @@ foreign-team probe.
   continues counting it against local capacity for the selected delay,
   and idempotently stops and removes it afterward without appending
   another terminal task event
+
+#### Scenario: Docker container exits before OpenHands finishes
+
+- **WHEN** a Docker OpenHands task container exits with any exit code before
+  OpenHands emits terminal `execution_status = finished`
+- **THEN** the Docker Executor emits exactly one `failed` event whose payload
+  carries `failure_reason = "container_exited_before_finish"`, does not treat
+  exit code `0` as success, and does not resume or recreate the execution
 
 #### Scenario: State Registry claims a task for a K8s Executor
 
@@ -230,7 +260,7 @@ foreign-team probe.
 
 The K8s Executor SHALL register with exactly one immutable `scope` from
 `{team, system}`. Team scope requires exactly one identity-bound `team_id`;
-system scope requires no `team_id` and derives the event and access envelope
+system scope requires the `team_id` property to be absent and derives the event and access envelope
 from the assigned task's immutable `team_id`. Re-registration SHALL NOT
 change scope. The K8s Executor SHALL treat the State Registry's secret-cryptography
 provider as opaque. The State Registry controls the active provider
@@ -253,7 +283,7 @@ responses.
 #### Scenario: K8s Executor registers with system scope
 
 - **WHEN** an authenticated system-owned K8s Executor registers with
-  `scope = system`, one `authorized_tag`, and no `team_id`
+  `scope = system`, one `authorized_tag`, and an absent `team_id` property
 - **THEN** State Registry accepts the registration, discovery matches the
   registered tag across teams, and every successful claim returns the
   claimed task's immutable `team_id` for Pod labels and later envelopes
@@ -335,15 +365,14 @@ authenticated Executor credential, SHALL reject a registration that
 omits `team_id` when `scope = team`, SHALL reject a registration that
 supplies more than one `team_id`, and SHALL reject any later write that
 attempts to change the stored `team_id`. `team_id` is authoritative for
-the Executor's matching and authorization scope; `team_name` is a
-display-only label and SHALL NOT be used to look up, match, or
-authorize any task, environment, event, or control.
+the Executor's matching and authorization scope. The Executor registration
+body SHALL NOT carry `team_name`.
 
 #### Scenario: K8s Executor registers with one team_id
 
 - **WHEN** a K8s Executor with `scope = team` supplies one `team_id`,
   one `authorized_tag`, observed `max_capacity`, observed
-  `running_count`, optional `team_name`, and metadata, all bound to the
+  `running_count`, and metadata, all bound to the
   authenticated Executor service identity
 - **THEN** the State Registry accepts the registration, stores the
   `team_id` on the canonical Executor record, and exposes the same
@@ -560,7 +589,9 @@ that are assigned to the reading Executor AND whose `team_id` equals
 the Executor's bound `team_id`. The K8s Executor SHALL NOT poll, list,
 or apply controls for tasks assigned to a different Executor or to a
 different team. The State Registry SHALL respond to a control read
-whose task is in another team with a non-revealing `404`.
+whose task is in another team with a non-revealing `404`. A same-team
+Executor that is not the task's recorded `tasks.executor_id` SHALL receive
+`403 not_assigned` without reading or applying the control.
 
 #### Scenario: Assigned task control is delivered to the K8s Executor
 
@@ -578,25 +609,78 @@ whose task is in another team with a non-revealing `404`.
 - **THEN** the State Registry returns a non-revealing `404` and the
   Executor reads and applies no control
 
+#### Scenario: Same-team unassigned control read is rejected
+
+- **WHEN** a K8s Executor requests controls for a task in its bound team that
+  is assigned to another Executor
+- **THEN** State Registry returns `403 not_assigned`, discloses no control
+  contents, and the requesting Executor applies nothing
+
 ### Requirement: K8s Executor reconciles to State Registry after restart without reassignment
 
-The K8s Executor SHALL, after a restart, reconcile by re-reading its
-already-claimed, non-terminal tasks from the durable State Registry
-state using the canonical assignment identity
-`tasks.executor_id = authenticated_executor_id`. The K8s Executor
-SHALL NOT filter by `tasks.owner_command_id` during reconciliation
-because `command_id` is a claim-time identifier that the Executor
-uses to identify which Pod owns a given task, not a query filter for
-re-reading assignment. Each reconciled task row carries its immutable
-`tasks.owner_command_id`; the K8s Executor SHALL match that
-`owner_command_id` to the immutable Pod label `flowai.command_id` to
-identify which in-flight Pod to continue observing and SHALL treat the
-canonical `(tasks.executor_id, tasks.owner_command_id)` pair as the
-authoritative owner record. The K8s Executor SHALL NOT re-discover,
+On first start, when no cache exists, the K8s Executor SHALL send `POST
+/v1/executors` without `executor_id`, receive the State Registry-generated UUID
+`executor_id` in `201 Created`, and atomically persist it before doing any
+discovery or claim. On every later start it SHALL reuse that cached identifier
+with `PUT /v1/executors/{executor_id}` and SHALL NOT request a new one. The K8s Executor SHALL maintain its durable local recovery cache on a
+persistent volume; an in-memory-only cache is insufficient. For every claimed task the cache SHALL
+store `task_id`, `team_id`, `executor_id`, `owner_command_id`, Pod namespace,
+Pod name and UID, OpenHands conversation identity, and the last observed tool
+state. It SHALL also maintain a durable event outbox containing each generated
+`event_id`, event body, and delivery state (`pending` or `accepted`). The
+Executor SHALL persist an event before sending it and mark it accepted only
+after State Registry returns `202`; after restart it SHALL retry pending events
+with the same `event_id`.
+The cache SHALL be one bbolt database at `<cache_dir>/executor.db` with
+versioned buckets `metadata`, `assignments`, and `event_outbox`. `metadata`
+SHALL store schema version and the State Registry-generated `executor_id`;
+`assignments` SHALL store runtime/conversation recovery records keyed by
+`task_id`; `event_outbox` SHALL store events keyed by `event_id`. Every state
+transition SHALL use a bbolt write transaction and SHALL be durably committed
+before its corresponding external side effect. An unsupported schema version,
+open failure, or corrupt database SHALL fail closed without registration or
+runtime mutation.
+The cache directory and database SHALL be owner-only. Before claim, the
+Executor SHALL transactionally persist in `assignments` a claim intent keyed
+by `task_id`, with stable `command_id` and state `claiming`; after an uncertain
+response it SHALL retry the same `(task_id, command_id)`. After `200 claimed`
+it SHALL transactionally change that record to `claimed` and persist the
+runtime assignment before emitting `running` or creating a runtime. Cache
+entries and logs SHALL contain no environment or secret plaintext.
+Before first registration or refresh, every concrete Executor SHALL acquire a
+non-blocking exclusive OS file lock on `<cache_dir>/executor.lock` and SHALL
+hold it for the full process lifetime. Failure to acquire the lock SHALL make
+the process unhealthy; it SHALL NOT register, refresh, discover, claim, append
+events, or mutate Pods/containers. Process exit or crash SHALL release the
+kernel-managed lock. K8s PVCs and Docker host-backed volumes used for cache
+SHALL support POSIX advisory file locking. State Registry SHALL NOT implement
+an Executor lease or fencing token. Independently copied cache volumes are an
+unsupported operator action outside this local lock's protection.
+Executor mTLS client certificate, private key, and trusted CA bundle SHALL be
+generated before deployment and mounted read-only. K8s SHALL receive them from
+a pre-created Secret volume; Docker SHALL receive explicit read-only file or
+secret mounts. Executors SHALL NOT generate, enroll, rotate, or overwrite
+certificate material at runtime and SHALL fail startup before registration
+when any required file is missing, unreadable, expired, or invalid.
+Each Executor SHALL load certificate material once during process startup and
+SHALL NOT watch, poll, or hot-reload changed certificate files. Updated
+mounted material SHALL take effect only after the Executor process restarts.
+Certificate lifetime and renewal schedule SHALL be owned by external PKI and
+deployment infrastructure and SHALL NOT be configured or enforced as an
+Executor-specific duration. The Executor SHALL rely on normal X.509 validity
+checks and SHALL NOT require a fixed lifetime such as 90 days.
+After restart the Executor SHALL load non-terminal assignments only from this
+cache and match cached `owner_command_id` values to immutable Pod labels
+`flowai.command_id`. No State Registry assignments-list endpoint exists or is
+required. If an expected cache is missing, unreadable, or corrupt, the Executor
+SHALL be unhealthy, SHALL NOT claim new work, and SHALL leave existing Pods
+untouched for operator recovery. The K8s Executor SHALL NOT re-discover,
 SHALL NOT re-claim, SHALL NOT reassign, and SHALL NOT duplicate Pods
 or `running` events for tasks already claimed by it. The K8s Executor
-SHALL continue observing its existing Pods through the Kubernetes API
-and SHALL emit exactly one terminal `finished` or `failed` event per
+SHALL continue observing its existing Pods through the Kubernetes API,
+reconnect to the cached OpenHands conversation without restarting the task
+from the beginning, and SHALL emit exactly one terminal `finished` or `failed`
+event per
 Pod, each carrying `task_id`, `executor_id`, `team_id`, `event_id`,
 `event_type`, `occurred_at`, and `payload`. The K8s Executor's bound
 `team_id` and `authorized_tag` SHALL match the values previously
@@ -608,14 +692,31 @@ by the Registry without reassignment.
 - **WHEN** the K8s Executor restarts while one or more Pods are still
   running
 - **THEN** the K8s Executor re-registers with the same bound `team_id`
-  and `authorized_tag`, re-reads its claimed non-terminal tasks from
-  the State Registry by canonical `tasks.executor_id =
-authenticated_executor_id`, matches each returned task's immutable
-  `tasks.owner_command_id` to the existing Pod's `flowai.command_id`
+  and `authorized_tag`, loads its durable recovery cache and event outbox,
+  verifies the cached `executor_id`, matches each cached
+  `owner_command_id` to the existing Pod's `flowai.command_id`
   label to identify which in-flight Pod to continue observing,
   re-attaches to the existing Pods in Kubernetes without creating new
-  Pods, and emits exactly one terminal `finished` or `failed` event
+  Pods, reconnects to each cached OpenHands conversation at its current
+  progress, retries pending events with their original `event_id`, and emits
+  exactly one terminal `finished` or `failed` event
   per task when the corresponding Pod terminates
+
+#### Scenario: Docker Executor persists its generated identity on a volume
+
+- **WHEN** the Docker OpenHands Executor starts for the first time with an
+  empty mounted cache volume
+- **THEN** it obtains one State Registry-generated UUID `executor_id` from
+  first-start registration, atomically stores it and its recovery cache on
+  that host-backed volume before task intake, and reuses
+  the same identifier and cache after every process or container restart
+
+#### Scenario: Second process cannot use the same cache volume
+
+- **WHEN** another Executor process starts against a cache volume whose
+  `executor.lock` is already held
+- **THEN** the second process fails the non-blocking lock acquisition, reports
+  unhealthy, and performs no State Registry or runtime mutation
 
 #### Scenario: Restart does not duplicate a running event
 

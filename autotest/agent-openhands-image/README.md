@@ -1,18 +1,25 @@
 # agent-openhands-image
 
-Real OpenHands V1 agent-server image used by the executor_docker_opehands
-Playwright e2e tests. Built from the official
+Real OpenHands V1 agent-server image shared by Docker and K8s Executor smoke
+tests. Deterministic agent API contract and failure tests use a compatible
+mock; this image is reserved for the real-runtime task gate. Built from the official
 [ghcr.io/openhands/agent-server:latest-python](https://github.com/OpenHands/software-agent-sdk)
 release.
 
+The smoke gate runs this real agent-server against a local deterministic
+OpenAI-compatible mock LLM. The mock scripts the minimal tool-call sequence
+that writes a unique workspace marker and then completes the conversation.
+Both Docker and `kind` use the same mock behavior; no external LLM endpoint or
+real API key is required.
+
 ## Endpoints exposed
 
-| Method | Path | Purpose (used by executor_docker_opehands) |
-|---|---|---|
-| GET | /health | Health probe before submitting the prompt |
-| POST | /api/conversations | Submit the task prompt; returns conversation_id |
-| POST | /api/conversations/{id}/pause | Router interrupt_task handler |
-| POST | /api/conversations/{id}/events | Router append_task_message handler |
+| Method | Path                           | Purpose (used by executor_docker_opehands)      |
+| ------ | ------------------------------ | ----------------------------------------------- |
+| GET    | /health                        | Health probe before submitting the prompt       |
+| POST   | /api/conversations             | Submit the task prompt; returns conversation_id |
+| POST   | /api/conversations/{id}/pause  | Router interrupt_task handler                   |
+| POST   | /api/conversations/{id}/events | Router append_task_message handler              |
 
 Full OpenAPI spec is at GET /api/v1/openapi.json on a running container.
 
@@ -29,8 +36,8 @@ Offline variant (pre-loaded image):
 
 ## Use in autotest
 
-The executor_docker_opehands Playwright e2e tests configure the executor to
-use this image by default. With this image, the executor's full code path
+The Docker and K8s smoke tests use the same built image; the K8s harness loads
+it into `kind`. With this image, the executor's full code path
 runs against a real V1 agent-server:
 
 1. Image pull
@@ -40,6 +47,11 @@ runs against a real V1 agent-server:
 5. task.started + task.start_message journaled to the mocked State Registry
 6. Container reachable on the host port; the executor streams events from it
 7. Cleanup on SIGTERM (or test end) drains the container
+
+The harness supplies the local mock LLM base URL and a non-secret placeholder
+token through the agent-server's supported model configuration. Outbound LLM
+network access is denied so an accidental fallback cannot consume credentials
+or make the smoke test non-deterministic.
 
 ## Run standalone
 

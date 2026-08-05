@@ -531,6 +531,36 @@ paths:
           $ref: "#/components/responses/TaskNotFound"
 
   /v1/executors:
+    post:
+      tags: [Executor identity]
+      summary: Register a new Executor and assign its immutable identifier
+      operationId: createExecutorRegistration
+      description: |
+        First-start registration. State Registry validates the authenticated
+        mTLS identity and request body, generates an immutable UUID
+        `executor_id`, persists the canonical Executor, and returns it. The
+        request body carries neither `executor_id` nor `identity`.
+      security:
+        - ExecutorMTLS: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecutorRegistrationRequest"
+      responses:
+        "201":
+          description: Canonical Executor created with server-generated executor_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Executor"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/NotAuthorized"
     get:
       tags: [Gateway reads]
       summary: List Executors in the operator team
@@ -563,19 +593,23 @@ paths:
   /v1/executors/{executor_id}:
     put:
       tags: [Executor identity]
-      summary: Register or refresh one team-bound or system-bound Executor
+      summary: Refresh an existing team-bound or system-bound Executor
       operationId: registerExecutor
       description: |
-        The Executor body supplies a `scope` of `team` or `system`. When
+        Restart refresh using the server-generated `executor_id` previously
+        persisted in the Executor's cache. The body supplies a `scope` of
+        `team` or `system`. When
         `scope = team`, `team_id` is required and must equal the immutable
         team bound to the authenticated Executor identity, and the team
-        must already exist. When `scope = system`, `team_id` is required to
-        be null. `authorized_tag` is one required scalar tag; zero-tag and
+        must already exist. When `scope = system`, the `team_id` property
+        must be absent. `authorized_tag` is one required scalar tag; zero-tag and
         multi-tag representations are rejected with `400
         invalid_tag_count`. `max_capacity` and `running_count` are
         observations only and never gate discovery, claim, or
-        lifecycle-event acceptance. Executor registration never creates or
-        updates a team.
+        lifecycle-event acceptance. The Executor body does not carry an
+        `identity`; State Registry derives and persists the canonical
+        Executor identity exclusively from the authenticated mTLS context.
+        Refresh never creates an Executor or creates or updates a team.
       security:
         - ExecutorMTLS: []
       parameters:
@@ -588,7 +622,7 @@ paths:
               $ref: "#/components/schemas/ExecutorRegistrationRequest"
       responses:
         "200":
-          description: Canonical Executor record registered or refreshed.
+          description: Existing canonical Executor record refreshed.
           content:
             application/json:
               schema:
@@ -603,6 +637,8 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/NotAuthorized"
+        "404":
+          $ref: "#/components/responses/ExecutorNotFound"
     get:
       tags: [Gateway reads]
       summary: Read a canonical Executor
@@ -2483,9 +2519,7 @@ components:
       required:
         [
           scope,
-          team_id,
           executor_type,
-          identity,
           authorized_tag,
           max_capacity,
           running_count,
@@ -2495,28 +2529,21 @@ components:
         scope:
           $ref: "#/components/schemas/ExecutorScope"
         team_id:
-          anyOf:
-            - $ref: "#/components/schemas/TeamId"
-            - type: "null"
+          $ref: "#/components/schemas/TeamId"
           description: |
-            Required when `scope = team` and SHALL equal an existing
-            immutable `team_id`; must be null when `scope = system`.
+            Conditionally required when `scope = team` and SHALL equal an
+            existing immutable `team_id`; must be absent when `scope = system`.
             State Registry SHALL verify the submitted `team_id` matches
             the authenticated Executor service identity when `scope =
             team`, SHALL reject a submission whose `team_id` does not
             reference an existing team, SHALL persist the value on the
-            Executor row when `scope = team`, and SHALL persist NULL
-            when `scope = system`. Submitting a non-null `team_id` with
-            `scope = system` is rejected without persistence.
+            Executor row when `scope = team`, and SHALL persist NULL when
+            `scope = system`. Submitting the property with `scope = system`,
+            including explicit null, is rejected without persistence.
         executor_type:
           type: string
           minLength: 1
           maxLength: 128
-        identity:
-          type: string
-          minLength: 1
-          maxLength: 512
-          description: Claimed identity metadata verified against the authenticated mTLS Executor identity.
         authorized_tag:
           $ref: "#/components/schemas/Tag"
         max_capacity:

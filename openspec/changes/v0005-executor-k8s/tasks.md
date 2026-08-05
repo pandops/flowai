@@ -16,14 +16,49 @@ contains the immutable `v0005.<n>` id.
       mutation; verify ordinals remain contiguous from `v0005.1` through
       `v0005.11`, destinations do not collide, and no v0005 definition
       remains under the change folder.
-- [ ] Bootstrap `autotest/executor_k8s_openhands/` as an API-only Playwright
+- [ ] Bootstrap `autotest/executor_k8s_openhands/` as a Playwright-driven
       suite that starts the real State Registry and PostgreSQL processes,
+      creates one fresh real local `kind` cluster per suite run under a
+      collision-resistant name, loads test runtime images, provides
+      an OpenHands-compatible API mock for deterministic scenarios,
       supplies authenticated Executor service identities for two distinct
       teams (`team-A` and `team-B`), supports controlled K8s Executor
       process restarts, and drives only supported HTTP/read interfaces;
       verify the harness can report a behavior-specific connection or
       unimplemented-operation failure rather than a fixture or dependency
       failure.
+- [ ] Deploy `executor_k8s_openhands` as a single-replica Deployment inside
+      the temporary cluster using a dedicated ServiceAccount, least-privilege
+      namespace RBAC, a non-overlapping Pod replacement strategy, and a PVC
+      mounted at `<cache_dir>`. Verify its readiness and public probes from the
+      harness. Ensure task Pods have no owner reference to the ephemeral
+      Executor Pod and remain running when that Pod is deleted.
+- [ ] Vendor or generate from a repository-pinned version of the local-path
+      provisioner manifest; pin every image by immutable digest or reviewed
+      version and do not use `latest`. Install it into the temporary cluster,
+      wait for controller readiness, create an explicitly named test
+      StorageClass, and dynamically bind the Executor cache `ReadWriteOnce`
+      PVC before starting the Deployment. Fail setup with collected
+      provisioner/PVC/PV diagnostics if binding does not complete within its
+      bounded timeout.
+- [ ] Add suite-level `kind` lifecycle handling that refuses to reuse or
+      delete a cluster it did not create, records the created cluster name,
+      and always runs teardown after success, test failure, or setup failure.
+      Before deletion, collect `kubectl get/describe`, namespace events, Pod
+      logs (including previous-container logs), and relevant manifests into
+      Playwright artifacts. Verify with an intentionally failing smoke case
+      that diagnostics survive while the temporary cluster is deleted.
+- [ ] Add a shared real-runtime smoke fixture used by both K8s and Docker
+      Executor E2E. Build the repository's real
+      `autotest/agent-openhands-image`, load the exact same image into `kind`
+      and Docker Engine, submit one short task that writes a unique workspace
+      marker, require actual OpenHands `execution_status = finished`, and
+      verify the marker. Start one local deterministic OpenAI-compatible mock
+      LLM for both runtime paths, configure the real agent-server to use its
+      base URL and non-secret placeholder token, and script the minimal
+      marker-writing tool-call sequence plus terminal response. Make the test
+      fail if the agent-server contacts any external LLM endpoint or requires
+      a real API key; redact prompt and header values in logs and reports.
 - [ ] Add one runnable Playwright test for every moved v0005 definition
       and make each test title contain its immutable `v0005.<ordinal>` id;
       leave every `## Implementation reference` blank until the
@@ -32,10 +67,13 @@ contains the immutable `v0005.<n>` id.
 ## 2. Team-bound registration and identity immutability
 
 - [ ] **RED E2E:** implement the runnable tests for `v0005.1`
-      (happy-path registration with `scope = team`, one immutable
+      (first-start `POST /v1/executors` returns `201` with a
+      State Registry-generated UUID that is cached before task intake;
+      restart refresh uses PUT and returns `200`; registration carries `scope = team`, one immutable
       `team_id`, one `authorized_tag`, observed `max_capacity`, observed
-      `running_count`, optional `team_name`, metadata, bound to the
-      authenticated Executor identity) and `v0005.2` (registration with a
+      `running_count`, metadata, bound to the
+      authenticated Executor identity derived from mTLS, with no `identity`
+      field in the body) and `v0005.2` (registration with a
       `team_id` that does not match the identity-bound team is rejected
       without persistence); run
       `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.(1|2)\b'`
@@ -43,19 +81,23 @@ contains the immutable `v0005.<n>` id.
       and immutability rules are absent.
 - [ ] **RED unit/integration:** add table-driven tests for zero, one,
       and multiple `team_id` submissions, identity-mismatched `team_id`,
-      and re-registration with a different `team_id`; verify they fail
+      forbidden client-supplied `identity` and `team_name` fields, and
+      re-registration with a different `team_id`; verify they fail
       before team validation and registration code exists.
 - [ ] **GREEN:** implement authenticated K8s Executor registration that
-      declares `scope = team`, exactly one scalar `team_id` referencing
+      uses POST without `executor_id` on empty cache, atomically persists the
+      server-generated response ID, uses PUT only on restart, and declares
+      `scope = team`, exactly one scalar `team_id` referencing
       the existing team bound to the authenticated Executor service
-      identity, exactly one scalar `authorized_tag`, an optional
-      display-only `team_name`, observed `max_capacity`, observed
-      `running_count`, and runtime metadata; reject any registration whose
+      identity, exactly one scalar `authorized_tag`, observed `max_capacity`,
+      observed `running_count`, and runtime metadata;
+      reject a client-supplied `team_name`; derive canonical identity only
+      from authenticated mTLS and reject a client-supplied `identity`; reject any registration whose
       `scope` is not `team`, reject zero or multiple `team_id`
       submissions, reject identity-mismatched `team_id`, and reject any
       re-registration whose `team_id` differs from the stored `team_id`.
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright command and the
-      related Go tests; require concrete `200`, `400 invalid_team_id_count`,
+      related Go tests; require concrete first-start `201`, refresh `200`, `400 invalid_team_id_count`,
       `403`, and `404` outcomes, persistence of the supplied `team_id` on
       the canonical Executor record, and immutability of `team_id` across
       re-registration.
@@ -127,13 +169,15 @@ contains the immutable `v0005.<n>` id.
 ## 3a. System-owned cross-team FIFO discovery and claim (`v0005.10`)
 
 - [ ] **RED E2E:** implement the runnable test for `v0005.10` covering
-      system-scope registration without `team_id`, metadata-only cross-team FIFO
+      system-scope registration with the `team_id` property absent, rejection
+      of explicit null or a value, metadata-only cross-team FIFO
       discovery, oldest-eligible claim, task-team Pod/event envelopes, and
       unchanged canonical task ownership; run the targeted Playwright test and
       verify behavior-specific failure before production edits.
 - [ ] **RED unit/integration:** add scope-table tests for team/system
-      registration, immutable scope, system discovery, and assigned-task team
-      envelope derivation.
+      registration (including absent/null/value `team_id` representations),
+      immutable scope, system discovery, and assigned-task team envelope
+      derivation.
 - [ ] **GREEN:** implement the minimum scope-aware K8s registration,
       discovery, claim, Pod labels, event envelopes, environment access, control
       reads, and restart reconciliation required by `v0005.10`.
@@ -181,6 +225,10 @@ team_mismatch`); run
       covering the seven-field envelope for `running`/`finished`/`failed`,
       OpenHands `finished` -> FlowAI `finished`, OpenHands
       `failed`/`error`/`stuck`/`paused` -> FlowAI `failed`, confirmation that
+      every `failed` payload has a non-empty machine-readable
+      `failure_reason`, agent-container restart before OpenHands `finished` ->
+      exactly one `failed` with `failure_reason =
+      "pod_restarted_before_finish"` and no resumed or recreated execution,
       agent-server Pod exit is not required, zero and non-zero
       `finished_cleanup_delay`, `failed_cleanup_delay`, selection by accepted
       terminal event type, capacity retention until cleanup, idempotent
@@ -220,11 +268,16 @@ not_assigned` for unassigned same-team writers, `404` for foreign
       default `0s`) are selected by accepted terminal event type and start only
       after terminal-event acceptance, retain the container in local capacity
       during a non-zero selected delay, and perform idempotent stop/removal
-      without a duplicate terminal task event.
+      without a duplicate terminal task event; also prove that container exit
+      with code `0` or non-zero before OpenHands `finished` emits exactly one
+      `failed` with `failure_reason = "container_exited_before_finish"`, never
+      succeeds, and never resumes or recreates the execution.
 - [ ] **GREEN Docker regression:** add the cleanup-delay setting to
       `executor_docker_opehands`, apply it between accepted terminal
       conversation event and container cleanup, and keep shutdown/drain/error
-      cleanup bounded and idempotent.
+      cleanup bounded and idempotent; map every pre-`finished` task-container
+      exit to `failed` with `failure_reason =
+"container_exited_before_finish"` regardless of exit code.
 - [ ] **REFACTOR:** consolidate envelope validation and team-scoped
       event filtering behind narrow Executor-client interfaces without
       separating envelope validation from event forwarding; rerun all
@@ -363,14 +416,14 @@ environment_unknown_or_unavailable` shape for every invalid /
 
 - [ ] **RED E2E:** implement the runnable test for `v0005.8` (the
       assigned same-team Executor reads and applies pending controls for
-      its assigned task; a cross-team or unassigned control read returns
-      a non-revealing `404`); run
+      its assigned task; a cross-team read returns a non-revealing `404`;
+      a same-team unassigned read returns `403 not_assigned`); run
       `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.8\b'` and
       verify failure because assigned-task-only control reads and the
       cross-team `404` are absent.
 - [ ] **RED unit/integration:** add control-read tests covering the
       assigned+same-team happy path, the cross-team denial, the
-      unassigned denial, and the audit entry shape; verify
+      same-team `403 not_assigned` denial, and the audit entry shape; verify
       behavior-specific failures before the control-read code exists.
 - [ ] **GREEN:** poll the State Registry for pending controls only
       for tasks whose `task_id` is assigned to the Executor AND whose
@@ -381,8 +434,9 @@ environment_unknown_or_unavailable` shape for every invalid /
       another Executor.
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
       require `200` with the pending control for the assigned same-team
-      Executor, a non-revealing `404` for cross-team or unassigned
-      requests, applied controls visible in task events, and no control
+      Executor, a non-revealing `404` for cross-team requests, `403
+not_assigned` for same-team unassigned requests, applied controls
+      visible in task events, and no control
       applied across teams.
 - [ ] **REFACTOR:** consolidate control-read scoping and audit hooks
       behind narrow Executor-client interfaces while keeping all targeted
@@ -391,44 +445,120 @@ environment_unknown_or_unavailable` shape for every invalid /
 ## 8. Restart reconciliation without reassignment
 
 - [ ] **RED E2E:** implement the runnable test for `v0005.9` (after a
-      process restart, the K8s Executor re-registers with the same bound
-      `team_id` and `authorized_tag`, re-reads its claimed non-terminal
-      tasks from the State Registry by canonical
-      `tasks.executor_id = authenticated_executor_id` WITHOUT filtering by
-      `tasks.owner_command_id`, matches each returned task's immutable
-      `tasks.owner_command_id` to the existing Pod's `flowai.command_id`
+      Deployment-managed Executor Pod replacement, the K8s Executor
+      re-registers with the same bound
+      `team_id` and `authorized_tag`, reuses its State Registry-generated
+      cached `executor_id`, loads claimed non-terminal tasks exclusively from
+      persistent cache, and matches each cached `owner_command_id` to the
+      existing Pod's `flowai.command_id`
       label to identify which in-flight Pod to continue observing,
       re-attaches to existing Pods in Kubernetes without creating new
-      Pods, emits no duplicate `running` event, and emits exactly one
+      Pods, loads a persistent recovery cache, reconnects to the same
+      OpenHands conversation at its current progress, retries pending outbox
+      events with their original `event_id`, emits no duplicate `running`
+      event, and emits exactly one
       terminal `finished` or `failed` event per Pod); run
       `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.9\b'` and
       verify failure because non-reassigning reconciliation, `team_id`
-      immutability across restart, the executor-id-only re-read filter,
+      immutability across restart, persistent-cache-only recovery,
       the `owner_command_id` -> `flowai.command_id` Pod-matching rule, and
       the no-duplicate-`running`-event rule are absent.
 - [ ] **RED unit/integration:** add reconciliation tests covering
       same-team restart, divergent `team_id` rejection, no duplicate
-      `running` event, the `executor_id`-only re-read query, the
+      `running` event, server-generated cached `executor_id` reuse, the
       `owner_command_id` -> `flowai.command_id` label match, and exactly
-      one terminal event per Pod; verify behavior-specific failures before
+      one terminal event per Pod; cover persistent-cache reload, event
+      write-before-send, mark-accepted-after-`202`, same-event-ID retry, and
+      OpenHands conversation reconnection; verify behavior-specific failures before
       reconciliation code exists.
+- [ ] **RED in-cluster restart:** delete the running Executor Deployment Pod
+      while task Pods are active, require the dynamically provisioned PVC/PV
+      and task Pods to survive,
+      and require the replacement Pod to reuse the cached `executor_id`, claim
+      intents, assignments, and outbox without duplicate claims, Pods, or
+      events. Verify behavior-specific failure before reconciliation exists.
+- [ ] **RED bbolt cache:** for both concrete Executors, add independent
+      per-service tests that require creation of owner-only
+      `<cache_dir>/executor.db` with versioned `metadata`, `assignments`, and
+      `event_outbox` buckets and rejection of an unknown newer schema. Require
+      a durable claim intent before the HTTP claim, retry of an uncertain
+      claim with the identical `(task_id, command_id)`, assignment persistence
+      after `200 claimed` but before `running` or runtime creation, event
+      persistence before send, and transition to `accepted` only after `202`.
+      Require every cache mutation to commit in a bbolt write transaction
+      before its external side effect. Inspect buckets and logs and require
+      that no environment or secret plaintext is present. Cover open failure,
+      corruption, and schema mismatch without silently resetting or replacing
+      the database. Observe behavior-specific failures before cache
+      implementations exist.
+- [ ] **RED pre-generated mTLS:** mount valid, expired, missing, and malformed
+      client certificate, private key, and CA fixtures for K8s and Docker.
+      Require valid material to connect and every invalid case to fail before
+      registration without generating or overwriting certificate files.
+      Replace the mounted files while the process runs and require the old
+      in-memory material to remain active; restart and require the replacement
+      material to be loaded.
+- [ ] **RED failure recovery:** cover missing, unreadable, corrupt, and
+      identity-mismatched cache; require unhealthy status, zero new claims,
+      and no mutation or deletion of existing Pods.
 - [ ] **GREEN:** implement a restart reconciliation loop that
       re-registers with the same bound `team_id` (the State Registry
-      rejects a divergent `team_id`), re-reads claimed non-terminal tasks
-      by canonical `tasks.executor_id = authenticated_executor_id` from
-      durable state (NEVER filtering by `tasks.owner_command_id`), uses
-      each task's `tasks.owner_command_id` only to match the existing
+      rejects a divergent `team_id`), loads claimed non-terminal tasks only
+      from persistent cache, reuses the State Registry-generated cached
+      `executor_id`, and uses
+      each cached `owner_command_id` to match the existing
       Pod's `flowai.command_id` label so the Executor continues observing
-      the right in-flight Pod, re-attaches to existing Pods in Kubernetes,
+      the right in-flight Pod, persists recovery cache and event outbox on a
+      volume, re-attaches to existing Pods in Kubernetes, reconnects to the
+      cached OpenHands conversation without restarting work, retries pending
+      events with their original `event_id`,
       emits no duplicate `running` event, and emits exactly one terminal
       `finished` or `failed` event per Pod whose lifecycle ends.
+- [ ] **GREEN in-cluster deployment:** add E2E manifests/fixtures for the
+      single-replica Deployment, ServiceAccount, namespace-scoped RBAC, PVC,
+      explicit local-path StorageClass, probes, and non-overlapping replacement
+      strategy. Keep task Pods
+      independent of the Executor Pod so explicit reconciliation and delayed
+      cleanup, rather than Kubernetes garbage collection, own their lifecycle.
+- [ ] **GREEN bbolt cache:** implement separate cache packages inside
+      `executor_k8s_openhands` and `executor_docker_openhands` using bbolt; do
+      not introduce shared service code. Store the cache at
+      `<cache_dir>/executor.db`, create versioned `metadata`, `assignments`,
+      and `event_outbox` buckets, and commit every mutation before its external
+      side effect. Fail closed on open failure, corruption, or an unsupported
+      schema; never silently reset or replace an existing database.
+- [ ] **GREEN pre-generated mTLS:** load only read-only, pre-created client
+      certificate, private key, and CA material from a Kubernetes Secret
+      volume or Docker file/secret mounts. Add no certificate issuance,
+      enrollment, generation, or rotation implementation. Load the files once
+      at process startup and add no file watcher, polling, or hot reload. Add
+      no fixed certificate-lifetime or renewal-schedule configuration.
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
-      require no reassignment, the re-read query to be filtered only by
-      `tasks.executor_id` (not `tasks.owner_command_id`), each Pod label
+      require no reassignment, persistent-cache-only recovery with no
+      assignments-list call, each Pod label
       `flowai.command_id` to equal the corresponding task's
       `tasks.owner_command_id`, no duplicate `running` event, exactly one
       terminal event per Pod, and `team_id` immutability across the
-      restart.
+      restart. Inspect `<cache_dir>/executor.db` and require the expected
+      schema version, cached Registry-generated identity, claim intents,
+      assignments, and outbox delivery states in bbolt, with committed
+      write-before-side-effect durability and no environment or secret
+      plaintext.
+- [ ] **Docker persistent-cache regression:** require a host-backed cache
+      volume, obtain and atomically store the State Registry-generated UUID
+      `executor_id` from first-start POST,
+      persist runtime/event-outbox state there, restart the Docker Executor,
+      and verify the same ID and cache are reused rather than the container
+      writable layer or a newly generated identity.
+- [ ] **RED cache-lock tests:** start two K8s Executor processes against the
+      same PVC mount and two Docker Executor processes against the same
+      host-backed cache volume; require the first to hold
+      `<cache_dir>/executor.lock` and the second to become unhealthy with zero
+      registration, discovery, claim, event, Pod, or container mutations.
+- [ ] **GREEN cache lock:** acquire the non-blocking exclusive OS file lock
+      before POST/PUT registration, retain its file descriptor for process
+      lifetime, require POSIX advisory-lock-capable storage, and rely on kernel
+      release after normal exit or crash. Add no Registry lease/fencing code.
 - [ ] **REFACTOR:** extract the reconciliation loop into a dedicated
       Executor-owned component without coupling it to discovery, claim, or
       Pod creation paths; rerun all targeted tests.
@@ -503,7 +633,13 @@ openspec/changes/v0005-executor-k8s/specs/diagrams/*.puml --checkonly`
       require all unit/integration/race/build checks to pass.
 - [ ] Run the full K8s Executor Playwright suite with
       `npm --prefix autotest/executor_k8s_openhands test`; require every v0005 E2E
-      to pass.
+      to pass against `kind`, using the agent API mock for deterministic
+      contract cases. Run the separate real-runtime smoke against both the
+      `kind` Pod and Docker container with the same real image, task, and
+      local deterministic OpenAI-compatible mock LLM; require zero external
+      LLM calls and no real API-key secret. Require the suite-created kind
+      cluster to be absent after both a passing run and an intentionally
+      failing harness self-test, with diagnostics retained for the failure.
 - [ ] Run change validation:
       `npx -y @fission-ai/openspec@1.5.0 validate v0005-executor-k8s
 --strict --no-interactive`.

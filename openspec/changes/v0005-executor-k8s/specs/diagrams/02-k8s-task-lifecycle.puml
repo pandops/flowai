@@ -27,11 +27,12 @@ participant "Agent Pod" as agent_pod
 == Registration (team-bound) ==
 k8s_executor -> executor_identity : present service credential\n(bound team_id = T-A)
 activate k8s_executor
-k8s_executor -> state_registry : PUT /v1/executors/{executor_id}\n{scope = team,\nexecutor_type = executor_k8s_openhands,\nexactly one team_id = T-A,\nexactly one authorized_tag,\noptional display-only team_name,\nobserved max_capacity, observed running_count,\nruntime metadata}
+k8s_executor -> state_registry : POST /v1/executors\n{scope = team, executor_type = executor_k8s_openhands,\nexactly one team_id = T-A, exactly one authorized_tag,\nobserved max_capacity, observed running_count, runtime metadata}
 activate state_registry
 state_registry -> state_registry : verify team_id matches identity-bound team\nreject zero/extra team_id\nreject team_id change
-state_registry --> k8s_executor : 200 Executor record\n(scope = team, team_id = T-A,\nauthorized_tag, observed capacity)
+state_registry --> k8s_executor : 201 Executor record\n(server-generated executor_id, scope = team, team_id = T-A,\nauthorized_tag, observed capacity)
 deactivate state_registry
+k8s_executor -> k8s_executor : atomically persist executor_id in recovery cache\nbefore discovery or claim
 
 == Local capacity decision (Executor side only) ==
 k8s_executor -> k8s_executor : locally observe running_count vs max_capacity\ndecide locally whether to discover and claim
@@ -77,8 +78,8 @@ alt claimed
     activate state_registry
     state_registry --> k8s_executor : 202 accepted
     deactivate state_registry
-  else OpenHands status failed/error/stuck/paused or Pod failed
-    k8s_executor -> state_registry : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id = T-A,\nevent_id, event_type = failed,\noccurred_at, payload}
+  else OpenHands status failed/error/stuck/paused, Pod failed,\nor agent container restarted before finish
+    k8s_executor -> state_registry : POST /v1/tasks/{task_id}/events\n{task_id, executor_id, team_id = T-A,\nevent_id, event_type = failed,\noccurred_at, payload.failure_reason}\nrestart reason = pod_restarted_before_finish
     activate state_registry
     state_registry --> k8s_executor : 202 accepted
     deactivate state_registry
@@ -135,17 +136,17 @@ deactivate state_registry
 
 == Restart reconciliation (no reassignment, canonical claim key) ==
 k8s_executor -> k8s_executor : process restart
+k8s_executor -> k8s_executor : load persistent recovery cache\n(task/Pod/conversation mappings + event outbox)
 k8s_executor -> state_registry : PUT /v1/executors/{executor_id}\n(same scope = team, same team_id = T-A,\nsame authorized_tag,\nobserved max_capacity, observed running_count)
 activate state_registry
 state_registry -> state_registry : verify team_id unchanged\nreject if team_id diverges
 state_registry --> k8s_executor : 200 Executor record (unchanged)
 deactivate state_registry
-k8s_executor -> state_registry : re-read claimed non-terminal tasks\n(filter by tasks.executor_id =\n authenticated_executor_id only;\n NOT filtered by tasks.owner_command_id)
-activate state_registry
-state_registry --> k8s_executor : 200 claimed tasks\n(each row carries its immutable\n tasks.owner_command_id)
-deactivate state_registry
-k8s_executor -> k8s_executor : match each task's\n tasks.owner_command_id\n to existing Pod label\n flowai.command_id\n to identify which Pod\n to continue observing
+k8s_executor -> k8s_executor : read State Registry-generated executor_id from persistent cache\nload non-terminal tasks only from cache
+k8s_executor -> k8s_executor : match each cached owner_command_id\n to existing Pod label flowai.command_id\n to identify which Pod to continue observing
 k8s_executor -> kubernetes_api : re-attach to existing Pods by label match
+k8s_executor -> agent_pod : reconnect to cached OpenHands conversation\nat existing progress
+k8s_executor -> state_registry : retry pending outbox events\nwith original event_id (idempotent)
 k8s_executor -> k8s_executor : no Pod created for already-claimed tasks\nno additional running event appended
 k8s_executor -> state_registry : POST /v1/tasks/{task_id}/events\n{terminal event for tasks whose Pod terminated\nduring/after restart,\nteam_id = T-A}
 deactivate k8s_executor

@@ -358,12 +358,17 @@ Each task SHALL declare exactly one immutable `team_id` and exactly one required
 
 ### Requirement: Executors register one tag and either team-owned or system-owned scope
 
-Each Executor SHALL register at most one ownership `scope` chosen from `{team, system}`. When `scope = team`, the Executor service identity SHALL be bound to exactly one immutable authorized `team_id` and SHALL submit that `team_id` in the registration body; State Registry SHALL verify the submitted `team_id` exists and SHALL persist that `team_id` on the `executors` row. When `scope = system`, the Executor service identity SHALL NOT be bound to any team and SHALL submit `team_id` as null; State Registry SHALL persist `team_id` as NULL on the `executors` row, SHALL NOT verify a body `team_id`, and SHALL mark the Executor as system-owned. Both scopes SHALL register exactly one authorized tag, Executor type, and runtime metadata. The Registry SHALL reject any registration that omits the tag or supplies more than one tag, SHALL reject any registration that supplies a non-null `team_id` with `scope = system`, SHALL reject any registration that supplies a null `team_id` with `scope = team`, and SHALL reject a registration that supplies a `team_id` that does not reference an existing team. The Executor registration body SHALL NOT create or update any team.
+Each Executor SHALL register at most one ownership `scope` chosen from `{team, system}`. First-start registration SHALL use `POST /v1/executors`; State Registry SHALL generate an immutable UUID `executor_id`, persist it on the new canonical row, and return it in `201 Created`. The request body SHALL carry neither `executor_id` nor `identity`; State Registry SHALL derive the canonical service identity exclusively from authenticated mTLS. Restart refresh SHALL use `PUT /v1/executors/{executor_id}` with the identifier previously returned and cached by the Executor; PUT SHALL update only the existing matching row and SHALL return `404` rather than create a missing Executor. When `scope = team`, the Executor service identity SHALL be bound to exactly one immutable authorized `team_id` and SHALL submit that `team_id` in the registration body; State Registry SHALL verify the submitted `team_id` exists and SHALL persist that `team_id` on the `executors` row. When `scope = system`, the Executor service identity SHALL NOT be bound to any team and the registration body SHALL omit the `team_id` property; State Registry SHALL persist `team_id` as NULL on the `executors` row and SHALL mark the Executor as system-owned. Both scopes SHALL register exactly one authorized tag, Executor type, and runtime metadata. The Registry SHALL reject any registration that omits the tag or supplies more than one tag, SHALL reject any registration that supplies `team_id` with `scope = system` including explicit null, SHALL reject any registration that omits `team_id` with `scope = team`, and SHALL reject a registration that supplies a `team_id` that does not reference an existing team. Executor registration and refresh SHALL NOT create or update any team.
 
 #### Scenario: Team-owned Executor registers one team and one tag
 
-- **WHEN** an Executor identity authorized for `team-a` registers with `scope = team`, `team_id = team-a`, one tag, type, and metadata
-- **THEN** the State Registry accepts the registration and persists one immutable team and one tag
+- **WHEN** an Executor identity authorized for `team-a` posts first-start registration with `scope = team`, `team_id = team-a`, one tag, type, and metadata
+- **THEN** State Registry generates and returns one immutable UUID `executor_id` and persists one immutable team and one tag
+
+#### Scenario: Executor refreshes with its cached server identifier
+
+- **WHEN** a restarted Executor sends `PUT /v1/executors/{executor_id}` using the identifier returned by its successful first registration
+- **THEN** State Registry refreshes that existing record without generating another identifier or creating another Executor
 
 #### Scenario: Team-owned Executor attempts another team
 
@@ -372,12 +377,12 @@ Each Executor SHALL register at most one ownership `scope` chosen from `{team, s
 
 #### Scenario: System-owned Executor registers without a team
 
-- **WHEN** an Executor identity with no team binding registers with `scope = system`, `team_id = null`, one tag, type, and metadata
+- **WHEN** an Executor identity with no team binding registers with `scope = system`, omits the `team_id` property, and supplies one tag, type, and metadata
 - **THEN** the State Registry accepts the registration, persists `team_id = NULL` on the `executors` row, and records the Executor as system-owned
 
 #### Scenario: System-owned Executor registration with team_id is rejected
 
-- **WHEN** an Executor identity submits a registration with `scope = system` and a non-null `team_id`
+- **WHEN** an Executor identity submits a registration with `scope = system` and includes the `team_id` property with either null or a value
 - **THEN** the State Registry rejects the request without creating or changing an Executor record
 
 #### Scenario: Team-owned Executor registration with unknown team_id is rejected
@@ -387,7 +392,7 @@ Each Executor SHALL register at most one ownership `scope` chosen from `{team, s
 
 #### Scenario: Team-owned Executor registration without team_id is rejected
 
-- **WHEN** an Executor identity submits a registration with `scope = team` and a null `team_id`
+- **WHEN** an Executor identity submits a registration with `scope = team` and omits `team_id` or supplies null
 - **THEN** the State Registry rejects the request without creating or changing an Executor record
 
 #### Scenario: Executor registration has an invalid tag count

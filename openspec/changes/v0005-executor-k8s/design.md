@@ -2,12 +2,69 @@
 
 ## Runtime Shape
 
-- K8s Executor runs inside or against a Kubernetes cluster.
+- K8s Executor runs inside or against a Kubernetes cluster. E2E runtime
+  verification uses a fresh isolated local `kind` cluster created once per
+  Playwright suite run with a collision-resistant name; Docker verification
+  uses Docker Engine. The harness never reuses a pre-existing cluster. Before
+  teardown it captures Pod descriptions, events, logs, and relevant Kubernetes
+  objects as test artifacts, then deletes the cluster on success or failure.
+  Deterministic API/lifecycle/error tests use an
+  OpenHands-compatible agent API mock. In addition, one smoke test per
+  runtime uses the same real `autotest/agent-openhands-image` and runs one
+  short real OpenHands task through to conversation `finished`. The real
+  agent-server is configured against a local deterministic OpenAI-compatible
+  mock LLM shared by both smoke paths. The mock returns the scripted tool-call
+  sequence needed to write the unique workspace marker; no external LLM,
+  network credential, or CI API-key secret is required.
+- In E2E the K8s Executor itself runs as a single-replica Deployment inside
+  `kind`, under a dedicated ServiceAccount and least-privilege namespace RBAC.
+  A PVC mounted at `<cache_dir>` retains `executor.db` and `executor.lock`
+  across Executor Pod replacement. The Deployment uses a non-overlapping
+  replacement strategy so only one Executor Pod may own the local cache at a
+  time. Recovery is exercised by deleting the Executor Pod and waiting for its
+  replacement, while task Pods remain running. Task Pods therefore carry no
+  owner reference to the ephemeral Executor Pod; lifecycle ownership remains
+  explicit in Executor reconciliation and cleanup.
+- The E2E harness installs a repository-pinned local-path provisioner manifest
+  into each temporary `kind` cluster and waits for its controller to become
+  ready. The Executor cache claim explicitly names that provisioner's
+  StorageClass and uses `ReadWriteOnce`; no ambient or host-cluster default
+  StorageClass is assumed. The dynamically provisioned PV and PVC survive
+  Executor Pod replacement and disappear only with test namespace/cluster
+  teardown. Floating `latest` provisioner images or manifests are forbidden.
 - On startup it authenticates to the State Registry as one Executor service
   identity and registers exactly one immutable ownership `scope` from
   `{team, system}`. Team scope binds the identity to exactly one immutable
   `team_id`; system scope carries no team binding. The Executor never invents
   or rotates task ownership.
+- `executor_id` is not configured or client-generated. On an empty first-start
+  cache the concrete Executor calls `POST /v1/executors`, receives the
+  State Registry-generated UUID, and atomically stores it before task intake;
+  subsequent starts reuse it through `PUT /v1/executors/{executor_id}`. K8s stores the cache on a PVC. Docker stores the
+  same identity/recovery cache in a host-backed volume, never only in the
+  container writable layer.
+- Before any registration call, the process takes a non-blocking exclusive OS
+  lock on `<cache_dir>/executor.lock` and holds it until exit. Lock contention
+  is fail-closed and produces unhealthy status with no Registry or runtime
+  mutation. The cache filesystem must provide POSIX advisory locks. No
+  Registry lease/fencing protocol is added; cloning a cache into independent
+  volumes is an unsupported operation that this local lock cannot detect.
+- Cache persistence uses one bbolt file at `<cache_dir>/executor.db` with
+  versioned `metadata`, `assignments`, and `event_outbox` buckets. Mutations
+  commit transactionally before external side effects; unsupported schema or
+  corruption is fail-closed.
+- mTLS client certificate, private key, and CA bundle are generated before
+  deployment and mounted read-only. K8s uses a pre-created Secret volume;
+  Docker uses explicit read-only files/secrets. Executors perform no runtime
+  certificate generation, enrollment, or rotation. Certificate files are read
+  once at process startup; file changes are intentionally ignored until the
+  Executor restarts. Certificate lifetime and renewal cadence belong to the
+  external PKI/deployment policy; the Executor defines no fixed duration.
+- The `assignments` bucket also stores a durable claim intent before the HTTP
+  claim so an uncertain response can be retried with the identical
+  `(task_id, command_id)`; the claimed assignment is committed before
+  `running` or runtime creation. Cache permissions are owner-only and no
+  secret/environment plaintext is stored.
 - The concrete directory, command, config, binary, import path, wire
   `executor_type`, slog/probe service name, and regression constant use
   `executor_k8s_openhands`; the selected agent tool is OpenHands and the
@@ -21,9 +78,11 @@
   alias; archived OpenSpec artifacts retain their historical spelling.
 - Registration supplies exactly one `authorized_tag`, observed
   `max_capacity`, observed `running_count`, and runtime metadata. Team scope
-  also supplies one identity-bound `team_id` and an optional display-only
-  `team_name`; system scope supplies neither team field. Scope and any team
-  binding are immutable across re-registration and restart.
+  also supplies one identity-bound `team_id`; system scope supplies no team
+  binding and omits the `team_id` property rather than sending null. Scope and any team
+  binding are immutable across re-registration and restart. The request body
+  carries no `identity`; State Registry derives and persists the canonical
+  identity exclusively from the authenticated mTLS context.
 - It discovers eligible `pending` tasks only where the task's
   `required_tag` equals the Executor's single `authorized_tag`; team scope
   additionally matches the bound `team_id`, while system scope spans teams
@@ -80,13 +139,21 @@ command_id)` retry by the original Executor returns the original
   single `finished` event, while `failed`, `error`, `stuck`, or `paused`
   produces the single `failed` event. The OpenHands agent-server is a
   long-running server, so its process or Pod exit code is not the task
-  completion signal. After State Registry accepts the terminal event,
+  completion signal. Every `failed` payload includes a non-empty,
+  machine-readable `failure_reason`. An agent-container restart before the
+  OpenHands `finished` signal is terminal failure with
+  `failure_reason = "pod_restarted_before_finish"`; the Executor does not
+  resume or recreate that execution. After State Registry accepts the terminal event,
   the Executor selects the configured non-negative
   `finished_cleanup_delay` after `finished` or `failed_cleanup_delay`
   after `failed` (each default `0s`), keeps the Pod in its local capacity
   count during that delay, and then deletes it idempotently.
   The existing Docker OpenHands Executor gains the same setting and
-  ordering for stop/removal of its task container. Every
+  ordering for stop/removal of its task container. If the Docker task
+  container exits with any exit code before OpenHands reports `finished`, it
+  produces exactly one `failed` event with `failure_reason =
+  "container_exited_before_finish"`; exit code `0` is not success and the
+  execution is not resumed or recreated. Every
   Executor-emitted task or self event carries `task_id`
   (when applicable), `executor_id`, `team_id` (equal to the team-owned
   Executor's bound team or the system-owned Executor's assigned task team), `event_id`,
@@ -153,23 +220,24 @@ environment_unknown_or_unavailable` shape with zero provider
   Self events carry `team_id` so the Registry can scope observation
   writes to the correct team partition without using them for
   authorization.
-- After a restart it reconciles by re-reading its already-claimed,
-  non-terminal tasks from durable State Registry state using the
-  canonical assignment identity `tasks.executor_id =
-authenticated_executor_id`. The K8s Executor SHALL NOT filter by
-  `tasks.owner_command_id` during reconciliation because `command_id`
-  is a claim-time identifier that the Executor uses to identify which
-  Pod owns a given task, not a query filter for re-reading assignment.
-  Each reconciled task row carries its immutable
-  `tasks.owner_command_id`; the K8s Executor matches that
-  `owner_command_id` to the immutable Pod label `flowai.command_id`
-  to identify which in-flight Pod to continue observing and treats the
-  canonical `(tasks.executor_id, tasks.owner_command_id)` pair as the
-  authoritative owner record. The K8s Executor SHALL NOT re-discover
+- After a restart it loads already-claimed non-terminal tasks exclusively
+  from its persistent recovery cache and matches each cached
+  `owner_command_id` to the immutable Pod label `flowai.command_id`. The
+  server-generated stable `executor_id` is read from that cache. The K8s Executor SHALL NOT re-discover
   or re-claim already-claimed tasks, SHALL NOT create a duplicate Pod
   for an already-running task, and SHALL NOT emit a duplicate
   `running` event for it. A restart continues observation of in-flight
   Pods from Kubernetes and emits the terminal `finished` or `failed`
+  event only when the recovered OpenHands conversation reaches terminal
+  state. A persistent-volume-backed recovery cache stores assignment keys,
+  Pod identity, OpenHands conversation identity, last observed tool state,
+  and a durable event outbox. Events are persisted before send and marked
+  accepted only after Registry `202`; pending entries are retried with the
+  same `event_id`. Startup reconciles cached runtime/outbox state and Pods
+  selected through immutable labels, then
+  reconnects to the existing conversation instead of restarting work.
+  Missing, unreadable, corrupt, or identity-mismatched cache makes the
+  Executor unhealthy; it claims no new work and leaves existing Pods untouched.
   event in the same team-scoped envelope.
 
 ## Boundaries
@@ -178,9 +246,8 @@ authenticated_executor_id`. The K8s Executor SHALL NOT filter by
   Pods.
 - The K8s Executor never runs Docker containers and never contacts Web
   UI or API Gateway.
-- `team_id` is authoritative for matching and authorization;
-  `team_name` is display-only and never used to look up, match, or
-  authorize tasks, environments, controls, or events.
+- `team_id` is authoritative for matching and authorization. Executor
+  registration never carries `team_name`.
 - Cross-team interactions are split between collection-level filtering
   and point-resource denial. Collection-level discovery filters by
   `team_id` BEFORE shaping results, so a tag whose matching `pending`

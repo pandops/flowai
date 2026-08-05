@@ -1,0 +1,35 @@
+' diagram-type: sequence
+@startuml
+title Executor registration and restart over backend HTTP
+
+participant "Executor" as executor_process
+participant "State Registry" as state_registry
+database "PostgreSQL" as state_database
+
+executor_process -> state_registry : POST /v1/executors over HTTP\nscope, team_id if team, tag, metadata
+activate state_registry
+state_registry -> state_database : Validate team and persist generated executor_id
+activate state_database
+state_database --> state_registry : committed canonical Executor record
+deactivate state_database
+state_registry --> executor_process : 201 Created + executor_id
+deactivate state_registry
+
+executor_process -> executor_process : Persist executor_id in local cache
+activate executor_process
+deactivate executor_process
+
+executor_process -> state_registry : PUT /v1/executors/{executor_id} over HTTP\nafter process restart
+activate state_registry
+state_registry -> state_database : Resolve ID and enforce immutable scope/team/tag
+activate state_database
+state_database --> state_registry : existing record refreshed
+deactivate state_database
+state_registry --> executor_process : 200 OK
+deactivate state_registry
+
+note over executor_process,state_registry
+No client certificate or backend credential.
+executor_id is an identifier, not authentication proof.
+end note
+@enduml
