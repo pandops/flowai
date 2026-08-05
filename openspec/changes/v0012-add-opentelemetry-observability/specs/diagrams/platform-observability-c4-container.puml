@@ -1,0 +1,30 @@
+' diagram-type: c4-container
+@startuml
+!include <C4/C4_Container>
+
+title FlowAI OpenTelemetry container view
+
+Person(operator, "Operator")
+Container(gateway, "API Gateway", "Planned service", "Sole operator backend")
+Container(registry, "State Registry", "Go", "Canonical tasks and authorization")
+Container(executor, "Concrete Executor", "Go", "Claims and supervises agent runtimes")
+Container(agent, "OpenHands Agent Server", "Python", "Runs one claimed task")
+ContainerDb(postgres, "PostgreSQL", "PostgreSQL", "Canonical durable state")
+Container(collector, "OpenTelemetry Collector", "OTLP", "Filters, samples, and routes telemetry")
+System_Ext(backend, "Telemetry backend", "Trace/metric/log storage selected operationally")
+
+Rel(operator, gateway, "Uses")
+Rel(gateway, registry, "REST/WS", "mTLS")
+Rel(executor, registry, "Claims/events/controls/environment", "mTLS")
+Rel(registry, postgres, "Reads/writes")
+Rel(executor, agent, "REST/WebSocket", "loopback")
+Rel(registry, collector, "Exports metadata-only telemetry", "OTLP")
+Rel(executor, collector, "Exports metadata-only telemetry", "OTLP")
+Rel(agent, collector, "Exports filtered agent spans", "OTLP")
+Rel(collector, backend, "Exports sampled/redacted signals")
+
+note right of collector
+Operational infrastructure only.
+It is not a business API or authority.
+end note
+@enduml

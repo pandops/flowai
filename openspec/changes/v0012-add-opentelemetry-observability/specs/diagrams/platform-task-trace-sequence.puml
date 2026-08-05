@@ -1,0 +1,43 @@
+' diagram-type: sequence
+@startuml
+title Durable FlowAI task trace correlation
+
+participant Listener
+participant "State Registry" as Registry
+database PostgreSQL as DB
+participant Executor
+participant "OpenHands Agent Server" as OpenHands
+participant "OTel Collector" as Collector
+
+Listener -> Registry: POST task + traceparent
+activate Registry
+Registry -> DB: persist pending task
+Registry -> Collector: ingestion span
+Registry --> Listener: canonical task
+deactivate Registry
+
+... durable wait; no span remains open ...
+
+Executor -> Registry: claim + traceparent
+activate Registry
+Registry -> DB: atomic FIFO claim + created event
+Registry -> Collector: claim server span
+Registry --> Executor: task + command_id
+deactivate Registry
+
+activate Executor
+Executor -> Collector: executor.task.run span\n(link to available claim context)
+Executor -> OpenHands: POST conversation + traceparent
+activate OpenHands
+OpenHands -> Collector: conversation / agent.step / LLM / tool spans
+OpenHands --> Executor: conversation_id + event stream
+deactivate OpenHands
+Executor -> Registry: running then terminal events + traceparent
+Executor -> Collector: finish executor.task.run
+deactivate Executor
+
+note over Executor,OpenHands
+If OpenHands starts a separate root, correlate with
+task_id, command_id, executor_id, and conversation_id.
+end note
+@enduml
