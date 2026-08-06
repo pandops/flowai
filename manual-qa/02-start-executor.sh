@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 02-start-executor.sh — start executor_docker_opehands against the
-# State Registry over mTLS with rootless Podman.
+# State Registry over backend HTTP with rootless Podman.
 #
 # Required runtime inputs (fail closed if any are missing):
 #   * OPENHANDS_LLM_MODEL    + OPENHANDS_LLM_API_KEY + OPENHANDS_LLM_USAGE_ID
@@ -24,8 +24,7 @@
 #   * One slot is used (executor_max_containers: 1) so the host port
 #     range 18000-18010 is enough for one task at a time.
 #   * The Executor's own platform health surface is plaintext HTTP on
-#     127.0.0.1:8020. mTLS is reserved for the State Registry; this
-#     script probes the executor over plaintext.
+#     127.0.0.1:8020; this script probes it over plaintext.
 
 set -o errexit
 set -o pipefail
@@ -70,12 +69,6 @@ REG_PID_FILE="$(mq::state_path state/registry.pid)"
 [[ -f "$REG_PID_FILE" ]] || mq::fail "02-start-executor: $REG_PID_FILE missing; run 01-prepare.sh first"
 REG_PID="$(cat "$REG_PID_FILE")"
 mq::pid_is_alive "$REG_PID" || mq::fail "state-registry pid=$REG_PID is not alive; run 01-prepare.sh again"
-
-# mTLS material must already be on disk.
-CA_DIR="$(mq::state_path state/certs)"
-for f in ca.crt registry.crt team-executor.crt team-executor.key pg-server.crt; do
-  [[ -f "$CA_DIR/$f" ]] || mq::fail "02-start-executor: $CA_DIR/$f missing; run 01-prepare.sh again"
-done
 
 # --- LLM configuration check ---------------------------------------------
 
@@ -122,10 +115,7 @@ EXEC_ENV=(
   "DOCKER_SOCKET_PATH=$DOCKER_SOCKET_PATH"
   "EXECUTOR_API_BIND=127.0.0.1:8020"
   "EXECUTOR_POLL_INTERVAL=1s"
-  "EXECUTOR_STATE_REGISTRY_URL=https://localhost:18443"
-  "EXECUTOR_STATE_REGISTRY_TLS_CLIENT_CERT=$CA_DIR/team-executor.crt"
-  "EXECUTOR_STATE_REGISTRY_TLS_CLIENT_KEY=$CA_DIR/team-executor.key"
-  "EXECUTOR_STATE_REGISTRY_TLS_SERVER_CA=$CA_DIR/ca.crt"
+  "EXECUTOR_STATE_REGISTRY_URL=http://localhost:18443"
   "EXECUTOR_SCOPE=team"
   "EXECUTOR_TEAM_ID=${FLOWAI_TEAM_ID}"
   "EXECUTOR_AUTHORIZED_TAG=openhands"
@@ -180,17 +170,9 @@ while [[ $(date +%s) -lt $EXEC_DEADLINE ]]; do
 done
 [[ "$EXEC_UP" -eq 1 ]] || mq::fail "executor did not emit a startup log line within 30s (log: $(tail -c 4096 "$EXEC_LOG"))"
 
-# Confirm the team-executor cert CN matches the documented executor_id;
-# the peerauth parser would otherwise reject the registration.
-ACTUAL_CN="$(openssl x509 -in "$CA_DIR/team-executor.crt" -noout -subject \
-  | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\([^,/]*\).*/\1/p')"
-if [[ "$ACTUAL_CN" != "exec-local-openhands" ]]; then
-  mq::fail "team-executor cert CN is '$ACTUAL_CN', expected 'exec-local-openhands'"
-fi
-
 # Probe the executor's plaintext platform health surface. The executor
-# binds 127.0.0.1:8020 without TLS; mTLS is reserved for the State
-# Registry. /v1/livez returns 200 as soon as the HTTP server is up.
+# binds 127.0.0.1:8020 without TLS. /v1/livez returns 200 as soon as
+# the HTTP server is up.
 mq::wait_http_plain "http://127.0.0.1:8020/v1/livez" 15 \
   || mq::fail "executor /v1/livez not reachable on plaintext http://127.0.0.1:8020 (log: $(tail -c 4096 "$EXEC_LOG"))"
 

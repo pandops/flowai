@@ -1,5 +1,6 @@
 ' diagram-type: c4-container
 @startuml
+!pragma layout smetana
 title FlowAI transport boundaries after backend mTLS removal
 
 actor "Operator" as operator_actor

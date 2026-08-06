@@ -166,11 +166,15 @@ class FixtureLifecycleError extends Error {
     const cleanupSummary = cleanup.length
       ? `; cleanup_errors=${cleanup.map((c) => c.message).join(", ")}`
       : "";
+    const safeDiagnostics = sanitize(diagnostics);
+    const diagnosticsSummary = safeDiagnostics
+      ? `; diagnostics=${safeDiagnostics}`
+      : "";
     super(
-      `state-registry worker failed during ${phase}: ${primaryError.message}${cleanupSummary}`,
+      `state-registry worker failed during ${phase}: ${primaryError.message}${cleanupSummary}${diagnosticsSummary}`,
     );
     this.phase = phase;
-    this.diagnostics = sanitize(diagnostics);
+    this.diagnostics = safeDiagnostics;
     this.primary = primaryError;
     this.cleanup = cleanup;
     this.name = "FixtureLifecycleError";
@@ -214,8 +218,7 @@ export async function startRegistryWorker(
   // The legacy backend HTTP TLS env vars are accepted-but-ignored
   // compatibility inputs; they do not change the listener.
 
-  const readyUrl = (port: number): string =>
-    `http://${BindHost}:${port}`;
+  const readyUrl = (port: number): string => `http://${BindHost}:${port}`;
 
   // v0009: no TLS-mode probe material is needed. Backend
   // transport is plaintext HTTP; the readiness probe uses the

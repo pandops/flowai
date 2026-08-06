@@ -207,28 +207,27 @@ func TestDecryptOpsRouteIsPresentInTestMode(t *testing.T) {
 	}
 }
 
-// TestProductionRoutesDoNotRejectMissingIdentityBeforeRepositoryAccess
-// proves the v0009 contract: every representative business route is
-// mounted in production and the State Registry does NOT reject
-// requests based on transport identity. An empty header bag (no
-// X-FlowAI-*) reaches the data-validation layer; network policy
-// owns the caller boundary.
-func TestProductionRoutesDoNotRejectMissingIdentityBeforeRepositoryAccess(t *testing.T) {
+// TestProductionRoutesValidateRequestContextWithoutTransportIdentity proves
+// that production routes are mounted without mTLS while the administrator
+// surface still requires its documented trusted request context.
+func TestProductionRoutesValidateRequestContextWithoutTransportIdentity(t *testing.T) {
 	_ = &rejectingAdminRepository{} // keep helper referenced for harness reuse
 	listenerRepo := &rejectingListenerAdminRepository{}
 	router := Routes("state-registry", "", newTestLogger(), alwaysReady, NewDecryptOps(), false, listenerRepo)
 
 	tests := []struct {
-		name   string
-		method string
-		path   string
-		body   string
+		name                 string
+		method               string
+		path                 string
+		body                 string
+		wantContextRejection bool
 	}{
 		{
-			name:   "admin teams missing identity",
-			method: http.MethodPost,
-			path:   "/admin/teams",
-			body:   `{"team_name":"missing","default_image":{"repository":"registry.example/agent","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+			name:                 "admin teams missing identity",
+			method:               http.MethodPost,
+			path:                 "/admin/teams",
+			body:                 `{"team_name":"missing","default_image":{"repository":"registry.example/agent","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`,
+			wantContextRejection: true,
 		},
 		{
 			name:   "executor register missing identity",
@@ -254,9 +253,10 @@ func TestProductionRoutesDoNotRejectMissingIdentityBeforeRepositoryAccess(t *tes
 
 			router.ServeHTTP(recorder, req)
 
-			if recorder.Code == http.StatusUnauthorized || recorder.Code == http.StatusForbidden {
-				t.Fatalf("status=%d, want non-auth response (v0009); body=%s",
-					recorder.Code, recorder.Body.String())
+			contextRejected := recorder.Code == http.StatusUnauthorized || recorder.Code == http.StatusForbidden
+			if contextRejected != tc.wantContextRejection {
+				t.Fatalf("status=%d, context rejection=%t, want %t; body=%s",
+					recorder.Code, contextRejected, tc.wantContextRejection, recorder.Body.String())
 			}
 		})
 	}

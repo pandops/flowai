@@ -11,7 +11,7 @@ Registry, uses the Registry-resolved image and environment, controls the
 Docker/OpenHands lifecycle, and reports ordered lifecycle events back.
 
 ```text
-listeners/admin/Gateway ──mTLS──> State Registry <──mTLS── Docker Executor
+listeners/admin/Gateway ──HTTP──> State Registry <──HTTP── Docker Executor
                                       │                       │
                                       ▼                       ▼
                                   PostgreSQL              Docker/OpenHands

@@ -44,12 +44,11 @@ type errorResponse struct {
 
 // RegisterAdmin mounts the admin onboarding adapter. After v0009 the
 // State Registry does not authenticate the system-administrator
-// identity; the X-FlowAI-Admin-Subject header is treated as audit
-// attribution data, and the deployment network policy owns the
-// /admin/* caller boundary. The X-FlowAI-Role header is no longer
-// used to reject non-administrator callers; the Registry trusts
-// Gateway or operator context and the operational policy that gates
-// /admin/* traffic.
+// identity. The X-FlowAI-Role and X-FlowAI-Admin-Subject headers are
+// trusted request context, not authentication proof; the deployment
+// network policy owns the /admin/* caller boundary. Requiring their
+// documented shape still prevents listener, Executor, and Gateway
+// request envelopes from reaching administrator repositories.
 func RegisterAdmin(r chi.Router, logger *slog.Logger, repo store.AdminRepository) {
 	h := &adminHandlers{logger: logger, repo: repo}
 	r.Route("/admin", func(admin chi.Router) {
@@ -62,8 +61,19 @@ func RegisterAdmin(r chi.Router, logger *slog.Logger, repo store.AdminRepository
 
 func (h *adminHandlers) requireAdminHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// admin subject is optional (audit-only); do not reject the
-		// request when it is missing.
+		role := strings.TrimSpace(r.Header.Get(adminRoleHeader))
+		if role == "" {
+			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "system administrator context is required")
+			return
+		}
+		if role != "admin" {
+			h.writeError(w, r, http.StatusForbidden, "not_authorized", "system administrator context is required")
+			return
+		}
+		if strings.TrimSpace(r.Header.Get(adminSubjectHeader)) == "" {
+			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "system administrator subject is required")
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

@@ -150,7 +150,7 @@ State -> DB : append team-a executor_event\nmirror max_capacity/running_count in
 State --> Executor : 202 accepted
 
 == Trusted Gateway context and team-scoped reads ==
-Gateway -> State : request / subscription / write\n{operator_id, team_id=team-a, request_id,\n optional display-only team_name}\nwith trusted Gateway mTLS identity
+Gateway -> State : request / subscription / write over HTTP\n{operator_id, team_id=team-a, request_id,\n optional display-only team_name}\nas trusted request context
 State -> State : authorize only immutable team_id\nretain optional team_name for display/audit only
 Direct -> State : copied operator/team headers without Gateway identity
 State --> Direct : reject before protected read or write

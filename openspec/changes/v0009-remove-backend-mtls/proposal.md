@@ -36,9 +36,9 @@ Gateway, while backend services communicate on the trusted internal network.
 - `state-registry`: replace authenticated service identities and mutually
   authenticated backend transport with unauthenticated internal HTTP and
   record/request-based scoping.
-- `executor`: remove State Registry client certificates and derive Executor
-  scope from configured registration data plus the server-generated cached
-  `executor_id`.
+- `executor`: remove State Registry client certificates while preserving the
+  current Executor ID lifecycle and deriving scope from configured registration
+  data plus the persisted canonical Executor record.
 
 ## Impact
 

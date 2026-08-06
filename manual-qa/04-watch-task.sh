@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 04-watch-task.sh — read the canonical task and its event history
-# through the trusted-Gateway mTLS surface until the task reaches a
+# through trusted Gateway request context over HTTP until the task reaches a
 # terminal state (finished | failed), or until a deadline elapses.
 #
 # Usage:
@@ -61,14 +61,11 @@ fi
 
 mq::state_require_env
 
-CA_DIR="$(mq::state_path state/certs)"
-[[ -f "$CA_DIR/gateway.crt" ]] || mq::fail "04-watch-task: gateway cert missing; run 01-prepare.sh first"
-
 # --- terminal-state detection ---------------------------------------------
 
 # We poll the task point-read surface; once current_state hits a
 # terminal value we print the canonical event history.
-REG_URL="${FLOWAI_STATE_REGISTRY_URL:-https://localhost:18443}"
+REG_URL="${FLOWAI_STATE_REGISTRY_URL:-http://localhost:18443}"
 POINT_URL="$REG_URL/v1/tasks/$TASK_ID"
 EVENTS_URL="$REG_URL/v1/tasks/$TASK_ID/events"
 

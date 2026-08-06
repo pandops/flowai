@@ -59,27 +59,28 @@ compared with an authenticated listener identity.
 ### Requirement: Executors register one tag and either team-owned or system-owned scope
 
 Each Executor SHALL register one ownership `scope` chosen from `{team,
-system}`. First-start registration SHALL use `POST /v1/executors`; State
-Registry SHALL generate an immutable UUID `executor_id`, persist it, and return
-it in `201 Created`. The body SHALL carry neither `executor_id` nor `identity`.
+system}` using the existing `PUT /v1/executors/{executor_id}` lifecycle. This
+change SHALL NOT adopt the Registry-generated first-registration lifecycle
+planned by `v0005-executor-k8s`. The request body SHALL carry neither
+`executor_id` nor `identity`.
 For `scope = team`, it SHALL carry configured non-null `team_id`; State
 Registry SHALL verify the team exists and persist the immutable binding without
 authenticating the caller. For `scope = system`, it SHALL omit `team_id`, and
 State Registry SHALL persist NULL. Both scopes SHALL register exactly one tag,
-Executor type, capacity observations, and metadata. Restart SHALL use
-`PUT /v1/executors/{executor_id}`; State Registry SHALL resolve the ID to the
-canonical row, reject changes to scope/team/tag, and SHALL NOT treat the ID as
-a credential. Registration SHALL NOT create or update a team.
+Executor type, capacity observations, and metadata. State Registry SHALL
+resolve the path ID to the canonical row on refresh, reject changes to
+scope/team/tag, and SHALL NOT treat the ID as a credential. Registration SHALL
+NOT create or update a team.
 
 #### Scenario: Team-owned Executor registers configured team
 
-- **WHEN** an unauthenticated Executor posts `scope = team`, an existing configured `team_id`, one tag, type, capacity observations, and metadata
-- **THEN** State Registry returns `201` with a generated UUID and persists the immutable team binding without deriving identity from transport
+- **WHEN** an unauthenticated Executor puts its existing Executor ID with `scope = team`, an existing configured `team_id`, one tag, type, capacity observations, and metadata
+- **THEN** State Registry persists and returns the immutable team binding without deriving identity from transport
 
 #### Scenario: System-owned Executor registers without team
 
-- **WHEN** an unauthenticated Executor posts `scope = system`, omits `team_id`, and supplies one tag, type, capacity observations, and metadata
-- **THEN** State Registry returns `201`, persists NULL `team_id`, and uses tag-based cross-team eligibility
+- **WHEN** an unauthenticated Executor puts its existing Executor ID with `scope = system`, omits `team_id`, and supplies one tag, type, capacity observations, and metadata
+- **THEN** State Registry persists NULL `team_id` and uses tag-based cross-team eligibility
 
 #### Scenario: Registration shape is invalid
 

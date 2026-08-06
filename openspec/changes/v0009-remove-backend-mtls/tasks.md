@@ -15,8 +15,8 @@
 
 ## 3. Executor HTTP clients and persisted scope
 
-- [x] 3.1 RED: update existing `v0002.17`, `v0002.19`, `v0002.27`, `v0005.1`, `v0005.2`, `v0005.7`, and `v0005.9`–`v0005.11` assertions for Docker and kind-based K8s Executors; verify registration, restart, immutable team/system scope, FIFO discovery, claims, events, controls, and environment opens fail while clients require mTLS.
-- [x] 3.2 GREEN: replace State Registry mTLS clients in `executor_docker_openhands` and `executor_k8s_openhands` with HTTP clients; submit configured scope/team/tag, cache the generated `executor_id`, and preserve canonical-record ownership checks without treating the ID as a credential.
+- [x] 3.1 RED: update existing `v0002.17`, `v0002.19`, `v0002.27`, `v0005.1`, `v0005.2`, `v0005.7`, and `v0005.9`–`v0005.11` assertions for the implemented Docker Executor and planned K8s Executor; verify registration, restart, immutable team/system scope, FIFO discovery, claims, events, controls, and environment opens fail while clients require mTLS.
+- [x] 3.2 GREEN: replace State Registry mTLS clients in `executor_docker_openhands` and planned `executor_k8s_openhands` behavior with HTTP clients; submit configured scope/team/tag, preserve the existing Executor ID lifecycle, and retain canonical-record ownership checks without treating the ID as a credential.
 - [x] 3.3 RED: configure missing and malformed legacy certificate/key/CA paths for both Executors and verify startup currently fails or accesses the paths.
 - [x] 3.4 GREEN: accept and ignore legacy Executor TLS/mTLS configuration without file access, certificate loading, watchers, Secrets, or certificate volumes.
 - [x] 3.5 REFACTOR: delete Executor PKI helpers and certificate fixtures after all Docker unit/integration tests and both real OpenHands smoke tasks remain green.
@@ -30,9 +30,14 @@
 
 ## 5. Deployment and documentation
 
-- [x] 5.1 RED: assert Docker Compose and kind manifests contain no backend certificate Secret, TLS port, certificate volume, or HTTPS Registry URL while Ingress HTTPS and PostgreSQL TLS remain configured.
-- [x] 5.2 GREEN: update configs, Compose, K8s manifests, health probes, service URLs, and examples to backend HTTP; remove backend PKI generation/mounting and preserve Ingress and database security material.
+- [x] 5.1 RED: assert implemented Docker deployment assets and planned K8s deployment artifacts contain no backend certificate Secret, TLS port, certificate volume, or HTTPS Registry URL while Ingress HTTPS and PostgreSQL TLS remain configured.
+- [x] 5.2 GREEN: update implemented configs, Compose, health probes, service URLs, examples, and planned K8s deployment requirements to backend HTTP; remove backend PKI generation/mounting and preserve Ingress and database security material.
 - [x] 5.3 GREEN: update AGENTS.md topology/security matrices and active v0005/v0006/v0007/v0008 references so no final-target artifact claims State Registry backend mTLS or certificate-derived identity.
-- [x] 5.4 VERIFY: run State Registry, Docker Executor, K8s Executor, listener, Gateway, OpenAPI, Playwright, real OpenHands Docker/kind smoke, and PostgreSQL TLS suites; record RED and GREEN evidence in the moved test-case definitions.
-- [x] 5.5 VERIFY: run a repository-wide search across test code and test-case definitions and require zero references to backend `mTLS`, client certificates, certificate-derived service identity, `ExecutorMTLS`, `ListenerMTLS`, `GatewayMTLS`, or `SystemAdministratorMTLS`; allow only explicitly identified PostgreSQL TLS/server-certificate and external Ingress HTTPS assertions.
+- [x] 5.4 VERIFY: run the implemented State Registry, Docker Executor, listener, Gateway, OpenAPI, Playwright, real OpenHands Docker smoke, and PostgreSQL TLS suites; validate the planned K8s Executor artifacts statically. Runtime K8s/kind smoke remains a v0005 implementation gate because this branch contains no `executor_k8s_openhands` service or kind harness.
+  - GREEN evidence: `go test ./...` passes all State Registry and Docker Executor packages; explicit `golangci-lint run ./state-registry/... ./executor_docker_opehands/...` reports `0 issues`.
+  - GREEN evidence: the full State Registry Playwright run passes `137` tests; targeted reruns pass `v0002.20` (plaintext backend HTTP plus PostgreSQL `verify-full` fail-closed) and real OpenHands Docker cases `v0002.52` and `v0002.53`.
+  - GREEN evidence: strict all-change validation includes `v0005-executor-k8s` and passes, while its POST/Registry-generated UUID lifecycle remains owned by v0005 and is not implemented by v0009.
+- [x] 5.5 VERIFY: run a repository-wide search across test code and test-case definitions and require zero affirmative backend `mTLS`, client-certificate, certificate-derived identity, or OpenAPI security-scheme requirements. Negative regression assertions may name removed schemes and legacy ignored keys; preserve only affirmative PostgreSQL TLS/server-certificate and external Ingress HTTPS assertions.
 - [x] 5.6 VERIFY: render both v0009 PlantUML sources, build the complete local preview, run `openspec validate v0009-remove-backend-mtls --strict`, `openspec validate --all --strict`, and `git diff --check`.
+  - GREEN evidence: `puml-verify` renders both sources to SVG and `puml-preview` renders both files into the ignored `.preview/` gallery with no partial-render warning.
+  - GREEN evidence: strict v0009 validation passes and strict repository validation reports `11 passed, 0 failed`.

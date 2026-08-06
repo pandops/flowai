@@ -72,7 +72,7 @@ contains the immutable `v0005.<n>` id.
       restart refresh uses PUT and returns `200`; registration carries `scope = team`, one immutable
       `team_id`, one `authorized_tag`, observed `max_capacity`, observed
       `running_count`, metadata, bound to the
-      authenticated Executor identity derived from mTLS, with no `identity`
+      generated Executor ID and validated registration configuration, with no `identity`
       field in the body) and `v0005.2` (registration with a
       `team_id` that does not match the identity-bound team is rejected
       without persistence); run
@@ -92,7 +92,7 @@ contains the immutable `v0005.<n>` id.
       identity, exactly one scalar `authorized_tag`, observed `max_capacity`,
       observed `running_count`, and runtime metadata;
       reject a client-supplied `team_name`; derive canonical identity only
-      from authenticated mTLS and reject a client-supplied `identity`; reject any registration whose
+      from the generated Executor ID and validated registration configuration and reject a client-supplied `identity`; reject any registration whose
       `scope` is not `team`, reject zero or multiple `team_id`
       submissions, reject identity-mismatched `team_id`, and reject any
       re-registration whose `team_id` differs from the stored `team_id`.
@@ -378,12 +378,12 @@ minutes`; verify the literal `audience` is
       the canonical environment has no project scope); verify every claim
       (`team_id`, `project_id`, `task_id`, `environment_id`, `executor_id`,
       `audience`, `issued_at`, `expiry`, `key_id`) against canonical
-      records; verify the authenticated Executor mTLS identity is the
+      records; verify the persisted Executor assignment identifies the
       assigned same-team Executor; verify the task is in a non-terminal
       state; verify the project/task applicability; perform every one of
       those checks BEFORE any decrypt operation by the active provider or
       plaintext disclosure; return env-style values only to the assigned
-      same-team Executor over its authenticated mTLS identity; record a
+      same-team Executor identified by its canonical registration; record a
       plaintext-free open-environment audit entry; never log token
       plaintext, individual claim values beyond identifier-level metadata,
       MAC bytes, key material, or derived key bytes; allow a same
@@ -394,8 +394,8 @@ minutes`; verify the literal `audience` is
       discard plaintext after Pod startup.
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
       require a `200` with env-style values only for the fully-valid
-      token from the assigned same-team Executor over its authenticated
-      mTLS identity, the same non-revealing `404
+      token from the assigned same-team Executor identified by its canonical
+      registration, the same non-revealing `404
 environment_unknown_or_unavailable` shape for every invalid /
       tampered / audience-mismatched / missing-claim (including missing
       `project_id`) / null `project_id` for a project-scoped environment /
@@ -491,13 +491,10 @@ not_assigned` for same-team unassigned requests, applied controls
       corruption, and schema mismatch without silently resetting or replacing
       the database. Observe behavior-specific failures before cache
       implementations exist.
-- [ ] **RED pre-generated mTLS:** mount valid, expired, missing, and malformed
-      client certificate, private key, and CA fixtures for K8s and Docker.
-      Require valid material to connect and every invalid case to fail before
-      registration without generating or overwriting certificate files.
-      Replace the mounted files while the process runs and require the old
-      in-memory material to remain active; restart and require the replacement
-      material to be loaded.
+- [ ] **RED backend HTTP:** configure missing and malformed legacy certificate,
+      key, and CA paths for K8s and Docker. Require startup and registration to
+      succeed over HTTP without accessing any configured path or constructing
+      client TLS configuration.
 - [ ] **RED failure recovery:** cover missing, unreadable, corrupt, and
       identity-mismatched cache; require unhealthy status, zero new claims,
       and no mutation or deletion of existing Pods.
@@ -527,12 +524,11 @@ not_assigned` for same-team unassigned requests, applied controls
       and `event_outbox` buckets, and commit every mutation before its external
       side effect. Fail closed on open failure, corruption, or an unsupported
       schema; never silently reset or replace an existing database.
-- [ ] **GREEN pre-generated mTLS:** load only read-only, pre-created client
-      certificate, private key, and CA material from a Kubernetes Secret
-      volume or Docker file/secret mounts. Add no certificate issuance,
-      enrollment, generation, or rotation implementation. Load the files once
-      at process startup and add no file watcher, polling, or hot reload. Add
-      no fixed certificate-lifetime or renewal-schedule configuration.
+- [ ] **GREEN backend HTTP:** use plain HTTP for Registry calls, accept legacy
+      backend TLS fields for staged cleanup, and never read certificate paths,
+      construct client TLS configuration, or mount backend certificate
+      material. Add no file watcher, polling, hot reload, certificate-lifetime,
+      or renewal-schedule configuration.
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
       require no reassignment, persistent-cache-only recovery with no
       assignments-list call, each Pod label

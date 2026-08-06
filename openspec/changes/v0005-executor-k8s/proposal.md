@@ -72,12 +72,10 @@ events.
 - Persist identity, assignments, and event outbox in a transactional bbolt
   database at `<cache_dir>/executor.db` using versioned buckets and fail closed
   on corruption or unsupported schema.
-- Require pre-generated mTLS client certificate, private key, and CA bundle,
-  mounted read-only through a K8s Secret volume or Docker file/secret mounts;
-  Executors never generate or rotate certificates at runtime and load changed
-  mounted material only on process restart, with no hot reload. Certificate
-  lifetime and renewal cadence remain external PKI/deployment policy rather
-  than an Executor contract.
+- Use plain HTTP for Executor-to-Registry transport. Accept legacy backend TLS
+  configuration fields for staged cleanup, but never read certificate paths or
+  construct client TLS configuration; deployment network policy owns the
+  caller boundary.
 - Persist a stable claim intent in the bbolt `assignments` bucket before the
   claim request, commit the claimed assignment before `running` or runtime
   creation, and persist every event before sending it. Store no environment or
@@ -97,8 +95,8 @@ events.
   omits the `team_id` property and has no team binding; explicit null is
   rejected. The registration body carries
   neither `identity` nor `team_name`; State
-  Registry derives and persists it exclusively from the authenticated mTLS
-  context.
+  Registry derives and persists it from the generated Executor ID and the
+  submitted, validated registration configuration.
 - Make `team_id` authoritative for a team-owned Executor: the value
   supplied at registration MUST match the team bound to the
   authenticated identity, MUST be stored on the canonical Executor
@@ -224,7 +222,7 @@ team_mismatch`; a same-team Executor that is not the recorded
 seconds`, SHALL verify the literal audience
   `state-registry.environment.open`, SHALL verify the canonical claim
   shape (including the project-scope rule for `project_id`), SHALL
-  verify the authenticated Executor mTLS identity, the Executor's
+  verify the persisted Executor assignment and submitted request context, the Executor's
   same-team ownership, the task assignment, the task's non-terminal
   state, and the project/task applicability BEFORE any decrypt
   operation by the active provider or plaintext disclosure. A retry
@@ -309,8 +307,8 @@ seconds`, SHALL verify the literal audience
 
 ## Out of scope
 
-- Define a fixed Executor mTLS certificate lifetime or renewal schedule;
-  external PKI and deployment infrastructure own both.
+- Add replacement backend credentials; deployment network policy owns the
+  caller boundary after v0009.
 - Replace the Docker Executor's runtime behavior beyond the shared terminal
   cleanup-delay behavior and the approved concrete-service spelling
   correction.

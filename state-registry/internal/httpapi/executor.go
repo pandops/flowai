@@ -133,7 +133,7 @@ func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
 
 func (h *executorHandlers) get(w http.ResponseWriter, r *http.Request) {
 	executorID := chi.URLParam(r, "executor_id")
-	if strings.TrimSpace(r.Header.Get(gatewayTeamIDHeader)) != "" {
+	if strings.TrimSpace(r.Header.Get(gatewayOperatorIDHeader)) != "" {
 		h.getForGateway(w, r, executorID)
 		return
 	}

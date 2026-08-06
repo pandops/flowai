@@ -4,17 +4,19 @@
 
 Every concrete Executor SHALL call State Registry over plain HTTP without a
 client certificate, private key, CA bundle, authorization credential, or
-certificate-derived service identity. It SHALL take `scope`, optional
-`team_id`, and `authorized_tag` from its configuration, submit them at first
-registration, cache the server-generated `executor_id`, and reuse that ID for
-refresh and task operations. It SHALL NOT treat `executor_id` as a credential.
+certificate-derived service identity. It SHALL preserve the existing
+registration lifecycle and take `scope`, optional `team_id`, and
+`authorized_tag` from its configuration. This change SHALL NOT alter how an
+Executor ID is allocated or persisted; that planned registration redesign
+belongs to `v0005-executor-k8s`. It SHALL NOT treat `executor_id` as a
+credential.
 Legacy State Registry TLS/mTLS configuration fields SHALL be accepted and
 ignored without reading the referenced files.
 
 #### Scenario: Team-owned Executor starts without certificate files
 
 - **WHEN** a Docker or K8s Executor starts with State Registry `http://` URL, `scope = team`, configured `team_id`, one tag, and no certificate files
-- **THEN** it registers, caches the returned UUID, and proceeds using persisted scope rules
+- **THEN** it registers with the existing Executor ID lifecycle and proceeds using persisted scope rules
 
 #### Scenario: System-owned Executor starts without team
 
@@ -44,7 +46,7 @@ evidence.
 #### Scenario: Executor reconnects after restart
 
 - **WHEN** an Executor restarts with the same persistent cache and configured scope
-- **THEN** it uses the cached Registry-generated `executor_id`, refreshes over HTTP, and reconciles its cached assignments without certificate identity
+- **THEN** it uses its persisted existing `executor_id`, refreshes over HTTP, and reconciles its cached assignments without certificate identity
 
 ## REMOVED Requirements
 

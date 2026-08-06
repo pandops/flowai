@@ -846,13 +846,11 @@ func TestAdminTaskTypeReferencesTeam(t *testing.T) {
 	}
 }
 
-// TestAdminEndpointsAcceptAllCallersAndReachRepository asserts the
-// v0009 contract: the State Registry does NOT authenticate the
-// system-administrator identity; every caller (listener, Executor,
-// Gateway, anonymous) reaches the admin handler and only the data
-// validation + canonical record checks decide the response. Network
-// policy owns the /admin/* caller boundary.
-func TestAdminEndpointsAcceptAllCallersAndReachRepository(t *testing.T) {
+// TestAdminEndpointsRejectNonAdminRequestContext proves that request-context
+// validation rejects listener, Executor, Gateway, and anonymous envelopes
+// before an administrator repository is called. The headers are trusted input,
+// not certificate-derived authentication.
+func TestAdminEndpointsRejectNonAdminRequestContext(t *testing.T) {
 	endpoints := []struct {
 		method string
 		path   string
@@ -885,18 +883,19 @@ func TestAdminEndpointsAcceptAllCallersAndReachRepository(t *testing.T) {
 	}
 
 	for _, rc := range roles {
-		rc := rc
 		t.Run(rc.name, func(t *testing.T) {
 			hr := newAdminHarness(t)
 			for _, ep := range endpoints {
-				ep := ep
 				t.Run(ep.method+" "+ep.path, func(t *testing.T) {
 					resp := doAdminRequest(t, hr, ep.method, ep.path, rc.headers, ep.body())
-					if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-						t.Fatalf("%s /%s as %s: status=%d, want non-auth response (v0009); body=%s",
+					if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
+						t.Fatalf("%s /%s as %s: status=%d, want 401/403; body=%s",
 							ep.method, ep.path, rc.name, resp.StatusCode, readBody(t, resp))
 					}
 				})
+			}
+			if got := hr.repo.teamCalls() + hr.repo.sourceCalls() + hr.repo.typeCalls(); got != 0 {
+				t.Fatalf("repository calls=%d, want 0", got)
 			}
 		})
 	}

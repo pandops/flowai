@@ -31,11 +31,11 @@
 #     mq::issue_server_cert       — issue a localhost+127.0.0.1 serverAuth cert
 #     mq::issue_client_cert       — issue a clientAuth cert with role/team/serial subject
 #
-#   mTLS curl wrappers (reject -k; never disable TLS verification)
-#     mq::curl_mtls_json          — GET/POST/PUT JSON via mTLS
-#     mq::curl_admin_post         — POST /admin/* with admin client cert
-#     mq::curl_listener_post      — POST /v1/tasks with listener client cert
-#     mq::curl_gateway_get        — GET a trusted-Gateway point read
+#   Backend HTTP curl wrappers
+#     mq::curl_http_json          — GET/POST/PUT JSON over backend HTTP
+#     mq::curl_admin_post         — POST /admin/* with trusted admin context
+#     mq::curl_listener_post      — POST /v1/tasks with listener context
+#     mq::curl_gateway_get        — GET with trusted Gateway context
 #
 #   JSON helpers
 #     mq::json_encode             — emit a JSON object via jq (--argjson for JSON, --arg for strings)
@@ -57,7 +57,6 @@
 #     mq::terminate_pid           — SIGTERM (with identity check) then SIGKILL
 #
 #   Wait helpers
-#     mq::wait_http_https         — wait for an https mTLS endpoint to respond
 #     mq::wait_http_plain         — wait for a plaintext http endpoint to respond
 #
 # Security boundaries enforced here:
@@ -562,20 +561,16 @@ mq::issue_client_cert() {
   rm -f "$out_dir/$name.csr"
 }
 
-# --- mTLS curl wrappers ---------------------------------------------------
+# --- backend HTTP curl wrappers ------------------------------------------
 
-mq::curl_mtls_json() {
-  # mq::curl_mtls_json <method> <url> <cacert> <cert> <key> [body-file]
+mq::curl_http_json() {
+  # mq::curl_http_json <method> <url> <body-file-or-empty> [header ...]
   # Prints "<HTTP_STATUS>\n<body>" on stdout. Uses --fail-with-body so a
   # non-2xx response is surfaced as an explicit error rather than a
   # silent empty body. The caller must never pass -k / insecure.
-  local method="${1:-GET}" url="${2:-}" cacert="${3:-}" cert="${4:-}" key="${5:-}"
-  local body="${6:-}"
-  shift 5
-  [[ -n "$url" ]] || mq::fail "curl_mtls_json: url is required"
-  [[ -n "$cacert" && -f "$cacert" ]] || mq::fail "curl_mtls_json: cacert missing"
-  [[ -n "$cert" && -f "$cert" ]] || mq::fail "curl_mtls_json: cert missing"
-  [[ -n "$key" && -f "$key" ]] || mq::fail "curl_mtls_json: key missing"
+  local method="${1:-GET}" url="${2:-}" body="${3:-}"
+  shift 3
+  [[ -n "$url" ]] || mq::fail "curl_http_json: url is required"
 
   local -a curl_args=(
     --silent
@@ -583,16 +578,15 @@ mq::curl_mtls_json() {
     --fail-with-body
     --request "$method"
     --url "$url"
-    --cacert "$cacert"
-    --cert "$cert"
-    --key "$key"
-    --tlsv1.2
-    --tls-max 1.3
     --connect-timeout 5
     --max-time 30
     --write-out '\n%{http_code}'
     --header 'Accept: application/json'
   )
+  local header
+  for header in "$@"; do
+    curl_args+=(--header "$header")
+  done
   if [[ -n "$body" ]]; then
     curl_args+=(--header 'Content-Type: application/json' --data-binary "@$body")
   fi
@@ -606,28 +600,29 @@ mq::curl_mtls_json() {
 
 mq::curl_admin_post() {
   # mq::curl_admin_post <url> <body-file>
-  mq::curl_mtls_json POST "$1" \
-    "$(mq::state_path state/certs/ca.crt)" \
-    "$(mq::state_path state/certs/admin.crt)" \
-    "$(mq::state_path state/certs/admin.key)" \
-    "$2"
+  mq::curl_http_json POST "$1" "$2" \
+    "X-FlowAI-Role: admin" \
+    "X-FlowAI-Admin-Subject: system-admin-local" \
+    "X-FlowAI-Request-Id: manual-admin-$RANDOM"
 }
 
 mq::curl_listener_post() {
   # mq::curl_listener_post <url> <body-file>
-  mq::curl_mtls_json POST "$1" \
-    "$(mq::state_path state/certs/ca.crt)" \
-    "$(mq::state_path state/certs/listener.crt)" \
-    "$(mq::state_path state/certs/listener.key)" \
-    "$2"
+  mq::curl_http_json POST "$1" "$2" \
+    "X-FlowAI-Role: listener" \
+    "X-FlowAI-Team-Id: $FLOWAI_TEAM_ID" \
+    "X-FlowAI-Source-System-Id: $FLOWAI_SOURCE_SYSTEM_ID" \
+    "X-FlowAI-Listener-Identity: listener-local" \
+    "X-FlowAI-Request-Id: manual-listener-$RANDOM"
 }
 
 mq::curl_gateway_get() {
   # mq::curl_gateway_get <url>
-  mq::curl_mtls_json GET "$1" \
-    "$(mq::state_path state/certs/ca.crt)" \
-    "$(mq::state_path state/certs/gateway.crt)" \
-    "$(mq::state_path state/certs/gateway.key)"
+  mq::curl_http_json GET "$1" "" \
+    "X-FlowAI-Role: gateway" \
+    "X-FlowAI-Team-Id: $FLOWAI_TEAM_ID" \
+    "X-FlowAI-Operator-Id: operator-local" \
+    "X-FlowAI-Request-Id: manual-gateway-$RANDOM"
 }
 
 # --- JSON encoding --------------------------------------------------------

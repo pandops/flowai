@@ -53,13 +53,10 @@
   versioned `metadata`, `assignments`, and `event_outbox` buckets. Mutations
   commit transactionally before external side effects; unsupported schema or
   corruption is fail-closed.
-- mTLS client certificate, private key, and CA bundle are generated before
-  deployment and mounted read-only. K8s uses a pre-created Secret volume;
-  Docker uses explicit read-only files/secrets. Executors perform no runtime
-  certificate generation, enrollment, or rotation. Certificate files are read
-  once at process startup; file changes are intentionally ignored until the
-  Executor restarts. Certificate lifetime and renewal cadence belong to the
-  external PKI/deployment policy; the Executor defines no fixed duration.
+- Executor-to-Registry transport is plain HTTP. Legacy backend TLS fields are
+  accepted for staged cleanup but their paths are never read and no client TLS
+  configuration is constructed. Deployment network policy owns the caller
+  boundary.
 - The `assignments` bucket also stores a durable claim intent before the HTTP
   claim so an uncertain response can be retried with the identical
   `(task_id, command_id)`; the claimed assignment is committed before
@@ -82,7 +79,8 @@
   binding and omits the `team_id` property rather than sending null. Scope and any team
   binding are immutable across re-registration and restart. The request body
   carries no `identity`; State Registry derives and persists the canonical
-  identity exclusively from the authenticated mTLS context.
+  identity from the generated Executor ID and the submitted, validated
+  registration configuration.
 - It discovers eligible `pending` tasks only where the task's
   `required_tag` equals the Executor's single `authorized_tag`; team scope
   additionally matches the bound `team_id`, while system scope spans teams
@@ -190,7 +188,7 @@ not_assigned`; a foreign task or Executor point identifier is rejected
   `issued_at <= server_now + 30 seconds`, verifies the literal audience
   `state-registry.environment.open`, verifies the canonical claim shape
   (including the project-scope rule for `project_id`), verifies the
-  authenticated Executor mTLS identity, the Executor's same-team
+  persisted Executor assignment and submitted request context, the Executor's same-team
   ownership, the task assignment, the task's non-terminal state, and
   the project/task applicability BEFORE any decrypt operation by the
   active provider or plaintext disclosure. A retry within the TTL by

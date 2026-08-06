@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 03-submit-task.sh — ingest a task via the listener mTLS surface.
+# 03-submit-task.sh — ingest a task via backend HTTP.
 #
 # The prompt is taken from argv[1] (preferred) or the PROMPT env var.
 # The body is built with the safe JSON encoder (jq or python3) so a
@@ -58,35 +58,6 @@ fi
 mq::state_init
 mq::state_require_env
 
-# --- listener cert validation --------------------------------------------
-
-# Surface a clear diagnostic when the listener cert lacks the team
-# binding that 01-prepare.sh should have set up.
-CA_DIR="$(mq::state_path state/certs)"
-[[ -f "$CA_DIR/listener.crt" ]] || mq::fail "03-submit-task: listener cert missing; run 01-prepare.sh first"
-
-# Read the cert subject fields and compare them against the persisted
-# identifiers; the listener mTLS identity MUST match what the State
-# Registry recorded at admin onboarding time.
-LISTENER_CN="$(openssl x509 -in "$CA_DIR/listener.crt" -noout -subject \
-  | sed -n 's/.*CN[[:space:]]*=[[:space:]]*\([^,/]*\).*/\1/p')"
-LISTENER_OU="$(openssl x509 -in "$CA_DIR/listener.crt" -noout -subject \
-  | sed -n 's/.*OU[[:space:]]*=[[:space:]]*\([^,/]*\).*/\1/p')"
-LISTENER_O="$(openssl x509 -in "$CA_DIR/listener.crt" -noout -subject \
-  | sed -n 's/.*O[[:space:]]*=[[:space:]]*\([^,/]*\).*/\1/p')"
-LISTENER_SN="$(openssl x509 -in "$CA_DIR/listener.crt" -noout -subject \
-  | sed -n 's/.*serialNumber[[:space:]]*=[[:space:]]*\([^,/]*\).*/\1/p')"
-
-if [[ "$LISTENER_CN" != "listener-local" ]] || [[ "$LISTENER_OU" != "listener" ]]; then
-  mq::fail "listener cert subject CN=$LISTENER_CN OU=$LISTENER_OU does not match listener-local/OU=listener"
-fi
-if [[ "$LISTENER_O" != "$FLOWAI_TEAM_ID" ]]; then
-  mq::fail "listener cert O=$LISTENER_O does not match persisted FLOWAI_TEAM_ID=$FLOWAI_TEAM_ID"
-fi
-if [[ "$LISTENER_SN" != "$FLOWAI_SOURCE_SYSTEM_ID" ]]; then
-  mq::fail "listener cert serialNumber=$LISTENER_SN does not match persisted FLOWAI_SOURCE_SYSTEM_ID=$FLOWAI_SOURCE_SYSTEM_ID"
-fi
-
 # --- build the JSON body safely -------------------------------------------
 
 # source_id is the documented idempotency key. We derive it from a
@@ -119,7 +90,7 @@ mq::json_encode \
 
 # --- POST /v1/tasks -------------------------------------------------------
 
-REG_URL="${FLOWAI_STATE_REGISTRY_URL:-https://localhost:18443}"
+REG_URL="${FLOWAI_STATE_REGISTRY_URL:-http://localhost:18443}"
 RESP="$(mq::curl_listener_post "$REG_URL/v1/tasks" "$BODY_FILE")" \
   || mq::fail "POST /v1/tasks: $RESP"
 STATUS="${RESP%%$'\n'*}"
@@ -144,4 +115,4 @@ printf '%s\n' "$STATUS" > "$(mq::state_path state/task.ingest_status)"
 chmod 0600 "$(mq::state_path state/task.ingest_status)"
 
 printf 'task_id=%s status=%s\n' "$TASK_ID" "$STATUS"
-printf 'ingested at https://%s/v1/tasks/%s\n' "${REG_URL#https://}" "$TASK_ID" >&2
+printf 'ingested at %s/v1/tasks/%s\n' "$REG_URL" "$TASK_ID" >&2

@@ -87,13 +87,10 @@ func TestEventsStreamTrustedGatewayUpgrade(t *testing.T) {
 	}
 }
 
-// TestEventsStreamRejectsNonGatewayDataValidation asserts the
-// v0009 contract: the events stream is gated only on the shape
-// of the Gateway-forwarded context (team_id + operator_id), not on
-// a verified role. A wrong role reaches the data-validation layer
-// and is rejected with the documented non-auth envelope; the
-// role check no longer produces a 403.
-func TestEventsStreamRejectsNonGatewayDataValidation(t *testing.T) {
+// TestEventsStreamRejectsNonGatewayRequestContext asserts that an explicit
+// non-Gateway role is rejected before upgrade. The role is trusted request
+// context, not certificate-derived authentication.
+func TestEventsStreamRejectsNonGatewayRequestContext(t *testing.T) {
 	srv := httptest.NewServer(newTestRouter(t, true))
 	defer srv.Close()
 
@@ -108,8 +105,8 @@ func TestEventsStreamRejectsNonGatewayDataValidation(t *testing.T) {
 		t.Fatalf("expected non-nil response")
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		t.Fatalf("status=%d, want non-auth response (v0009)", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403", resp.StatusCode)
 	}
 }
 

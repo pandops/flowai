@@ -5,7 +5,7 @@ OpenHands. State Registry owns all canonical platform state.
 
 ## Runtime flow
 
-1. Validate mandatory HTTPS/mTLS State Registry configuration.
+1. Validate the backend HTTP State Registry URL and immutable scope inputs.
 2. Remove orphaned containers carrying the stable cleanup identity.
 3. Register one immutable scope (`team` or `system`) and one authorized tag.
 4. Poll only while a local container slot is free.
@@ -21,7 +21,7 @@ or separate Env Registry.
 
 The checked-in example is
 [configs/executor_docker_opehands.yaml](configs/executor_docker_opehands.yaml).
-It requires a State Registry URL and mTLS material, one scope/tag, a team ID
+It requires a State Registry HTTP URL, one scope/tag, a team ID
 only for team scope, Docker access, a bounded port range, and either an
 OpenHands agent profile or complete LLM settings.
 

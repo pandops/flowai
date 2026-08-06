@@ -18,8 +18,8 @@
 #     listener (production mode; NO STATE_REGISTRY_TEST_MODE)
 #   * verify /v1/livez AND /v1/readyz on the State Registry
 #   * create team / source-system / task-type via admin mTLS API
-#   * issue dynamically bound listener / team Executor / gateway certs
-#     with the actual team_id and source_system_id values
+#   * persist the generated team and source-system identifiers for
+#     trusted backend HTTP request context
 #   * write a stable Executor YAML with executor_id: exec-local-openhands
 #
 # Idempotency:
@@ -154,15 +154,8 @@ mq::state_write_env "FLOWAI_OPENHANDS_DIGEST" "$OH_DIGEST"
 CA_DIR="$(mq::state_path state/certs)"
 mq::ca_init "$CA_DIR"
 
-# serverAuth certs for the State Registry and Postgres.
-mq::issue_server_cert "$CA_DIR" "$CA_DIR" "registry"
+# serverAuth cert for Postgres.
 mq::issue_server_cert "$CA_DIR" "$CA_DIR" "pg-server"
-
-# Admin client cert. NO team; NO serialNumber — peerauth rejects extras.
-# Listener, team-executor, and gateway certs are issued AFTER admin
-# onboarding so the O=/serialNumber= fields carry the real identifiers.
-mq::issue_client_cert "$CA_DIR" "$CA_DIR" "admin" \
-  "CN=system-admin" "OU=admin"
 
 # --- Postgres (TLS) ------------------------------------------------------
 
@@ -212,7 +205,7 @@ mq::state_write_env "FLOWAI_STATE_REGISTRY_CURSOR_KEY_HEX" "$CURSOR_KEY"
 mq::state_write_env "FLOWAI_STATE_REGISTRY_SCOPE_TOKEN_KEY_ID" "$SCOPE_KEY_ID"
 mq::state_write_env "FLOWAI_STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX" "$SCOPE_KEY"
 
-# --- launch State Registry (production mTLS, untagged) ------------------
+# --- launch State Registry (backend HTTP, secure Postgres) ---------------
 
 REG_BIN="$BIN_DIR/state-registry"
 REG_LOG="$(mq::state_path logs/state-registry.log)"
@@ -228,10 +221,6 @@ REG_ENV=(
   "STATE_REGISTRY_CURSOR_KEY_HEX=$CURSOR_KEY"
   "STATE_REGISTRY_SCOPE_TOKEN_KEY_ID=$SCOPE_KEY_ID"
   "STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX=$SCOPE_KEY"
-  "STATE_REGISTRY_TLS_SERVER_CERT=$CA_DIR/registry.crt"
-  "STATE_REGISTRY_TLS_SERVER_KEY=$CA_DIR/registry.key"
-  "STATE_REGISTRY_TLS_CLIENT_CA=$CA_DIR/ca.crt"
-  "STATE_REGISTRY_TLS_REQUIRE_CLIENT_CERT=true"
   # pgx's sslrootcert expects the CA that signed the server cert.
   # Use the CA bundle, NOT the Postgres leaf cert.
   "STATE_REGISTRY_POSTGRES_TLS_CA=$CA_DIR/ca.crt"
@@ -240,7 +229,7 @@ REG_ENV=(
 
 # Build the env-prefixed command line. We do not export these globally
 # because that would leak the AES key into unrelated subprocesses.
-mq::trace "prepare" "starting state-registry on 127.0.0.1:18443 (mTLS, verify-full)"
+mq::trace "prepare" "starting state-registry HTTP on 127.0.0.1:18443 (Postgres verify-full)"
 nohup env -i \
   PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   HOME="$HOME" \
@@ -265,19 +254,16 @@ while [[ $(date +%s) -lt $REG_DEADLINE ]]; do
   sleep 0.3
 done
 [[ "$REG_UP" -eq 1 ]] || mq::fail "state-registry never logged bind within 30s (log: $(tail -c 4096 "$REG_LOG"))"
-mq::trace "prepare" "state-registry pid=$REG_PID is listening on https://127.0.0.1:18443"
+mq::trace "prepare" "state-registry pid=$REG_PID is listening on http://127.0.0.1:18443"
 
-# Verify it is mTLS-reachable by hitting /v1/livez AND /v1/readyz with
-# the admin cert. readyz=200 confirms the Postgres connection + AES key
-# are wired up before we onboard anything.
-mq::wait_http_https "https://localhost:18443/v1/livez" \
-  "$CA_DIR/ca.crt" "$CA_DIR/admin.crt" "$CA_DIR/admin.key" 15 \
-  || mq::fail "state-registry /v1/livez not reachable over mTLS"
-mq::wait_http_https "https://localhost:18443/v1/readyz" \
-  "$CA_DIR/ca.crt" "$CA_DIR/admin.crt" "$CA_DIR/admin.key" 15 \
+# Verify backend HTTP. readyz=200 confirms the secure Postgres
+# connection + AES key are wired up before onboarding.
+mq::wait_http_plain "http://localhost:18443/v1/livez" 15 \
+  || mq::fail "state-registry /v1/livez not reachable over HTTP"
+mq::wait_http_plain "http://localhost:18443/v1/readyz" 15 \
   || mq::fail "state-registry /v1/readyz did not return 200; the Registry is not fully ready"
 
-mq::state_write_env "FLOWAI_STATE_REGISTRY_URL" "https://localhost:18443"
+mq::state_write_env "FLOWAI_STATE_REGISTRY_URL" "http://localhost:18443"
 
 # --- admin onboarding (team, source-system, task-type) -------------------
 
@@ -290,7 +276,7 @@ mq::json_encode \
   "default_image={\"repository\":\"$OH_REPO\",\"digest\":\"$OH_DIGEST\"}" \
   >"$TMP_BODY"
 
-REG_URL="https://localhost:18443"
+REG_URL="http://localhost:18443"
 RESP="$(mq::curl_admin_post "$REG_URL/admin/teams" "$TMP_BODY")" \
   || mq::fail "POST /admin/teams: $RESP"
 STATUS="${RESP%%$'\n'*}"
@@ -335,28 +321,6 @@ mq::state_write_env "FLOWAI_TEAM_ID" "$TEAM_ID"
 mq::state_write_env "FLOWAI_SOURCE_SYSTEM_ID" "$SOURCE_SYSTEM_ID"
 mq::state_write_env "FLOWAI_TASK_TYPE_ID" "$TASK_TYPE_ID"
 mq::state_write_env "FLOWAI_EXECUTION_TAG" "openhands"
-
-# --- re-issue certs with the real team / source-system binding -----------
-
-# Defensive cleanup: a previous run might have left bootstrap files
-# around. The current code never issues them but a stale file under
-# that name could only ever impersonate the team.
-rm -f "$CA_DIR/listener-bootstrap."* "$CA_DIR/team-executor-bootstrap."* "$CA_DIR/gateway-bootstrap."* 2>/dev/null || true
-
-mq::issue_client_cert "$CA_DIR" "$CA_DIR" "listener" \
-  "CN=listener-local" "OU=listener" \
-  "O=$TEAM_ID" "serialNumber=$SOURCE_SYSTEM_ID"
-
-# The team Executor's CN is the documented executor_id. The Operator
-# wrote that value to the YAML in 02-start-executor.sh; the cert CN
-# here must match so the peerauth parser accepts the registration.
-mq::issue_client_cert "$CA_DIR" "$CA_DIR" "team-executor" \
-  "CN=exec-local-openhands" "OU=team-executor" \
-  "O=$TEAM_ID"
-
-mq::issue_client_cert "$CA_DIR" "$CA_DIR" "gateway" \
-  "CN=operator-local" "OU=gateway" \
-  "O=$TEAM_ID"
 
 # --- write the stable Executor YAML (private copy) ----------------------
 #

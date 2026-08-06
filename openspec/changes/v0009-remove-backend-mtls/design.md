@@ -35,10 +35,11 @@ because the selected topology explicitly places TLS termination at Ingress.
 
 ### Authorization uses canonical records and submitted configuration
 
-First registration contains configured `scope`, optional `team_id`, and tag.
-State Registry generates `executor_id`; refresh and task operations resolve
-that ID to the canonical Executor record and apply its persisted scope/team/tag
-predicates. The identifier proves no caller identity. Listener ingestion uses
+Registration uses the existing `PUT /v1/executors/{executor_id}` lifecycle and
+contains configured `scope`, optional `team_id`, and tag. Refresh and task
+operations resolve that Executor-supplied ID to the canonical Executor record
+and apply its persisted scope/team/tag predicates. The identifier proves no
+caller identity. Listener ingestion uses
 submitted configured `team_id` and `source_system_id`, validated only for
 existence, relationship, and payload consistency. Alternative rejected: a new
 token or key, because replacement backend authentication is out of scope.

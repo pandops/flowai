@@ -37,9 +37,9 @@ const maxListRawQueryLength = 2048
 // RegisterAdminList mounts GET /admin/tags and GET /admin/tasks on
 // the supplied router. After v0009 the State Registry does not
 // authenticate the system-administrator identity; the deployment
-// network policy owns the /admin/* caller boundary, and the
-// handlers validate the X-FlowAI-Admin-Subject header (if present)
-// as audit attribution data only.
+// network policy owns the /admin/* caller boundary. The handlers do
+// require the documented administrator request context before any
+// repository read.
 func RegisterAdminList(r chi.Router, logger *slog.Logger, repo store.ListRepository, keyring cursorKeyring) {
 	h := &adminListHandlers{logger: logger, repo: repo, keyring: keyring}
 	auth := &adminHandlers{logger: logger, repo: repo}

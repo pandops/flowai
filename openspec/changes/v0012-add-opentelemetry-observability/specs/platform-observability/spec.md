@@ -27,16 +27,16 @@ responses, or durable state; bounded telemetry may be dropped instead.
 ### Requirement: FlowAI propagates trace context without treating it as authority
 
 FlowAI SHALL extract and inject W3C `traceparent` and `tracestate` on
-instrumented synchronous HTTP boundaries, including mTLS connections, and SHALL
+instrumented synchronous HTTP boundaries and SHALL
 create bounded spans for meaningful service, database, Docker/runtime, and
 external-client operations. Trace context and baggage SHALL be observational
 only and SHALL NOT establish or broaden identity, team ownership,
 authorization, scope tokens, or task eligibility.
 
-#### Scenario: Executor calls State Registry over mTLS
+#### Scenario: Executor calls State Registry over backend HTTP
 
 - **WHEN** an instrumented Executor calls State Registry with an active sampled span
-- **THEN** State Registry creates a server span under the propagated W3C parent while continuing to derive authorization exclusively from the authenticated mTLS identity
+- **THEN** State Registry creates a server span under the propagated W3C parent while continuing to enforce canonical Executor scope, team, tag, and assignment predicates
 
 #### Scenario: Caller sends forged baggage
 

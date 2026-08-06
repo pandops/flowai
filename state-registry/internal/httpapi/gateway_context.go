@@ -35,6 +35,15 @@ func requireTrustedGatewayUpgrade(next http.Handler) http.Handler {
 
 func trustedGatewayMiddleware(requireRequestID, _ bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		role := strings.TrimSpace(r.Header.Get(adminRoleHeader))
+		if role != "" && role != "gateway" {
+			JSON(w, http.StatusForbidden, errorResponse{
+				Code:      "not_authorized",
+				Message:   "Gateway request context is required",
+				RequestID: requestID(r),
+			})
+			return
+		}
 		gateway := trustedGatewayContext{
 			TeamID:     strings.TrimSpace(r.Header.Get(gatewayTeamIDHeader)),
 			OperatorID: strings.TrimSpace(r.Header.Get(gatewayOperatorIDHeader)),

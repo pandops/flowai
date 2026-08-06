@@ -49,11 +49,19 @@
 //   - The Postgres container is torn down in finally even when
 //     an assertion throws.
 import { test, expect } from "@playwright/test";
-import { startRegistryWorker, type RegistryWorker } from "../../fixtures/registry_worker";
+import {
+  startRegistryWorker,
+  type RegistryWorker,
+} from "../../fixtures/registry_worker";
+import {
+  createEphemeralTlsMaterial,
+  type EphemeralTlsMaterial,
+} from "../../fixtures/tls_transport";
 
 const LoopbackHost = "127.0.0.1";
 
 let httpWorker: RegistryWorker | null = null;
+let tlsMaterial: EphemeralTlsMaterial | null = null;
 
 test.afterAll(async () => {
   if (httpWorker) {
@@ -63,13 +71,30 @@ test.afterAll(async () => {
       httpWorker = null;
     }
   }
+  if (tlsMaterial) {
+    try {
+      await tlsMaterial.cleanup();
+    } finally {
+      tlsMaterial = null;
+    }
+  }
 });
 
 test("v0002.20 backend HTTP transport is plaintext; legacy TLS keys are ignored; PostgreSQL chain verification still fails closed", async () => {
+  tlsMaterial = await createEphemeralTlsMaterial({ lifetimeDays: 1 });
+  const material = tlsMaterial;
+  const securePostgres = {
+    tlsPostgresServerCertPath: material.postgresServerCertPath,
+    tlsPostgresServerKeyPath: material.postgresServerKeyPath,
+    tlsPostgresCaPath: material.caCertPath,
+    tlsPostgresVerifyMode: "verify-full",
+  };
+
   await test.step("start plain-HTTP Registry worker; readiness probe requires the HTTP listener (not HTTPS)", async () => {
     try {
       httpWorker = await startRegistryWorker({
         productionMode: true,
+        ...securePostgres,
       });
     } catch (primary) {
       const baseMsg =
@@ -113,6 +138,7 @@ test("v0002.20 backend HTTP transport is plaintext; legacy TLS keys are ignored;
     try {
       worker = await startAgain({
         productionMode: true,
+        ...securePostgres,
         legacyTLSServerCert: missing + "cert.pem",
         legacyTLSServerKey: missing + "key.pem",
         legacyTLSClientCA: missing + "ca.pem",
@@ -134,5 +160,23 @@ test("v0002.20 backend HTTP transport is plaintext; legacy TLS keys are ignored;
         await worker.teardown();
       }
     }
+  });
+
+  await test.step("PostgreSQL with an untrusted CA fails closed", async () => {
+    let rejected = false;
+    try {
+      await startRegistryWorker({
+        productionMode: true,
+        tlsPostgresServerCertPath: material.postgresServerCertPath,
+        tlsPostgresServerKeyPath: material.postgresServerKeyPath,
+        tlsPostgresCaPath: material.untrustedCaCertPath,
+        tlsPostgresVerifyMode: "verify-full",
+      });
+    } catch (err) {
+      rejected = true;
+      const message = err instanceof Error ? err.message : String(err);
+      expect(message).toMatch(/certificate|unknown authority|postgres|ready/i);
+    }
+    expect(rejected, "untrusted PostgreSQL CA prevents readiness").toBe(true);
   });
 });

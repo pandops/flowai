@@ -439,11 +439,11 @@ func TestRouteGraphProductionRequestsAreMountedButNotAuthRejected(t *testing.T) 
 		wantStatuses []int
 	}
 	cases := []expectedMounted{
-		{method: http.MethodPost, path: "/admin/teams", wantStatuses: []int{http.StatusBadRequest, http.StatusOK, http.StatusCreated}},
-		{method: http.MethodPost, path: "/admin/source-systems", wantStatuses: []int{http.StatusBadRequest}},
-		{method: http.MethodPost, path: "/admin/task-types", wantStatuses: []int{http.StatusBadRequest}},
-		{method: http.MethodGet, path: "/admin/tags", wantStatuses: []int{http.StatusBadRequest, http.StatusOK}},
-		{method: http.MethodGet, path: "/admin/tasks", wantStatuses: []int{http.StatusBadRequest, http.StatusOK}},
+		{method: http.MethodPost, path: "/admin/teams", wantStatuses: []int{http.StatusUnauthorized}},
+		{method: http.MethodPost, path: "/admin/source-systems", wantStatuses: []int{http.StatusUnauthorized}},
+		{method: http.MethodPost, path: "/admin/task-types", wantStatuses: []int{http.StatusUnauthorized}},
+		{method: http.MethodGet, path: "/admin/tags", wantStatuses: []int{http.StatusUnauthorized}},
+		{method: http.MethodGet, path: "/admin/tasks", wantStatuses: []int{http.StatusUnauthorized}},
 		{method: http.MethodPost, path: "/v1/tasks", wantStatuses: []int{http.StatusBadRequest}},
 		{method: http.MethodPut, path: "/v1/executors/exec-auth-reject", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusOK}},
 		{method: http.MethodGet, path: "/v1/executors/exec-auth-reject", wantStatuses: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusOK}},
@@ -489,18 +489,20 @@ func TestRouteGraphProductionRequestsAreMountedButNotAuthRejected(t *testing.T) 
 			}
 			defer resp.Body.Close()
 			body, _ := io.ReadAll(resp.Body)
-			// The v0009 contract: 401 is no longer returned for the
-			// service-auth boundary. 403 is only rejected when the
-			// body code is unauthenticated / not_authorized.
-			if resp.StatusCode == http.StatusUnauthorized {
-				t.Fatalf("status=401, want non-auth response (v0009); body=%s", string(body))
+			matched := resp.StatusCode == http.StatusBadRequest
+			for _, want := range tc.wantStatuses {
+				matched = matched || resp.StatusCode == want
+			}
+			if !matched {
+				t.Fatalf("status=%d, want one of %v; body=%s", resp.StatusCode, tc.wantStatuses, string(body))
 			}
 			if resp.StatusCode == http.StatusForbidden {
 				var envelope struct {
 					Code string `json:"code"`
 				}
 				_ = json.Unmarshal(body, &envelope)
-				if envelope.Code == "unauthenticated" || envelope.Code == "not_authorized" {
+				if (envelope.Code == "unauthenticated" || envelope.Code == "not_authorized") &&
+					!strings.HasPrefix(tc.path, "/admin/") {
 					t.Fatalf("status=403 with auth code=%q, want non-auth response (v0009); body=%s", envelope.Code, string(body))
 				}
 			}

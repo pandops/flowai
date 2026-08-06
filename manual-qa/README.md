@@ -214,7 +214,7 @@ Keys that DO reach the Executor subprocess:
 | runtime state      | `OPENHANDS_HOST_PORT_START`, `OPENHANDS_HOST_PORT_END`                                                                                                               | `.env` / shell env, with the YAML defaults as fallback                                                        |
 | runtime state      | `OPENHANDS_WORKSPACE`                                                                                                                                                | `.env` / shell env, with `/workspace/project` as fallback                                                     |
 | script-assembled   | `EXECUTOR_API_BIND`, `EXECUTOR_POLL_INTERVAL`                                                                                                                        | hard-coded in `02-start-executor.sh`                                                                          |
-| script-assembled   | `EXECUTOR_STATE_REGISTRY_URL=http://...`                                                                                                                            | State Registry base URL on `127.0.0.1:18443`                                                                 |
+| script-assembled   | `EXECUTOR_STATE_REGISTRY_URL=http://...`                                                                                                                             | State Registry base URL on `127.0.0.1:18443`                                                                  |
 | script-assembled   | `EXECUTOR_SCOPE=team`, `EXECUTOR_TEAM_ID`, `EXECUTOR_AUTHORIZED_TAG=openhands`, `EXECUTOR_MAX_CONTAINERS=1`, `OPENHANDS_INITIAL_RUN=true`, `FLOWAI_CLEANUP_ID_DIR=…` | derived from the State Registry admin onboarding performed by `01-prepare.sh`                                 |
 | shell env          | `PATH`, `HOME`                                                                                                                                                       | the only inherited keys `env -i` re-adds, so the Executor can locate shared libraries and its own `~/.config` |
 
@@ -227,9 +227,9 @@ Keys that DO **NOT** reach the Executor subprocess:
   Postgres; only the State Registry does).
 - The Listener / Operator / Admin client certificates and keys
   (these identities are no longer material; v0009 removes backend
-  HTTP mTLS and the State Registry consumes configured
+  HTTP transport and the State Registry consumes configured
   `team_id` / `source_system_id` / `scope` / `authorized_tag` from
-  the request body and the X-FlowAI-* request-data headers).
+  the request body and the X-FlowAI-\* request-data headers).
 - The runtime state directory's `state/env.sh`, `state/certs/*`, and
   `logs/*` (none of these are mounted into the Executor process).
 - The `manual-qa/.env` file itself. The dotenv loader parses it inside
@@ -301,7 +301,7 @@ Executor or the OpenHands child.
 - The Listener, Team Executor, Gateway, and System Administrator
   identities are no longer material in v0009; the State Registry
   consumes the configured `team_id`, `source_system_id`, `scope`,
-  and `authorized_tag` from the request body and the X-FlowAI-*
+  and `authorized_tag` from the request body and the X-FlowAI-\*
   request-data headers. `03-submit-task.sh` validates the listener
   body `team_id` and `source_system_id` equal the persisted
   `FLOWAI_TEAM_ID` and `FLOWAI_SOURCE_SYSTEM_ID` before issuing the

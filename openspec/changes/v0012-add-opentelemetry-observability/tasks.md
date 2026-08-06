@@ -15,7 +15,7 @@
 - [ ] 3.1 Implement `state-registry/internal/telemetry` with configuration validation, resource identity, OTLP trace export, W3C propagators, bounded batching/sampling, no-op behavior, HTTP server instrumentation, sanitized diagnostics, and bounded shutdown.
 - [ ] 3.2 Instrument State Registry's meaningful handler, store/database, and dependency operations with normalized names and bounded metadata while preserving authorization, API bodies, transactions, and error taxonomy.
 - [ ] 3.3 Implement the independent `executor_docker_opehands/internal/telemetry` package with the same external behavior but no import from State Registry or any shared FlowAI package.
-- [ ] 3.4 Wrap Executor health HTTP handling, State Registry mTLS transport, OpenHands HTTP transport, and meaningful Docker/runtime operations; add finite `executor.task.run` spans and links without holding polling, claim, or ingestion spans across durable waits.
+- [ ] 3.4 Wrap Executor health HTTP handling, State Registry backend HTTP transport, OpenHands HTTP transport, and meaningful Docker/runtime operations; add finite `executor.task.run` spans and links without holding polling, claim, or ingestion spans across durable waits.
 - [ ] 3.5 Re-run the E2E tests from 2.1 and 2.2 and require GREEN evidence for service export, W3C parentage, finite spans, canonical identifier attributes, links, and unchanged task lifecycle; then run related Go tests.
 
 ## 4. RED/GREEN — trusted OpenHands telemetry configuration
