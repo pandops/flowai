@@ -19,13 +19,13 @@ type ExecutorIdentity struct {
 	RequestID  string
 }
 
-// ExecutorRegistrationRequest is the closed request body for
-// PUT /v1/executors/{executor_id}.
+// ExecutorRegistrationRequest is the closed request body for first-start POST
+// and restart PUT registration. Identity is derived from executor_id.
 type ExecutorRegistrationRequest struct {
 	Scope           string          `json:"scope"`
-	TeamID          *string         `json:"team_id"`
+	TeamID          *string         `json:"team_id,omitempty"`
 	ExecutorType    string          `json:"executor_type"`
-	Identity        string          `json:"identity"`
+	Identity        string          `json:"-"` // deprecated in-process fixture field; never accepted on the wire
 	AuthorizedTag   string          `json:"authorized_tag"`
 	MaxCapacity     int             `json:"max_capacity"`
 	RunningCount    int             `json:"running_count"`
@@ -36,7 +36,7 @@ type ExecutorRegistrationRequest struct {
 type Executor struct {
 	ExecutorID      string          `json:"executor_id"`
 	Scope           string          `json:"scope"`
-	TeamID          *string         `json:"team_id"`
+	TeamID          *string         `json:"team_id,omitempty"`
 	ExecutorType    string          `json:"executor_type"`
 	Identity        string          `json:"identity"`
 	AuthorizedTag   string          `json:"authorized_tag"`

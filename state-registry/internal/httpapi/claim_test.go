@@ -829,8 +829,7 @@ func (h *claimHarness) registerExecutor(t *testing.T, execID, teamID, tag string
 	body, _ := json.Marshal(executorPutBody{
 		Scope:           scope,
 		TeamID:          teamPtr,
-		ExecutorType:    "executor_docker_opehands",
-		Identity:        execID,
+		ExecutorType:    "executor_docker_openhands",
 		AuthorizedTag:   tag,
 		MaxCapacity:     1,
 		RunningCount:    0,

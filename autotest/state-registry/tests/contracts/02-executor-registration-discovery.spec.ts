@@ -83,7 +83,7 @@ test("v0002.3 executor discovers only pending same-team tasks matching the regis
   await registerExecutor(execA, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-3-a",
     authorized_tag: "openhands",
     max_capacity: 4,
@@ -219,7 +219,7 @@ test("v0002.27 registration rejects zero-tag and multi-tag bodies with invalid_t
           data: {
             scope: "team",
             team_id: bsA.admin.team_id,
-            executor_type: "executor_docker_opehands",
+            executor_type: "executor_docker_openhands",
             identity: "exec-zero-tags",
             authorized_tag: "",
             max_capacity: 1,
@@ -246,7 +246,7 @@ test("v0002.27 registration rejects zero-tag and multi-tag bodies with invalid_t
           data: {
             scope: "team",
             team_id: bsA.admin.team_id,
-            executor_type: "executor_docker_opehands",
+            executor_type: "executor_docker_openhands",
             identity: "exec-many-tags",
             authorized_tag: ["openhands", "k8s"],
             max_capacity: 1,
@@ -278,7 +278,7 @@ test("v0002.28 capacity observations are informational; claim is not gated on sa
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-28",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -319,7 +319,7 @@ test("v0002.34 discovery isolates team before pagination; foreign point probe re
   await registerExecutor(execA, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-34-a",
     authorized_tag: "openhands",
     max_capacity: 4,
@@ -431,7 +431,7 @@ test("v0002.54 system-owned Executor registers with scope=system, team_id=null; 
     const reg = await registerExecutor(exec, worker.baseUrl, {
       scope: "system",
       team_id: null,
-      executor_type: "executor_docker_opehands",
+      executor_type: "executor_docker_openhands",
       identity: "exec-v0002-54-system",
       authorized_tag: "openhands",
       max_capacity: 4,
@@ -450,7 +450,7 @@ test("v0002.54 system-owned Executor registers with scope=system, team_id=null; 
           data: {
             scope: "system",
             team_id: "team-foreign",
-            executor_type: "executor_docker_opehands",
+            executor_type: "executor_docker_openhands",
             identity: execId,
             authorized_tag: "openhands",
             max_capacity: 1,
@@ -484,7 +484,7 @@ test("v0002.55 system-owned Executor discovers pending tasks across teams sharin
   await registerExecutor(sysExec, worker.baseUrl, {
     scope: "system",
     team_id: null,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-55-system",
     authorized_tag: "openhands",
     max_capacity: 4,
@@ -581,7 +581,7 @@ test("v0002.56 team-owned Executor discovery remains team-scoped even when a sys
   await registerExecutor(sysExec, worker.baseUrl, {
     scope: "system",
     team_id: null,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-56-system",
     authorized_tag: "openhands",
     max_capacity: 4,
@@ -595,7 +595,7 @@ test("v0002.56 team-owned Executor discovery remains team-scoped even when a sys
   await registerExecutor(teamExec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-56-team",
     authorized_tag: "openhands",
     max_capacity: 4,
@@ -679,7 +679,7 @@ test("v0002.59 re-registration with a different scope is rejected without mutati
   await registerExecutor(sysExec, worker.baseUrl, {
     scope: "system",
     team_id: null,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-59-sys",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -689,7 +689,7 @@ test("v0002.59 re-registration with a different scope is rejected without mutati
   await registerExecutor(teamExec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-59-team",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -705,7 +705,7 @@ test("v0002.59 re-registration with a different scope is rejected without mutati
         data: {
           scope: "team",
           team_id: bsA.admin.team_id,
-          executor_type: "executor_docker_opehands",
+          executor_type: "executor_docker_openhands",
           identity: sysId,
           authorized_tag: "openhands",
           max_capacity: 1,
@@ -740,7 +740,7 @@ test("v0002.59 re-registration with a different scope is rejected without mutati
           data: {
             scope: "system",
             team_id: null,
-            executor_type: "executor_docker_opehands",
+            executor_type: "executor_docker_openhands",
             identity: teamId,
             authorized_tag: "openhands",
             max_capacity: 1,
@@ -778,7 +778,7 @@ test("v0002.67 FIFO discovery orders eligible pending tasks by (ingested_at ASC,
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-67",
     authorized_tag: "openhands",
     max_capacity: 4,

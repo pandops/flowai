@@ -115,10 +115,10 @@ func seedClaimFixture(t *testing.T, h *claimIntegrationHarness, fixtures ...seed
 		`INSERT INTO executors
 		 (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count, runtime_metadata)
 		 VALUES
-		 ('exec-a', 'team', 'team-a', 'executor_docker_opehands', 'identity-exec-a', $1, 1, 0, '{}'::jsonb),
-		 ('exec-a2', 'team', 'team-a', 'executor_docker_opehands', 'identity-exec-a2', $1, 1, 0, '{}'::jsonb),
-		 ('exec-b', 'team', 'team-b', 'executor_docker_opehands', 'identity-exec-b', $1, 1, 0, '{}'::jsonb),
-		 ('exec-sys', 'system', NULL, 'executor_docker_opehands', 'identity-exec-sys', $1, 1, 0, '{}'::jsonb)`,
+		 ('exec-a', 'team', 'team-a', 'executor_docker_openhands', 'identity-exec-a', $1, 1, 0, '{}'::jsonb),
+		 ('exec-a2', 'team', 'team-a', 'executor_docker_openhands', 'identity-exec-a2', $1, 1, 0, '{}'::jsonb),
+		 ('exec-b', 'team', 'team-b', 'executor_docker_openhands', 'identity-exec-b', $1, 1, 0, '{}'::jsonb),
+		 ('exec-sys', 'system', NULL, 'executor_docker_openhands', 'identity-exec-sys', $1, 1, 0, '{}'::jsonb)`,
 		fixtures[0].tag)
 }
 
@@ -873,7 +873,7 @@ func TestFourLevelImageResolutionPrecedence(t *testing.T) {
 		`INSERT INTO executors
 		 (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count, runtime_metadata)
 		 VALUES
-		 ('exec-a', 'team', 'team-a', 'executor_docker_opehands', 'identity-exec-a', 'openhands', 1, 0, '{}'::jsonb)`,
+		 ('exec-a', 'team', 'team-a', 'executor_docker_openhands', 'identity-exec-a', 'openhands', 1, 0, '{}'::jsonb)`,
 	)
 
 	t.Run("task_override wins when set", func(t *testing.T) {

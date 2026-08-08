@@ -223,7 +223,7 @@ func (h *section9Harness) seedExecutor(t *testing.T, executorID, teamID, tag str
 	mustExec(t, h.db,
 		`INSERT INTO executors
 		 (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count, runtime_metadata)
-		 VALUES ($1, 'team', $2, 'executor_docker_opehands', $3, $4, 1, 0, '{}'::jsonb)
+		 VALUES ($1, 'team', $2, 'executor_docker_openhands', $3, $4, 1, 0, '{}'::jsonb)
 		 ON CONFLICT (executor_id) DO NOTHING`,
 		executorID, teamID, "identity-"+executorID, tag)
 }

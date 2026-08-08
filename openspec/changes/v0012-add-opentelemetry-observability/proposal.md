@@ -51,7 +51,7 @@ reliably diagnose latency and failure boundaries.
 - Affected test cases: new `v0012.*` E2E definitions under
   `specs/test-cases/`.
 - Affected code: per-service telemetry packages and startup wiring in
-  `state-registry/`, `executor_docker_opehands/`, and later concrete services;
+  `state-registry/`, `executor_docker_openhands/`, and later concrete services;
   Executor-owned OpenHands container environment construction; local/E2E
   Collector configuration; service logs and metrics.
 - Affected dependencies: OpenTelemetry Go SDK, OTLP exporters, HTTP and database

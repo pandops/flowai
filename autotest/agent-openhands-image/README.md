@@ -14,7 +14,7 @@ real API key is required.
 
 ## Endpoints exposed
 
-| Method | Path                           | Purpose (used by executor_docker_opehands)      |
+| Method | Path                           | Purpose (used by executor_docker_openhands)     |
 | ------ | ------------------------------ | ----------------------------------------------- |
 | GET    | /health                        | Health probe before submitting the prompt       |
 | POST   | /api/conversations             | Submit the task prompt; returns conversation_id |

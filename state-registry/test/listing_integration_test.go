@@ -195,7 +195,7 @@ func TestListTasksClaimedTimestamp(t *testing.T) {
 	mustExec(t, db, `INSERT INTO source_systems (source_system_id, team_id, listener_identity) VALUES ('src-a', 'team-a', 'listener-a')`)
 	mustExec(t, db, `INSERT INTO task_types (task_type_id, team_id, execution_tag) VALUES ('tt-a', 'team-a', 'tag-a')`)
 	mustExec(t, db, `INSERT INTO executors (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count)
-		VALUES ('exec-a', 'team', 'team-a', 'executor_docker_opehands', 'identity-a', 'tag-a', 1, 1)`)
+		VALUES ('exec-a', 'team', 'team-a', 'executor_docker_openhands', 'identity-a', 'tag-a', 1, 1)`)
 	mustExec(t, db, `INSERT INTO tasks (
 		task_id, team_id, source_system_id, source_id, task_type_id, required_tag, payload,
 		current_state, owner_command_id, executor_id, resolved_image, image_source, ingested_at, claimed_at
@@ -355,7 +355,7 @@ func TestListTasksFullCanonicalProjection(t *testing.T) {
 	mustExec(t, db, `INSERT INTO source_systems (source_system_id, team_id, listener_identity) VALUES ('src-a', 'team-a', 'listener-a')`)
 	mustExec(t, db, `INSERT INTO task_types (task_type_id, team_id, execution_tag) VALUES ('tt-a', 'team-a', 'tag-a')`)
 	mustExec(t, db, `INSERT INTO executors (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count)
-		VALUES ('exec-a', 'team', 'team-a', 'executor_docker_opehands', 'identity-a', 'tag-a', 1, 1)`)
+		VALUES ('exec-a', 'team', 'team-a', 'executor_docker_openhands', 'identity-a', 'tag-a', 1, 1)`)
 
 	mustExec(t, db, `INSERT INTO tasks (
 		task_id, team_id, source_system_id, source_id, task_type_id,

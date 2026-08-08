@@ -481,7 +481,7 @@ test("v0002.8 environment ownership is independent of execution; claim carries t
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-8",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -831,7 +831,7 @@ test("v0002.11 assigned Executor opens environment via scope token; foreign Exec
   await registerExecutor(execAssigned, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-11-assigned",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -913,7 +913,7 @@ test("v0002.11 assigned Executor opens environment via scope token; foreign Exec
   await registerExecutor(execForeign, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-11-foreign",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1231,7 +1231,7 @@ test("v0002.40 open-environment boundary verifies every team-bound claim before 
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-40",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1419,7 +1419,7 @@ test("v0002.45 scope-token security: every invalid case returns the documented 4
   await registerExecutor(exec1, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-45-1",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1567,7 +1567,7 @@ test("v0002.45 scope-token security: every invalid case returns the documented 4
   await registerExecutor(exec2, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-45-2",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1997,7 +1997,7 @@ test("v0002.49 task-owned environment can be opened ONLY by the parent task's as
   await registerExecutor(execParent, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-49-parent",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -2011,7 +2011,7 @@ test("v0002.49 task-owned environment can be opened ONLY by the parent task's as
   await registerExecutor(execSibling, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-49-sibling",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -2197,7 +2197,7 @@ test("v0002.78 every invalid open-environment request returns the same 404 shape
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-78",
     authorized_tag: "openhands",
     max_capacity: 1,

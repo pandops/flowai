@@ -1,6 +1,6 @@
 ## Context
 
-State Registry and `executor_docker_opehands` emit JSON logs and request IDs,
+State Registry and `executor_docker_openhands` emit JSON logs and request IDs,
 but neither initializes an OpenTelemetry SDK. OpenHands has built-in trace
 instrumentation through Laminar and exports standard OTLP when its process
 receives the documented `OTEL_*` variables; those variables are not currently

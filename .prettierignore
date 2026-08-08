@@ -2,3 +2,5 @@ node_modules/
 autotest/reports/
 openspec/changes/archive/
 *.puml
+executor_k8s_openhands/deploy/k8s/chart/templates/
+openspec/changes/v0005-executor-k8s/tasks.md

@@ -1,0 +1,41 @@
+executor_api_bind: "127.0.0.1:8030"
+executor_max_pods: 2
+executor_namespace: flowai-executor-k8s
+executor_service_account: executor-k8s-openhands
+storage_class_name: flowai-local-path
+cache_dir: /var/lib/flowai/executor-k8s/cache
+openhands_image: ghcr.io/openhands/agent-server:latest-python
+openhands_port: 8000
+image_pull_policy: if-not-present
+log_level: info
+# State Registry is the Executor's mandatory control plane.
+# After v0009 the backend transport is plain HTTP; external HTTPS
+# terminates at the Ingress; the deployment network policy owns
+# the caller boundary. The three legacy mTLS fields below remain
+# accepted for staged configuration cleanup but the Executor
+# never reads them; the values may be empty.
+state_registry_url: "http://127.0.0.1:18443"
+state_registry_tls_client_cert: ""
+state_registry_tls_client_key: ""
+state_registry_tls_server_ca: ""
+scope: team
+team_id: team-a
+authorized_tag: k8s-cluster-a
+poll_interval: 2s
+# v0005 retention window after the State Registry accepts the
+# terminal task event. Each default is 0s (immediate cleanup); a
+# non-zero delay keeps the Pod counted against local capacity
+# until the deadline expires. Shutdown, drain, and explicit
+# cancellation may clean up sooner. A failed removal SHALL NOT
+# append a second terminal task event.
+finished_cleanup_delay: "0s"
+failed_cleanup_delay: "0s"
+# V1 conversation startup fields. The Executor must satisfy
+# exactly one of: an AgentProfileID OR (LLMModel + LLMAPIKey +
+# LLMUsageID). The harness sets these via OPENHANDS_LLM_* /
+# OPENHANDS_AGENT_PROFILE_ID environment variables at runtime.
+openhands_workspace: "/workspace/project"
+openhands_llm_model: "openai/gpt-4o-mini"
+openhands_llm_api_key: "flowai-placeholder-key"
+openhands_llm_usage_id: "flowai-executor"
+openhands_initial_run: true

@@ -3,7 +3,7 @@
 // Covers v0002.13, v0002.14, v0002.15, v0002.16, v0002.17, v0002.18,
 // v0002.19, v0002.52, v0002.53 — the nine "executor vs v0002 State
 // Registry" contract cases that the concrete Docker Executor service
-// (`executor_docker_opehands` per the platform
+// (`executor_docker_openhands` per the platform
 // `executor_<runtime>_<tool>` convention documented in AGENTS.md;
 // runtime = docker, tool = openhands) drives when speaking the
 // consolidated State Registry contract.
@@ -812,7 +812,7 @@ test("v0002.13 Executor honors local capacity; State Registry never gates claim 
         // v0002 binary has not arrived yet; render the precise RED.
         const redDetail = redactedLogs().slice(-2_000);
         throw new Error(
-          "v0002.13 RED — executor_docker_opehands did not claim any of the three eligible pending tasks on the v0002 surface. " +
+          "v0002.13 RED — executor_docker_openhands did not claim any of the three eligible pending tasks on the v0002 surface. " +
             "The current v0001 binary cannot PUT /v1/executors/{id} with the v0002 scope/team/authorized_tag body " +
             "and therefore never issues a claim against the State Registry. Behaviour-specific turning-green condition: " +
             "the v0002 client implementation must (a) PUT /v1/executors/{executor_id} with scope=team and team_id=team-a, " +
@@ -857,8 +857,8 @@ test("v0002.14 Executor registers with concrete executor_type and exactly one au
     );
     if (row === null) {
       throw new Error(
-        "v0002.14 RED — executor_docker_opehands did not PUT /v1/executors/{executor_id} " +
-          "under the v0002 contract with scope=team, team_id=team-a, executor_type=executor_docker_opehands, " +
+        "v0002.14 RED — executor_docker_openhands did not PUT /v1/executors/{executor_id} " +
+          "under the v0002 contract with scope=team, team_id=team-a, executor_type=executor_docker_openhands, " +
           "identity=<service identity>, exactly one authorized_tag=openhands, max_capacity + running_count + runtime_metadata. " +
           "The State Registry registration was not persisted. " +
           "The startup registration must PUT the documented body shape and the row must persist. " +
@@ -874,8 +874,8 @@ test("v0002.14 Executor registers with concrete executor_type and exactly one au
     );
     expect(
       row.executor_type,
-      "Executor row carries concrete executor_type = executor_docker_opehands",
-    ).toBe("executor_docker_opehands");
+      "Executor row carries concrete executor_type = executor_docker_openhands",
+    ).toBe("executor_docker_openhands");
     expect(
       row.authorized_tag,
       "Executor row carries exactly one authorized_tag = openhands",
@@ -946,7 +946,7 @@ test("v0002.15 lifecycle event envelopes include task_id, executor_id, team_id, 
     );
     if (ev === null) {
       throw new Error(
-        "v0002.15 RED — executor_docker_opehands did not append a binary-attributed task lifecycle event for the claimed task. " +
+        "v0002.15 RED — executor_docker_openhands did not append a binary-attributed task lifecycle event for the claimed task. " +
           "Specifically no event was found whose executor_id matches the binary and whose team_id equals team-a, " +
           "with a strict later (occurred_at, event_id) tuple than the Registry-appended FIRST `created` event. " +
           "The Executor must POST /v1/tasks/{task_id}/events with the canonical envelope " +
@@ -1099,11 +1099,11 @@ test("v0002.16 Executor client requests conform to the consolidated State Regist
     );
     if (row === null) {
       throw new Error(
-        "v0002.16 RED — executor_docker_opehands produced no Executor row under the v0002 contract, " +
+        "v0002.16 RED — executor_docker_openhands produced no Executor row under the v0002 contract, " +
           "so its real client requests cannot be observed to conform to the consolidated State Registry OpenAPI. " +
           "The v0001 binary never PUT /v1/executors/{id} under the v0002 schema, never GET /v1/executors/{id}/tasks?tag=... " +
           "and never POST /v1/executors/{id}/claim. Turning-green condition: the v0002 client emits a startup PUT " +
-          "with scope, team_id, executor_type=executor_docker_opehands, identity, exactly one authorized_tag, " +
+          "with scope, team_id, executor_type=executor_docker_openhands, identity, exactly one authorized_tag, " +
           "plus discovery / claim / task-event / open-environment requests that match the OpenAPI shapes. " +
           `Captured redacted logs tail=\n${redactedLogs().slice(-2_000)}`,
       );
@@ -1111,7 +1111,7 @@ test("v0002.16 Executor client requests conform to the consolidated State Regist
     expect(
       row.executor_type,
       "executor_type conforms to the documented concrete identifier",
-    ).toBe("executor_docker_opehands");
+    ).toBe("executor_docker_openhands");
     expect(row.scope, "scope conforms to team|system enum").toBe("team");
 
     // The discovered /v1/executors/{id}/tasks?tag=... probe shape: poll
@@ -1235,7 +1235,7 @@ test("v0002.17 Executor uses its registered scope; refuses tasks with mismatched
     );
     if (claimedA === null) {
       throw new Error(
-        "v0002.17 RED — executor_docker_opehands (scoped to team-a, tag=openhands) did not perform any v0002 claim, " +
+        "v0002.17 RED — executor_docker_openhands (scoped to team-a, tag=openhands) did not perform any v0002 claim, " +
           "so neither scope authority nor resolved_image precedence can be observed. " +
           "Turning-green condition: v0002 client must (a) PUT /v1/executors/{id} with scope=team and team_id=team-a, " +
           "(b) GET /v1/executors/{id}/tasks?tag=openhands filtering by team_id=team-a only (excluding team-b), " +
@@ -1323,7 +1323,7 @@ test("v0002.18 Executor pulls the oldest eligible pending task after explicit FI
     if (poll.claimed === null) {
       // Render precise RED; v0002 binary must claim the oldest.
       throw new Error(
-        "v0002.18 RED — executor_docker_opehands did not claim the oldest eligible pending task in FIFO order. " +
+        "v0002.18 RED — executor_docker_openhands did not claim the oldest eligible pending task in FIFO order. " +
           "Specifically, after spawning the binary scoped to team-a with tag=openhands, none of the three pending tasks " +
           "had its executor_id set to the binary, so FIFO discovery + atomic claim could not be observed. " +
           "Turning-green condition: the v0002 client must (a) discover the three tasks ordered by (ingested_at ASC, task_id ASC), " +
@@ -1470,7 +1470,7 @@ test("v0002.19 Executor opens task environment via the compact scope token; inva
 
     if (binaryOpenAudit === null) {
       throw new Error(
-        "v0002.19 RED — executor_docker_opehands did not perform the documented environment.open audit effect " +
+        "v0002.19 RED — executor_docker_openhands did not perform the documented environment.open audit effect " +
           "attributable to the binary for the team-a assigned task. The harness MUST NOT credit a synthetic direct Executor " +
           "open call to the binary, and the test does not request against the Executor loopback environment route. " +
           "Turning-green condition: the v0002 client must (a) POST /v1/executors/{id}/claim for the assigned task, " +
@@ -1589,7 +1589,7 @@ test("v0002.52 Executor runs task with team default image; image_source is team_
       }
       if (observed === null) {
         throw new Error(
-          "v0002.52 RED — executor_docker_opehands did not start a Docker container labeled with its executor_id " +
+          "v0002.52 RED — executor_docker_openhands did not start a Docker container labeled with its executor_id " +
             "for the team-a task that resolved to teams.default_image. " +
             "Turning-green condition: the v0002 binary must (a) PUT /v1/executors/{id} under team-scope, " +
             "(b) GET /v1/executors/{id}/tasks?tag=openhands in FIFO order, " +
@@ -1735,7 +1735,7 @@ test("v0002.53 Executor runs task with per-task image override; image_source is 
       }
       if (observed === null) {
         const redMessage =
-          "v0002.53 RED — executor_docker_opehands did not start a Docker container labeled with its executor_id " +
+          "v0002.53 RED — executor_docker_openhands did not start a Docker container labeled with its executor_id " +
           "for the team-a task whose per-task image override should have won the four-level precedence. " +
           `The Markdown requires the container Image to equal ${expectedPull} and the image source label to be ` +
           "task_override, NOT the local image 'local-X-v0002-53-never-consulted'. " +

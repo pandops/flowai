@@ -61,11 +61,11 @@ EXEC_PID_FILE="$(mq::state_path state/executor.pid)"
 if [[ -f "$EXEC_PID_FILE" ]]; then
   EXEC_PID="$(cat "$EXEC_PID_FILE")"
   if mq::pid_is_alive "$EXEC_PID"; then
-    if mq::pid_identity_check "$EXEC_PID" "executor_docker_opehands"; then
+    if mq::pid_identity_check "$EXEC_PID" "executor_docker_openhands"; then
       mq::trace "cleanup" "sending SIGTERM to executor pid=$EXEC_PID"
-      mq::terminate_pid "$EXEC_PID" 15 "executor_docker_opehands" || mq::trace "cleanup" "executor pid=$EXEC_PID did not exit cleanly"
+      mq::terminate_pid "$EXEC_PID" 15 "executor_docker_openhands" || mq::trace "cleanup" "executor pid=$EXEC_PID did not exit cleanly"
     else
-      mq::trace "cleanup" "executor pid=$EXEC_PID is alive but cmdline does not match executor_docker_opehands; refusing to kill (PID reuse)"
+      mq::trace "cleanup" "executor pid=$EXEC_PID is alive but cmdline does not match executor_docker_openhands; refusing to kill (PID reuse)"
     fi
   fi
   rm -f "$EXEC_PID_FILE"

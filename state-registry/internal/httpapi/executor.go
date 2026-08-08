@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,10 +12,13 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/flowai/platform/state-registry/internal/platform"
 	"github.com/flowai/platform/state-registry/internal/store"
 )
+
+type executorRegistrationCreateKey struct{}
 
 const (
 	executorIDHeader     = "X-FlowAI-Executor-Id"
@@ -35,10 +39,36 @@ type executorHandlers struct {
 // source of truth for scope/team predicates.
 func RegisterExecutor(r chi.Router, logger *slog.Logger, admin store.AdminRepository, repo store.ExecutorRepository) {
 	h := &executorHandlers{logger: logger, admin: admin, repo: repo}
+	r.Post("/executors", h.create)
 	r.Put("/executors/{executor_id}", h.register)
 	r.Get("/executors/{executor_id}", h.get)
 	r.Get("/executors/{executor_id}/tasks", h.discover)
 	r.Post("/executors/{executor_id}/claim", h.claim)
+}
+
+func (h *executorHandlers) create(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxAdminRequestBytes))
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "request body is invalid")
+		return
+	}
+	var req platform.ExecutorRegistrationRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "request body is invalid")
+		return
+	}
+	executorID := uuid.NewString()
+	chi.RouteContext(r.Context()).URLParams.Add("executor_id", executorID)
+	r.Header.Set(executorIDHeader, executorID)
+	if req.Scope == platform.ExecutorScopeTeam && req.TeamID != nil {
+		r.Header.Set(adminRoleHeader, executorTeamRole)
+		r.Header.Set(executorTeamIDHeader, *req.TeamID)
+	} else {
+		r.Header.Set(adminRoleHeader, executorSysRole)
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r = r.WithContext(context.WithValue(r.Context(), executorRegistrationCreateKey{}, true))
+	h.register(w, r)
 }
 
 func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
@@ -70,16 +100,12 @@ func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_scope", "scope must be team or system")
 		return
 	}
-	if _, exists := raw["team_id"]; !exists {
+	if _, exists := raw["team_id"]; !exists && req.Scope == platform.ExecutorScopeTeam {
 		h.writeError(w, r, http.StatusBadRequest, "missing_team_id", "team_id is required and may be null only for system scope")
 		return
 	}
-	if !validIdentifier(executorID) || !validText(req.ExecutorType, 128) || !validText(req.Identity, 512) || req.MaxCapacity < 0 || req.RunningCount < 0 || !validJSONObject(req.RuntimeMetadata) {
+	if !validIdentifier(executorID) || !validText(req.ExecutorType, 128) || req.MaxCapacity < 0 || req.RunningCount < 0 || !validJSONObject(req.RuntimeMetadata) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "registration fields are invalid")
-		return
-	}
-	if req.Identity != identity.ExecutorID {
-		h.writeError(w, r, http.StatusForbidden, "not_authorized", "Executor identity does not match registration")
 		return
 	}
 	if req.Scope == platform.ExecutorScopeTeam {
@@ -128,7 +154,11 @@ func (h *executorHandlers) register(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	JSON(w, http.StatusOK, executor)
+	status := http.StatusOK
+	if created, _ := r.Context().Value(executorRegistrationCreateKey{}).(bool); created {
+		status = http.StatusCreated
+	}
+	JSON(w, status, executor)
 }
 
 func (h *executorHandlers) get(w http.ResponseWriter, r *http.Request) {

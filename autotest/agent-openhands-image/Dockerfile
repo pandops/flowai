@@ -1,5 +1,5 @@
 # Real OpenHands V1 agent-server image, retagged for use as the test
-# agent runtime in the executor_docker_opehands autotest.
+# agent runtime in the executor_docker_openhands autotest.
 #
 # In environments without internet access, pre-pull the upstream image
 # and rebuild with --build-arg AGENT_SERVER_IMAGE=<local-mirror>.

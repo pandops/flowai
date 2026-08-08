@@ -1,0 +1,25 @@
+releases:
+  - name: flowai-local-path
+    namespace: flowai-executor-k8s
+    createNamespace: true
+    chart: ./chart
+    values:
+      - ./values-k3d.yaml
+      - executor:
+          enabled: false
+        persistence:
+          enabled: false
+    wait: true
+    timeout: 180
+  - name: executor-k8s-openhands
+    namespace: flowai-executor-k8s
+    createNamespace: true
+    chart: ./chart
+    values:
+      - ./values-k3d.yaml
+      - storageClass:
+          create: false
+    needs:
+      - flowai-executor-k8s/flowai-local-path
+    wait: true
+    timeout: 180

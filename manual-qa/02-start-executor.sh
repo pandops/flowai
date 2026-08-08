@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 02-start-executor.sh — start executor_docker_opehands against the
+# 02-start-executor.sh — start executor_docker_openhands against the
 # State Registry over backend HTTP with rootless Podman.
 #
 # Required runtime inputs (fail closed if any are missing):
@@ -101,7 +101,7 @@ mq::trace "executor" "DOCKER_SOCKET_PATH=$DOCKER_SOCKET_PATH"
 
 # --- launch ---------------------------------------------------------------
 
-EXEC_BIN="$(mq::state_path bin/executor_docker_opehands)"
+EXEC_BIN="$(mq::state_path bin/executor_docker_openhands)"
 EXEC_YAML="$(mq::state_path state/executor.yaml)"
 EXEC_LOG="$(mq::state_path logs/executor.log)"
 : >"$EXEC_LOG"
@@ -144,7 +144,7 @@ if [[ "$HAS_PROFILE" -eq 1 ]]; then
   EXEC_ENV+=("OPENHANDS_AGENT_PROFILE_ID=$OPENHANDS_AGENT_PROFILE_ID")
 fi
 
-mq::trace "executor" "starting executor_docker_opehands (pid will be captured from background)"
+mq::trace "executor" "starting executor_docker_openhands (pid will be captured from background)"
 nohup env -i \
   PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   HOME="$HOME" \
@@ -159,7 +159,7 @@ chmod 0600 "$(mq::state_path state/executor.pid)"
 EXEC_DEADLINE=$(( $(date +%s) + 30 ))
 EXEC_UP=0
 while [[ $(date +%s) -lt $EXEC_DEADLINE ]]; do
-  if grep -q "executor_docker_opehands starting" "$EXEC_LOG" 2>/dev/null; then
+  if grep -q "executor_docker_openhands starting" "$EXEC_LOG" 2>/dev/null; then
     EXEC_UP=1
     break
   fi

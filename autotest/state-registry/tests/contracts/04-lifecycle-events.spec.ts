@@ -209,7 +209,7 @@ test("v0002.5 idempotent retry of the same running event returns the original 20
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-5",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -305,7 +305,7 @@ test("v0002.6 Executor self events are accepted only by the Executor event strea
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-6",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -379,7 +379,7 @@ test("v0002.23 successful happy-path lifecycle projects [created, running, finis
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-23",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -471,7 +471,7 @@ test("v0002.24 failure path projects [created, running, failed] without a finish
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-24",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -564,7 +564,7 @@ test("v0002.25 invalid transitions: terminal-after-terminal, out-of-order tuples
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-25",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -684,7 +684,7 @@ test("v0002.26 deterministic ordering (occurred_at ASC, event_id ASC); retries d
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-26",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -783,7 +783,7 @@ test("v0002.29 assignment ownership survives restart", async () => {
   await registerExecutor(exec1, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-29-1",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -793,7 +793,7 @@ test("v0002.29 assignment ownership survives restart", async () => {
   await registerExecutor(exec2, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-29-2",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -848,7 +848,7 @@ test("v0002.31 assigned Executor accepts running/finished; unassigned same-team 
   await registerExecutor(exec1, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-31-1",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -858,7 +858,7 @@ test("v0002.31 assigned Executor accepts running/finished; unassigned same-team 
   await registerExecutor(exec2, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-31-2",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -961,7 +961,7 @@ test("v0002.36 foreign-team task events and self events return non-revealing 404
   await registerExecutor(execA, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-36",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1010,7 +1010,7 @@ test("v0002.58 system-owned Executor task-event envelope is verified against the
   await registerExecutor(sysExec, worker.baseUrl, {
     scope: "system",
     team_id: null,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-58-sys",
     authorized_tag: executionTag,
     max_capacity: 1,

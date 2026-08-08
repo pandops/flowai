@@ -1,0 +1,30 @@
+image:
+  repository: localhost/flowai/executor_k8s_openhands
+  tag: v0005-e2e
+  pullPolicy: Never
+
+stateRegistryURL: http://host.containers.internal:18443
+
+hostAliases:
+  - ip: 169.254.1.2
+    hostnames:
+      - host.containers.internal
+
+storageClass:
+  create: true
+  name: flowai-local-path
+  provisioner: flowai.io/local-path
+  image: rancher/local-path-provisioner:v0.0.32
+  helperImage: busybox:1.36.1
+
+executor:
+  scope: team
+  teamID: team-a
+  authorizedTag: k8s-cluster-a
+  maxPods: 2
+  cacheDir: /var/lib/flowai/executor-k8s/cache
+
+openhands:
+  llmModel: openai/gpt-4o-mini
+  llmAPIKey: flowai-placeholder-key
+  llmUsageID: flowai-executor

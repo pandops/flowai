@@ -341,7 +341,7 @@ test("v0002.63 Executor registration never creates or updates a team; only POST 
             data: {
               scope: "team",
               team_id: "team-ghost",
-              executor_type: "executor_docker_opehands",
+              executor_type: "executor_docker_openhands",
               identity: executorId,
               authorized_tag: "openhands",
               max_capacity: 1,
@@ -382,7 +382,7 @@ test("v0002.63 Executor registration never creates or updates a team; only POST 
             data: {
               scope: "team",
               team_id: realTeamId,
-              executor_type: "executor_docker_opehands",
+              executor_type: "executor_docker_openhands",
               identity: executorId,
               authorized_tag: "openhands",
               max_capacity: 1,
@@ -418,7 +418,7 @@ test("v0002.63 Executor registration never creates or updates a team; only POST 
             data: {
               scope: "system",
               team_id: realTeamId,
-              executor_type: "executor_docker_opehands",
+              executor_type: "executor_docker_openhands",
               identity: executorId,
               authorized_tag: "openhands",
               max_capacity: 1,

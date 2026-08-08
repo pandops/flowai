@@ -927,7 +927,7 @@ func TestExecutorRegistrationDoesNotTouchTeam(t *testing.T) {
 	body, err := json.Marshal(map[string]any{
 		"scope":            "team",
 		"team_id":          "team-ghost",
-		"executor_type":    "executor_docker_opehands",
+		"executor_type":    "executor_docker_openhands",
 		"identity":         "identity-doesnt-touch",
 		"authorized_tag":   "openhands",
 		"max_capacity":     1,

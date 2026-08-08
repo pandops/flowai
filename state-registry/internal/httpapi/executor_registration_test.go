@@ -60,6 +60,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/flowai/platform/state-registry/internal/httpapi"
 	"github.com/flowai/platform/state-registry/internal/platform"
 	"github.com/flowai/platform/state-registry/internal/store"
@@ -172,7 +174,7 @@ func (r *executorRepo) RegisterExecutor(_ context.Context, executorID string, re
 	}
 	executor := platform.Executor{
 		ExecutorID: executorID, Scope: req.Scope, TeamID: req.TeamID,
-		ExecutorType: req.ExecutorType, Identity: req.Identity,
+		ExecutorType: req.ExecutorType, Identity: executorID,
 		AuthorizedTag: req.AuthorizedTag, MaxCapacity: req.MaxCapacity,
 		RunningCount: req.RunningCount, RuntimeMetadata: req.RuntimeMetadata,
 		RegisteredAt: registeredAt, UpdatedAt: now,
@@ -281,6 +283,44 @@ func (h *executorHarness) put(t *testing.T, executorID string, headers http.Head
 	return resp, raw
 }
 
+func (h *executorHarness) post(t *testing.T, body []byte) (*http.Response, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+"/v1/executors", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("build POST: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("send POST: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read POST body: %v", err)
+	}
+	return resp, raw
+}
+
+func TestExecutorFirstRegistrationGeneratesUUID(t *testing.T) {
+	h := newExecutorHarness(t)
+	body := validTeamRegistrationBody("", "team-a", "openhands")
+	resp, raw := h.post(t, marshalExecutorBody(t, body))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status=%d, want 201; body=%s", resp.StatusCode, raw)
+	}
+	var executor platform.Executor
+	if err := json.Unmarshal(raw, &executor); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, err := uuid.Parse(executor.ExecutorID); err != nil {
+		t.Fatalf("executor_id=%q is not UUID: %v", executor.ExecutorID, err)
+	}
+	if executor.Identity != executor.ExecutorID {
+		t.Fatalf("identity=%q, executor_id=%q", executor.Identity, executor.ExecutorID)
+	}
+}
+
 func (h *executorHarness) discover(t *testing.T, executorID, tag string, headers http.Header) (*http.Response, []byte) {
 	t.Helper()
 	path := strings.Replace(executorDiscoverPath, "%s", executorID, 1)
@@ -316,7 +356,7 @@ type executorPutBody struct {
 	Scope           string         `json:"scope"`
 	TeamID          *string        `json:"team_id"`
 	ExecutorType    string         `json:"executor_type"`
-	Identity        string         `json:"identity"`
+	Identity        string         `json:"identity,omitempty"`
 	AuthorizedTag   string         `json:"authorized_tag"`
 	MaxCapacity     int            `json:"max_capacity"`
 	RunningCount    int            `json:"running_count"`
@@ -328,8 +368,7 @@ func validTeamRegistrationBody(executorID, teamID, tag string) executorPutBody {
 	return executorPutBody{
 		Scope:           "team",
 		TeamID:          &team,
-		ExecutorType:    "executor_docker_opehands",
-		Identity:        executorID,
+		ExecutorType:    "executor_docker_openhands",
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,
@@ -341,8 +380,7 @@ func validSystemRegistrationBody(executorID, tag string) executorPutBody {
 	return executorPutBody{
 		Scope:           "system",
 		TeamID:          nil,
-		ExecutorType:    "executor_docker_opehands",
-		Identity:        executorID,
+		ExecutorType:    "executor_docker_openhands",
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,
@@ -586,12 +624,12 @@ func TestSystemExecutorRegistration(t *testing.T) {
 			wantCode:   "system_scope_team_id_must_be_null",
 		},
 		{
-			name: "scope=system with omitted team_id rejected",
+			name: "scope=system with omitted team_id accepted",
 			body: func(t *testing.T) []byte {
 				payload := map[string]any{
-					"scope": "system", "executor_type": "executor_docker_opehands",
-					"identity": execID, "authorized_tag": "openhands",
-					"max_capacity": 4, "running_count": 0, "runtime_metadata": map[string]any{},
+					"scope": "system", "executor_type": "executor_docker_openhands",
+					"authorized_tag": "openhands",
+					"max_capacity":   4, "running_count": 0, "runtime_metadata": map[string]any{},
 				}
 				raw, err := json.Marshal(payload)
 				if err != nil {
@@ -599,8 +637,7 @@ func TestSystemExecutorRegistration(t *testing.T) {
 				}
 				return raw
 			},
-			wantStatus: http.StatusBadRequest,
-			wantCode:   "missing_team_id",
+			wantStatus: http.StatusOK,
 		},
 	}
 
@@ -634,8 +671,8 @@ func TestSystemExecutorRegistration(t *testing.T) {
 		})
 	}
 
-	// Canonical system Executor body shape (team_id=null).
-	t.Run("canonical system Executor response carries team_id=null", func(t *testing.T) {
+	// Canonical system Executor body omits the inapplicable team_id property.
+	t.Run("canonical system Executor response omits team_id", func(t *testing.T) {
 		h := newExecutorHarness(t)
 		h.repo.setTeamExists(true)
 		const execID = "exec-system-canonical"
@@ -652,8 +689,8 @@ func TestSystemExecutorRegistration(t *testing.T) {
 		if got["scope"] != "system" {
 			t.Errorf("response scope=%v, want \"system\"", got["scope"])
 		}
-		if got["team_id"] != nil {
-			t.Errorf("response team_id=%v, want null (system scope)", got["team_id"])
+		if _, present := got["team_id"]; present {
+			t.Errorf("response team_id=%v, want property omitted (system scope)", got["team_id"])
 		}
 	})
 }
@@ -695,12 +732,12 @@ func TestExecutorRegistrationIdentityMismatch(t *testing.T) {
 			headers := executorIdentityHeaders(tc.role, tc.teamID, executorID, "req-identity-mismatch")
 
 			resp, raw := h.put(t, executorID, headers, marshalExecutorBody(t, tc.body()))
-			if resp.StatusCode != http.StatusForbidden {
-				t.Errorf("status=%d, want 403; body=%s", resp.StatusCode, raw)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status=%d, want 400; body=%s", resp.StatusCode, raw)
 			}
 			env := decodeErrorEnvelope(t, raw)
-			if env.Code != "not_authorized" {
-				t.Errorf("error code=%q, want %q; body=%s", env.Code, "not_authorized", raw)
+			if env.Code != "invalid_request" {
+				t.Errorf("error code=%q, want %q; body=%s", env.Code, "invalid_request", raw)
 			}
 			if got := h.repo.teamExistsReads(); got != 0 {
 				t.Errorf("team lookups=%d, want 0", got)
@@ -810,7 +847,7 @@ func injectTagArray(t *testing.T, body executorPutBody, tags []string) []byte {
 	payload := map[string]any{
 		"scope":            "team",
 		"team_id":          team,
-		"executor_type":    "executor_docker_opehands",
+		"executor_type":    "executor_docker_openhands",
 		"identity":         body.Identity,
 		"authorized_tag":   tags,
 		"max_capacity":     1,

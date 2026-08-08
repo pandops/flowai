@@ -24,9 +24,9 @@ concerns (HTTP scaffolding, logging, wire types, persistence) are duplicated
 per service so each service can evolve independently.
 
 ```
-executor_docker_opehands/         # v0001 concrete Executor service
-├── cmd/executor_docker_opehands/
-├── configs/executor_docker_opehands.yaml
+executor_docker_openhands/         # v0001 concrete Executor service
+├── cmd/executor_docker_openhands/
+├── configs/executor_docker_openhands.yaml
 ├── internal/
 │   ├── config/                   # YAML loader (this service only)
 │   ├── httpapi/                  # chi scaffolding (this service only)
@@ -45,9 +45,9 @@ executor_docker_opehands/         # v0001 concrete Executor service
 └── test/                         # integration tests for this service
 
 autotest/                         # Cross-service Playwright e2e tests (root only)
-├── executor_docker_opehands/     # Playwright e2e for the concrete Executor
+├── executor_docker_openhands/     # Playwright e2e for the concrete Executor
 │   ├── tests/
-│   ├── package.json              # name = "executor_docker_opehands"
+│   ├── package.json              # name = "executor_docker_openhands"
 │   └── playwright.config.js
 ├── agent-openhands-image/        # OpenHands V1 agent-server image used by the e2e
 └── test-cases/                   # implementation-active E2E test definitions
@@ -70,7 +70,7 @@ Rules:
    coupling.
 3. **Test fakes follow the package they fake.** A test fake for an
    executor-only interface (e.g. `dockerclient.Client`) goes under
-   `executor_docker_opehands/internal/mocks/`. Test fakes for a shared component (e.g.
+   `executor_docker_openhands/internal/mocks/`. Test fakes for a shared component (e.g.
    the mocked task server, which is itself a service) live with that service.
 4. **Per-service `test/` directory.** Unit and integration tests for a
    single service live under `<service>/test/`. These tests use only the
@@ -129,7 +129,7 @@ Concrete Executor rule summary:
   **not** renamed by this rule — they keep their pre-convention ordinals.
 - The `executor_type` Go constant name (e.g. `ExecutorTypeDockerOpenHands`)
   preserves the runtime/tool axis for clarity at call sites; its wire value
-  is the concrete name (`executor_docker_opehands`). Pinning both is covered
+  is the concrete name (`executor_docker_openhands`). Pinning both is covered
   by a regression test in every concrete Executor's `internal/platform`
   package.
 - Generic State Registry terms (`/v1/executors`, `executor_id`,
@@ -139,14 +139,17 @@ Concrete Executor rule summary:
 
 Current concrete services:
 
-- `executor_docker_opehands` — runtime = `docker`, tool = `openhands`.
-  `opehands` is the deliberate service identifier (it matches the
+- `executor_docker_openhands` — runtime = `docker`, tool = `openhands`.
+  `openhands` is the deliberate service identifier (it matches the
   `executor_<runtime>_<tool>` pattern and the directory layout); the external
   product spelling `OpenHands` stays unchanged everywhere it appears as a
   product name (`internal/openhands`, `flowai.runtime=openhands`, OpenHands
   API/image/env vars, ADRs).
-- K8s concrete service — `executor_k8s_openhands` (runtime = `k8s`, tool =
-  `openhands`).
+- `executor_k8s_openhands` — runtime = `k8s`, tool = `openhands`. Same
+  identifier rule as the Docker Executor; the wire constant is
+  `ExecutorTypeK8sOpenHands` and the Go wire value is
+  `executor_k8s_openhands`. The cross-service Playwright k3d suite lives
+  at `autotest/executor_k8s_openhands/`.
 
 ## OpenSpec management rules
 
@@ -173,7 +176,7 @@ Current concrete services:
 
 Each planned target service has an OpenSpec file inside an active change. Click through for the full purpose / responsibilities / will-not-do.
 
-- [**executor_docker_opehands**](openspec/changes/archive/2026-07-12-v0001-executor-docker/specs/executor/spec.md) — current concrete local worker; controls Docker container lifecycle for the OpenHands agent runtime. The archived change ID remains `v0001-executor-docker`.
+- [**executor_docker_openhands**](openspec/changes/archive/2026-07-12-v0001-executor-docker/specs/executor/spec.md) — current concrete local worker; controls Docker container lifecycle for the OpenHands agent runtime. The archived change ID remains `v0001-executor-docker`.
 - [**State Registry**](openspec/changes/v0002-state-registry/specs/state-registry/spec.md) — main source of truth; immutable team ownership (team resource create-only — no `PUT`/`PATCH`/`DELETE` team endpoint), durable listener task intake with REQUIRED `task_type_id` (server-derived `required_tag` from `task_types.execution_tag`) and `(team_id, source_system_id, source_id)` dedupe, FIFO discovery and atomic FIFO claim with immutable `command_id`, strictly ordered events beginning with a first `created` event on successful claim (`pending (no event) -> created -> running -> finished | failed`), team-owned environment definitions, logical secrets with encrypted immutable versions, four-level image precedence (`tasks.image` -> `task_types.default_image` -> `source_systems.default_image` -> required `teams.default_image`), admin-only team / source-system / task-type registration, system-admin-only read-only `GET /admin/tags` and `GET /admin/tasks` projections, controls, and audit. Cryptography: `v0002-state-registry` ships the local AES-256-GCM provider; **`v0008-use-openbao-transit` (active)** replaces the local provider with OpenBao Transit behind the same opaque `key_id` / `key_version` envelope and ships the resumable per-row migration that converts v0002 local ciphertext to Transit ciphertext.
 - [**K8s Executor**](openspec/changes/v0005-executor-k8s/specs/executor/spec.md) — cluster worker type; controls only Kubernetes Pod lifecycle for agent runtimes.
 - [**Web UI**](openspec/changes/v0006-web-ui/specs/web-ui/spec.md) — thin frontend, sole surface for human operators, initially without auth.

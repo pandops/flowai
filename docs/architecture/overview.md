@@ -6,7 +6,7 @@ FlowAI currently implements two runtime services.
 only service allowed to decide task ownership, FIFO assignment, canonical
 lifecycle, tenant authorization, environment access, and audit history.
 
-`executor_docker_opehands` is a bounded worker. It claims work from State
+`executor_docker_openhands` is a bounded worker. It claims work from State
 Registry, uses the Registry-resolved image and environment, controls the
 Docker/OpenHands lifecycle, and reports ordered lifecycle events back.
 

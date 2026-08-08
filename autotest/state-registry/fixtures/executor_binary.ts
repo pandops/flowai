@@ -1,6 +1,6 @@
-// Local helper to spawn the real executor_docker_opehands concrete
+// Local helper to spawn the real executor_docker_openhands concrete
 // Executor binary as a subprocess for the v0002 state-registry contract
-// tests. The cross-service autotest/executor_docker_opehands/tests/helpers.ts
+// tests. The cross-service autotest/executor_docker_openhands/tests/helpers.ts
 // owns the canonical helper that drives the v0001 wire protocol; the
 // state-registry autotest does NOT import that package directly because
 // AGENTS.md mandates per-service isolation. Instead, this fixture
@@ -59,7 +59,7 @@
 // v0002 binary populates through its normal startup and runtime flow.
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { request, type APIRequestContext } from "@playwright/test";
@@ -115,6 +115,13 @@ export interface ExecutorStartOptions {
   maxContainers?: number;
   /** Mirror of the v0001 OPENHANDS_IMAGE env var; documented for symmetry. */
   openHandsImage?: string;
+  openHandsAgentProfileId?: string;
+  openHandsLLMModel?: string;
+  openHandsLLMAPIKey?: string;
+  openHandsLLMBaseURL?: string;
+  openHandsLLMUsageID?: string;
+  finishedCleanupDelay?: string;
+  cacheDir?: string;
 }
 
 export interface ExecutorHandles {
@@ -140,9 +147,9 @@ const ExecutorBinary = (() => {
   }
   return pathResolve(
     RepoRoot,
-    "executor_docker_opehands",
+    "executor_docker_openhands",
     "cmd",
-    "executor_docker_opehands",
+    "executor_docker_openhands",
     "main.go",
   );
 })();
@@ -349,6 +356,9 @@ export async function startExecutorBinary(
   const isGoSource = ExecutorBinary.endsWith(".go");
   const cmd = isGoSource ? "go" : ExecutorBinary;
   const args = isGoSource ? ["run", ExecutorBinary] : [];
+  const ownsCacheDir = opts.cacheDir === undefined;
+  const cacheDir =
+    opts.cacheDir ?? mkdtempSync("/tmp/flowai-executor-docker-cache-");
   if (!isGoSource && !existsSync(ExecutorBinary)) {
     throw new Error(`executor binary missing at ${ExecutorBinary}`);
   }
@@ -401,7 +411,15 @@ export async function startExecutorBinary(
       opts.dockerSocket ?? process.env["FLOWAI_DOCKER_SOCKET"] ?? "",
     OPENHANDS_IMAGE: opts.openHandsImage ?? opts.localImage ?? "",
     OPENHANDS_AGENT_PROFILE_ID:
-      process.env["OPENHANDS_AGENT_PROFILE_ID"] ?? "flowai-default",
+      opts.openHandsAgentProfileId ??
+      process.env["OPENHANDS_AGENT_PROFILE_ID"] ??
+      "flowai-default",
+    OPENHANDS_LLM_MODEL: opts.openHandsLLMModel ?? "",
+    OPENHANDS_LLM_API_KEY: opts.openHandsLLMAPIKey ?? "",
+    OPENHANDS_LLM_BASE_URL: opts.openHandsLLMBaseURL ?? "",
+    OPENHANDS_LLM_USAGE_ID: opts.openHandsLLMUsageID ?? "",
+    EXECUTOR_FINISHED_CLEANUP_DELAY: opts.finishedCleanupDelay ?? "0s",
+    EXECUTOR_CACHE_DIR: cacheDir,
     EXECUTOR_POLL_INTERVAL: `${opts.pollIntervalMs ?? 1_000}ms`,
     // Surface all future-facing options verbatim so the binary can pick
     // them up once the v0002 client implementation lands.
@@ -470,6 +488,8 @@ export async function startExecutorBinary(
         // Best-effort; reraise so the caller knows the process did
         // not exit cleanly but the harness still completes.
         throw err;
+      } finally {
+        if (ownsCacheDir) rmSync(cacheDir, { recursive: true, force: true });
       }
     },
   };

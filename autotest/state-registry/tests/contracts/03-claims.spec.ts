@@ -129,7 +129,7 @@ test("v0002.4 concurrent claim is atomic: exactly one winner returns 200 and the
   await registerExecutor(execA, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-4-a",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -139,7 +139,7 @@ test("v0002.4 concurrent claim is atomic: exactly one winner returns 200 and the
   await registerExecutor(execB, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-4-b",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -241,7 +241,7 @@ test("v0002.21 successful claim atomically removes the task from the winner's sc
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-21",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -450,7 +450,7 @@ test("v0002.22 stale claim from a different Executor returns 409 task_already_cl
   await registerExecutor(exec1, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-22-1",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -460,7 +460,7 @@ test("v0002.22 stale claim from a different Executor returns 409 task_already_cl
   await registerExecutor(exec2, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-22-2",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -508,7 +508,7 @@ test("v0002.30 the FIRST created event is Registry-appended atomically on succes
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-30",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -614,7 +614,7 @@ test("v0002.35 foreign team task identifier returns non-revealing 404 (same shap
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-35",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -680,7 +680,7 @@ test("v0002.57 system-owned Executor claims a team-a task; team-a competitor rec
   await registerExecutor(sysExec, worker.baseUrl, {
     scope: "system",
     team_id: null,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-57-sys",
     authorized_tag: executionTag,
     max_capacity: 1,
@@ -690,7 +690,7 @@ test("v0002.57 system-owned Executor claims a team-a task; team-a competitor rec
   await registerExecutor(teamExec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-57-team",
     authorized_tag: executionTag,
     max_capacity: 1,
@@ -764,7 +764,7 @@ test("v0002.68 claim succeeds only when the requested task is the OLDEST eligibl
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-68",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -818,7 +818,7 @@ test("v0002.69 same (task_id, command_id) retry returns the original 200 claimed
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-69",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -945,7 +945,7 @@ test("v0002.70 one command_id may own multiple tasks; each task is limited to on
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-70",
     authorized_tag: "openhands",
     max_capacity: 4,
@@ -1001,7 +1001,7 @@ test("v0002.71 supersedes the prior atomic-claim definition with a tighter preco
   await registerExecutor(execA, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-71-a",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1011,7 +1011,7 @@ test("v0002.71 supersedes the prior atomic-claim definition with a tighter preco
   await registerExecutor(execB, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-71-b",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1095,7 +1095,7 @@ test("v0002.72 FIFO tie-break by task_id when two pending tasks share the same i
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-72",
     authorized_tag: "openhands",
     max_capacity: 1,
@@ -1353,7 +1353,7 @@ test("v0002.73 claim persists resolved_image and image_source at claim time", as
   await registerExecutor(exec, worker.baseUrl, {
     scope: "team",
     team_id: bsA.admin.team_id,
-    executor_type: "executor_docker_opehands",
+    executor_type: "executor_docker_openhands",
     identity: "exec-v0002-73",
     authorized_tag: "openhands",
     max_capacity: 1,

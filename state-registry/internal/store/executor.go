@@ -82,7 +82,7 @@ func (s *Store) RegisterExecutor(ctx context.Context, executorID string, req pla
 			RETURNING executor_id, scope, team_id, executor_type, identity,
 				authorized_tag, max_capacity, running_count, runtime_metadata,
 				registered_at, updated_at`,
-			executorID, req.Scope, req.TeamID, req.ExecutorType, req.Identity,
+			executorID, req.Scope, req.TeamID, req.ExecutorType, executorID,
 			req.AuthorizedTag, req.MaxCapacity, req.RunningCount, req.RuntimeMetadata,
 		).Scan(
 			&executor.ExecutorID, &executor.Scope, &teamID, &executor.ExecutorType,
@@ -100,7 +100,7 @@ func (s *Store) RegisterExecutor(ctx context.Context, executorID string, req pla
 			RETURNING executor_id, scope, team_id, executor_type, identity,
 				authorized_tag, max_capacity, running_count, runtime_metadata,
 				registered_at, updated_at`,
-			executorID, req.ExecutorType, req.Identity, req.AuthorizedTag,
+			executorID, req.ExecutorType, executorID, req.AuthorizedTag,
 			req.MaxCapacity, req.RunningCount, req.RuntimeMetadata,
 		).Scan(
 			&executor.ExecutorID, &executor.Scope, &teamID, &executor.ExecutorType,

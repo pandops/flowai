@@ -1,0 +1,14 @@
+{
+  "name": "executor_k8s_openhands",
+  "version": "1.0.0",
+  "private": true,
+  "description": "K8s Executor Playwright suite for the v0005-executor-k8s OpenSpec change.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.1.1"
+  }
+}

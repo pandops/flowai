@@ -24,7 +24,7 @@ for file in "${staged[@]}"; do
 done
 
 if [[ "$mode" == "format" ]]; then
-  (("${#go_files[@]}" == 0)) || env -u GOROOT gofmt -w "${go_files[@]}"
+  (("${#go_files[@]}" == 0)) || gofmt -w "${go_files[@]}"
   (("${#prettier_files[@]}" == 0)) || npx prettier --write "${prettier_files[@]}"
   (("${#markdown_files[@]}" == 0)) || npx markdownlint-cli2 --fix "${markdown_files[@]}"
   exit 0
@@ -32,7 +32,7 @@ fi
 
 unformatted_go=""
 if (("${#go_files[@]}" > 0)); then
-  unformatted_go="$(env -u GOROOT gofmt -l "${go_files[@]}")"
+  unformatted_go="$(gofmt -l "${go_files[@]}")"
 fi
 if [[ -n "$unformatted_go" ]]; then
   printf 'gofmt required:\n%s\nRun: make format\n' "$unformatted_go" >&2
@@ -49,6 +49,6 @@ if [[ "$mode" == "precommit" ]]; then
     echo "golangci-lint v2.11.4 is required; run make install-tools" >&2
     exit 1
   fi
-  env -u GOROOT golangci-lint run ./...
+  golangci-lint run ./...
   git diff --cached --check
 fi

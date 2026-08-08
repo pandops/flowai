@@ -1,0 +1,102 @@
+{{- if .Values.executor.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor-k8s-openhands
+  labels:
+    app.kubernetes.io/name: executor-k8s-openhands
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: executor-k8s-openhands
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: executor-k8s-openhands
+    spec:
+      serviceAccountName: executor-k8s-openhands
+      {{- with .Values.hostAliases }}
+      hostAliases:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: executor
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: EXECUTOR_API_BIND
+              value: 0.0.0.0:8030
+            - name: EXECUTOR_STATE_REGISTRY_URL
+              value: {{ .Values.stateRegistryURL | quote }}
+            - name: EXECUTOR_SCOPE
+              value: {{ .Values.executor.scope | quote }}
+            {{- if eq .Values.executor.scope "team" }}
+            - name: EXECUTOR_TEAM_ID
+              value: {{ required "executor.teamID is required for team scope" .Values.executor.teamID | quote }}
+            {{- end }}
+            - name: EXECUTOR_AUTHORIZED_TAG
+              value: {{ .Values.executor.authorizedTag | quote }}
+            - name: EXECUTOR_MAX_PODS
+              value: {{ .Values.executor.maxPods | quote }}
+            - name: EXECUTOR_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: EXECUTOR_SERVICE_ACCOUNT
+              value: executor-k8s-openhands
+            - name: EXECUTOR_STORAGE_CLASS_NAME
+              value: {{ .Values.storageClass.name | quote }}
+            - name: EXECUTOR_CACHE_DIR
+              value: {{ .Values.executor.cacheDir | quote }}
+            - name: EXECUTOR_FINISHED_CLEANUP_DELAY
+              value: {{ .Values.executor.finishedCleanupDelay | quote }}
+            - name: EXECUTOR_FAILED_CLEANUP_DELAY
+              value: {{ .Values.executor.failedCleanupDelay | quote }}
+            - name: OPENHANDS_LLM_MODEL
+              value: {{ .Values.openhands.llmModel | quote }}
+            - name: OPENHANDS_LLM_API_KEY
+              value: {{ .Values.openhands.llmAPIKey | quote }}
+            - name: OPENHANDS_LLM_BASE_URL
+              value: {{ .Values.openhands.llmBaseURL | quote }}
+            - name: OPENHANDS_LLM_USAGE_ID
+              value: {{ .Values.openhands.llmUsageID | quote }}
+          ports:
+            - name: http
+              containerPort: 8030
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 1
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: cache
+              mountPath: {{ .Values.executor.cacheDir }}
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: executor-k8s-openhands-cache
+{{- end }}

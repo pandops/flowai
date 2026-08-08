@@ -138,7 +138,7 @@ func teamBody(executorID, team, tag string) []byte {
 	raw, _ := json.Marshal(execPutBody{
 		Scope:           "team",
 		TeamID:          &t,
-		ExecutorType:    "executor_docker_opehands",
+		ExecutorType:    "executor_docker_openhands",
 		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
@@ -152,7 +152,7 @@ func systemBody(executorID, tag string) []byte {
 	raw, _ := json.Marshal(execPutBody{
 		Scope:           "system",
 		TeamID:          nil,
-		ExecutorType:    "executor_docker_opehands",
+		ExecutorType:    "executor_docker_openhands",
 		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
@@ -226,13 +226,13 @@ func mustInsertExec(t *testing.T, db *sql.DB, executorID, scope, teamID, tag str
 	if scope == "team" {
 		mustExec(t, db,
 			`INSERT INTO executors (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count)
-			 VALUES ($1, $2, $3, 'executor_docker_opehands', $4, $5, 4, 0)`,
+			 VALUES ($1, $2, $3, 'executor_docker_openhands', $4, $5, 4, 0)`,
 			executorID, scope, teamID, "identity-"+executorID, tag)
 		return
 	}
 	mustExec(t, db,
 		`INSERT INTO executors (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count)
-		 VALUES ($1, $2, NULL, 'executor_docker_opehands', $3, $4, 4, 0)`,
+		 VALUES ($1, $2, NULL, 'executor_docker_openhands', $3, $4, 4, 0)`,
 		executorID, scope, "identity-"+executorID, tag)
 }
 
@@ -446,7 +446,7 @@ func TestConcurrentFirstRegistrationConverges(t *testing.T) {
 	teamID := "team-a"
 	req := platform.ExecutorRegistrationRequest{
 		Scope: platform.ExecutorScopeTeam, TeamID: &teamID,
-		ExecutorType: "executor_docker_opehands", Identity: "identity-concurrent",
+		ExecutorType: "executor_docker_openhands", Identity: "identity-concurrent",
 		AuthorizedTag: "openhands", MaxCapacity: 4, RunningCount: 0,
 		RuntimeMetadata: json.RawMessage(`{"runtime":"docker"}`),
 	}
@@ -802,7 +802,7 @@ func TestDiscoveryIgnoresCapacityObservations(t *testing.T) {
 	// Seed an Executor with saturated observations.
 	mustExec(t, h.db,
 		`INSERT INTO executors (executor_id, scope, team_id, executor_type, identity, authorized_tag, max_capacity, running_count)
-		 VALUES ('exec-capacity', 'team', 'team-a', 'executor_docker_opehands', 'identity-capacity', 'openhands', 0, 10)`,
+		 VALUES ('exec-capacity', 'team', 'team-a', 'executor_docker_openhands', 'identity-capacity', 'openhands', 0, 10)`,
 	)
 	mustInsertPendingTask(t, h.db, "task-capacity", "team-a", "openhands", "ext-capacity", time.Now())
 

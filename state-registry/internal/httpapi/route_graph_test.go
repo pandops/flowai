@@ -349,6 +349,7 @@ func TestRouteGraphProductionMountsBusinessRoutes(t *testing.T) {
 		// trusted-Gateway collection (GET /v1/tasks).
 		"POST /v1/tasks",
 		// Executor registration + read + discover + claim.
+		"POST /v1/executors",
 		"PUT /v1/executors/{executor_id}",
 		"GET /v1/executors/{executor_id}",
 		"GET /v1/executors/{executor_id}/tasks",

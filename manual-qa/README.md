@@ -1,7 +1,7 @@
 # Manual QA — production end-to-end runbook
 
 This directory contains a self-contained, runnable manual QA flow that
-exercises the production `state-registry/` + `executor_docker_opehands/`
+exercises the production `state-registry/` + `executor_docker_openhands/`
 pair end to end: PostgreSQL 16 with TLS, plain-HTTP State Registry in
 normal untagged production mode, the OpenHands V1 agent-server pulled
 to an immutable digest, and a single in-line task that walks the full
@@ -195,7 +195,7 @@ the executor phase is reached.
 
 `02-start-executor.sh` reads the allow-listed values from
 `manual-qa/.env` (and from the shell environment, which wins), then
-launches `executor_docker_opehands` via `nohup env -i … "$EXEC_BIN"
+launches `executor_docker_openhands` via `nohup env -i … "$EXEC_BIN"
 -config "$EXEC_YAML"`. The `env -i` invocation clears the inherited
 environment and rebuilds it from a single `EXEC_ENV` Bash array, so
 the Executor subprocess sees ONLY the keys the script explicitly
@@ -384,7 +384,7 @@ the listener / source-system / team identity are stable.
 `./99-cleanup.sh` is idempotent:
 
 1. Verify the executor's `/proc/PID/cmdline` matches
-   `executor_docker_opehands`, then `SIGTERM` (then `SIGKILL` after
+   `executor_docker_openhands`, then `SIGTERM` (then `SIGKILL` after
    a deadline) the executor process.
 2. Verify the State Registry's `/proc/PID/cmdline` matches
    `state-registry`, then `SIGTERM` (then `SIGKILL`) the State

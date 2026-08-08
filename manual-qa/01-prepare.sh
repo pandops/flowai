@@ -99,9 +99,9 @@ mq::trace "prepare" "building state-registry (production, untagged)"
 ( cd "$FLOWAI_REPO_ROOT" && go build -o "$BIN_DIR/state-registry" ./state-registry/cmd/state-registry )
 chmod 0755 "$BIN_DIR/state-registry"
 
-mq::trace "prepare" "building executor_docker_opehands (production, untagged)"
-( cd "$FLOWAI_REPO_ROOT" && go build -o "$BIN_DIR/executor_docker_opehands" ./executor_docker_opehands/cmd/executor_docker_opehands )
-chmod 0755 "$BIN_DIR/executor_docker_opehands"
+mq::trace "prepare" "building executor_docker_openhands (production, untagged)"
+( cd "$FLOWAI_REPO_ROOT" && go build -o "$BIN_DIR/executor_docker_openhands" ./executor_docker_openhands/cmd/executor_docker_openhands )
+chmod 0755 "$BIN_DIR/executor_docker_openhands"
 
 # --- resolve OpenHands image to an immutable digest ---------------------
 
