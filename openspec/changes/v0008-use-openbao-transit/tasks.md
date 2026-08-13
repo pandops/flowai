@@ -141,7 +141,7 @@ team_id, secret_id, version))` table do not exist; failure
       migration authorization marker; retain unconditional DELETE
       rejection and identity-column immutability.
 - [ ] **GREEN VERIFY:** run
-      `go test -tags=integration ./state-registry/... -run
+      `go test -tags=integration ./svc/state-registry/... -run
 'TestSecretVersionsCryptoProviderBackfill|
 TestCryptoMigrationCheckpointsPerRowSchema|
 TestSecretVersionsEnvelopeCASMigrationTrigger|
@@ -208,7 +208,7 @@ TestSecretVersionsIdentityUpdateRejected'`; require the
       code path that calls
       `POST /v1/<mount>/rewrap/<key_name>`.
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright
-      command and `go test ./state-registry/... -run
+      command and `go test ./svc/state-registry/... -run
 'TestSecretCryptoProviderRouting|TestEncryptedRecordOpaqueEnvelope|
 TestLocalProviderNotUsedOnActivePath|
 TestKeyIdOpaqueDeploymentConfigDoesNotExposeKeyName|
@@ -269,7 +269,7 @@ TestNoRewrapCallRecorded'`; require the interface to be
       through any public field; add a code-level guard that
       `POST /v1/<mount>/rewrap/<key_name>` is never called.
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright
-      command and `go test ./state-registry/... -run
+      command and `go test ./svc/state-registry/... -run
 'TestTransitEncryptContract|TestTransitDecryptContract|
 TestTransitAssociatedDataEquality|TestTransitFailureMapping|
 TestTransitEmbeddedKeyVersion|TestTransitMTLS|
@@ -305,7 +305,7 @@ TestNoRewrapCallRecorded'`; require the tests to fail
       detail only to plaintext-free operator telemetry with the
       documented outcome status class.
 - [ ] **GREEN VERIFY:** rerun targeted Playwright and
-      `go test ./state-registry/... -run
+      `go test ./svc/state-registry/... -run
 'TestProviderFailureClassMapping|TestProviderSentinelMapping|
 TestNonRevealing404ShapePinning'`; require the identical
       404 response across every failure class and zero provider
@@ -339,7 +339,7 @@ key_name)` mapping path, and any `associated_data` byte
       `key_id`, opaque `key_version`, operation name, outcome
       status class, `request_id`).
 - [ ] **GREEN VERIFY:** rerun the targeted Playwright
-      command and `go test ./state-registry/... -run
+      command and `go test ./svc/state-registry/... -run
 'TestAuditLogScrubberForTransitProvider'`; require the
       scanner to find zero matches in every captured log,
       audit, and response body across the success, migration,
@@ -423,7 +423,7 @@ verified_at = NOW()`, and append a `secret_version_migrated`
       exchange plaintext between providers. The public open-
       environment authorization path is unchanged.
 - [ ] **GREEN VERIFY:** rerun targeted Playwright and
-      `go test ./state-registry/... -run
+      `go test ./svc/state-registry/... -run
 'TestMigrationWorkerPerRow|TestMigrationCheckpointPerRowInPostgres|
 TestMigrationRestartIdempotency|TestDualReadMixedRows|
 TestMigrationCASEnvelopeRewriteOnlyEnvelopes|
@@ -492,7 +492,7 @@ environment_unknown_or_unavailable` shape. The command
       SHALL NOT decrypt arbitrary Transit rows again and SHALL
       NOT call `POST /v1/<mount>/rewrap/<key_name>` as proof.
 - [ ] **GREEN VERIFY:** rerun targeted Playwright and
-      `go test ./state-registry/... -run
+      `go test ./svc/state-registry/... -run
 'TestCutoverInternalCommandOnly|TestCutoverConsistencyScan|
 TestCutoverRejection|TestCutoverGuard'`; require zero new
       public HTTP endpoints, the documented per-row consistency
@@ -549,7 +549,7 @@ rotate` internal command authenticated by the existing
       stable identifier that maps to a `(mount_path, key_name)`
       pair through the secure runtime configuration.
 - [ ] **GREEN VERIFY:** rerun targeted Playwright and
-      `go test ./state-registry/... -run
+      `go test ./svc/state-registry/... -run
 'TestRotateCreatesNewLatestVersion|TestRotateDoesNotRaiseMdv|
 TestRotateDoesNotRewrap|TestRotateNeverDecryptsHistorical|
 TestRotateInternalCommandOnly'`; also confirm via the
@@ -638,7 +638,7 @@ TestRotateInternalCommandOnly'`; also confirm via the
       of source; refuse startup when any required configuration
       value is missing.
 - [ ] **GREEN VERIFY:** run
-      `go test ./state-registry/... -run
+      `go test ./svc/state-registry/... -run
 'TestRuntimeConfigLoadsTransit|TestStartupFailsClosedWithoutConfig|
 TestTransitTokenLoadedSecurely'`; require all three
       checks to pass and require the resulting startup log and

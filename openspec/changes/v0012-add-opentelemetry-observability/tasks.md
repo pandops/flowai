@@ -12,7 +12,7 @@
 
 ## 3. GREEN — service tracing and task spans
 
-- [ ] 3.1 Implement `state-registry/internal/telemetry` with configuration validation, resource identity, OTLP trace export, W3C propagators, bounded batching/sampling, no-op behavior, HTTP server instrumentation, sanitized diagnostics, and bounded shutdown.
+- [ ] 3.1 Implement `svc/state-registry/internal/telemetry` with configuration validation, resource identity, OTLP trace export, W3C propagators, bounded batching/sampling, no-op behavior, HTTP server instrumentation, sanitized diagnostics, and bounded shutdown.
 - [ ] 3.2 Instrument State Registry's meaningful handler, store/database, and dependency operations with normalized names and bounded metadata while preserving authorization, API bodies, transactions, and error taxonomy.
 - [ ] 3.3 Implement the independent `executor/docker_openhands/internal/telemetry` package with the same external behavior but no import from State Registry or any shared FlowAI package.
 - [ ] 3.4 Wrap Executor health HTTP handling, State Registry backend HTTP transport, OpenHands HTTP transport, and meaningful Docker/runtime operations; add finite `executor.task.run` spans and links without holding polling, claim, or ingestion spans across durable waits.

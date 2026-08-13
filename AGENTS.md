@@ -17,8 +17,9 @@
 ## Repository layout convention: one directory per service, no shared code
 
 Each runtime service in this repository MUST live under its own directory.
-Concrete Executors live under `executor/`; every service directory is fully self-contained:
-every package, binary, config, migration, and test lives inside it. **No
+Concrete Executors live under `executor/`; other services live under `svc/`.
+Every service directory is fully self-contained: every package, binary,
+config, migration, and test lives inside it. **No
 shared code between services** — only third-party libraries. Cross-cutting
 concerns (HTTP scaffolding, logging, wire types, persistence) are duplicated
 per service so each service can evolve independently.
@@ -45,6 +46,13 @@ executor/
 │       └── openhands/
 │   └── test/                      # integration tests for this service
 └── k8s-openhands/                 # v0005 concrete Executor service
+
+svc/
+└── state-registry/                # durable platform state service
+    ├── cmd/state-registry/
+    ├── internal/
+    ├── migrations/
+    └── test/
 
 autotest/                          # Cross-service Playwright e2e tests (root only)
 ├── executor_docker_openhands/     # Playwright e2e for the concrete Executor

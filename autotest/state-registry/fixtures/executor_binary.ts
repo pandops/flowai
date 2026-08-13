@@ -147,7 +147,8 @@ const ExecutorBinary = (() => {
   }
   return pathResolve(
     RepoRoot,
-    "executor_docker_openhands",
+    "executor",
+    "docker_openhands",
     "cmd",
     "executor_docker_openhands",
     "main.go",

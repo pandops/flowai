@@ -303,10 +303,10 @@ secret_id, version)` does NOT assume `secret_id` is
 - `openspec/changes/v0008-use-openbao-transit/specs/state-registry/spec.md`
   — migration requirement, durable per-row checkpoint
   requirement, and cutover consistency-scan requirement.
-- `state-registry/internal/store/secrets.go` and
-  `state-registry/internal/store/scope_tokens.go` — v0002 legacy
+- `svc/state-registry/internal/store/secrets.go` and
+  `svc/state-registry/internal/store/scope_tokens.go` — v0002 legacy
   NUL-delimited AAD construction.
-- `state-registry/internal/migrations/sql/00001_initial_schema.sql`
+- `svc/state-registry/internal/migrations/sql/00001_initial_schema.sql`
   — v0002 `secret_versions_append_only` trigger replaced by this
   change.
 

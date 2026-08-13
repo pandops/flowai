@@ -2,7 +2,7 @@
 
 FlowAI currently contains two implemented Go services:
 
-- [State Registry](state-registry/README.md) — durable PostgreSQL-backed task,
+- [State Registry](svc/state-registry/README.md) — durable PostgreSQL-backed task,
   assignment, event, environment, secret, control, audit, and admin state.
 - [Docker OpenHands Executor](executor/docker_openhands/README.md) — a bounded
   worker that claims State Registry tasks and runs OpenHands in Docker.

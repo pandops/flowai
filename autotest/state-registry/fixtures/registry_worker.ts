@@ -117,6 +117,7 @@ const DefaultBinary = (() => {
     "..",
     "..",
     "..",
+    "svc",
     "state-registry",
     "cmd",
     "state-registry",

@@ -366,7 +366,7 @@ verified_at = NOW()`, and append a plaintext-free audit entry.
   not raise `min_decryption_version` past any still-referenced
   version. `v0008.10` is rewritten to prove the rotate-only
   behavior.
-- Affected code (future): `state-registry/` introduces
+- Affected code (future): `svc/state-registry/` introduces
   `internal/crypto/provider.go` with the interface; a
   transit-package implementation using the public Transit REST
   API; a local-package implementation only used during the

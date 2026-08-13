@@ -36,7 +36,7 @@ function buildCompiledBinary(): BuildArtifacts {
       "state_registry_test_harness",
       "-o",
       binaryPath,
-      join(repoRoot, "state-registry", "cmd", "state-registry"),
+      join(repoRoot, "svc", "state-registry", "cmd", "state-registry"),
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );
