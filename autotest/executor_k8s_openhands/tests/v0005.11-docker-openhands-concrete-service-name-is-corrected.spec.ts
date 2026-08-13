@@ -19,7 +19,7 @@ test("v0005.11 docker openhands concrete service name is corrected", async () =>
   expect(
     (
       await Array.fromAsync(
-        glob("executor_docker_openhands/cmd/executor_docker_openhands", {
+        glob("executor/docker_openhands/cmd/executor_docker_openhands", {
           cwd: repositoryRoot,
         }),
       )
@@ -29,7 +29,7 @@ test("v0005.11 docker openhands concrete service name is corrected", async () =>
     (
       await Array.fromAsync(
         glob(
-          "executor_docker_openhands/configs/executor_docker_openhands.yaml",
+          "executor/docker_openhands/configs/executor_docker_openhands.yaml",
           {
             cwd: repositoryRoot,
           },
@@ -44,12 +44,15 @@ test("v0005.11 docker openhands concrete service name is corrected", async () =>
     access(resolve(repositoryRoot, "executor_docker_opehands")),
   ).rejects.toThrow();
   await expect(
+    access(resolve(repositoryRoot, "executor_docker_openhands")),
+  ).rejects.toThrow();
+  await expect(
     access(resolve(repositoryRoot, "autotest/executor_docker_opehands")),
   ).rejects.toThrow();
   const platform = await readFile(
     resolve(
       repositoryRoot,
-      "executor_docker_openhands/internal/platform/types.go",
+      "executor/docker_openhands/internal/platform/types.go",
     ),
     "utf8",
   );

@@ -50,8 +50,8 @@ contains the immutable `v0005.<n>` id.
       Executor Pod and remain running when that Pod is deleted. - GREEN: must apply the Deployment, observe `/v1/livez` 200 and
       `/v1/readyz` 200 from the harness, and verify a task Pod
       survives an Executor Pod delete. - GREEN: `v0005.9` passed against the
-      live Deployment and surviving task Pod. - REF: `executor_k8s_openhands/configs/executor_k8s_openhands.yaml`,
-      `executor_k8s_openhands/cmd/executor_k8s_openhands/main.go`.
+      live Deployment and surviving task Pod. - REF: `executor/k8s-openhands/configs/executor_k8s_openhands.yaml`,
+      `executor/k8s-openhands/cmd/executor_k8s_openhands/main.go`.
 - [x] Vendor or generate from a repository-pinned version of the local-path
       provisioner manifest; pin every image by immutable digest or reviewed
       version and do not use `latest`. Install it into the temporary cluster,
@@ -107,8 +107,8 @@ contains the immutable `v0005.<n>` id.
       and multiple `team_id` submissions, identity-mismatched `team_id`,
       forbidden client-supplied `identity` and `team_name` fields, and
       re-registration with a different `team_id`; verify they fail
-      before team validation and registration code exists. - GREEN: `go test ./executor_k8s_openhands/internal/executor/... -run TestConfigValidateRejectsBadTeamScope -v`
-      passes (table-driven suite in `executor_unit_test.go`). - REF: `executor_k8s_openhands/internal/executor/executor_unit_test.go`.
+      before team validation and registration code exists. - GREEN: `go test ./executor/k8s-openhands/internal/executor/... -run TestConfigValidateRejectsBadTeamScope -v`
+      passes (table-driven suite in `executor_unit_test.go`). - REF: `executor/k8s-openhands/internal/executor/executor_unit_test.go`.
 - [x] **GREEN:** implement authenticated K8s Executor registration that
       uses POST without `executor_id` on empty cache, atomically persists the
       server-generated response ID, uses PUT only on restart, and declares
@@ -118,11 +118,11 @@ contains the immutable `v0005.<n>` id.
       reject any registration whose `scope` is not `team`, reject zero or
       multiple `team_id` submissions, reject identity-mismatched `team_id`,
       and reject any re-registration whose `team_id` differs from the stored
-      `team_id`. - GREEN: `go test ./executor_k8s_openhands/...` returns 0 fail; the
+      `team_id`. - GREEN: `go test ./executor/k8s-openhands/...` returns 0 fail; the
       wire surface is exercised through `stateregistryclient/client.go`
-      against the v0005 wire stub in `executor_k8s_openhands/test/`. - REF: `executor_k8s_openhands/internal/executor/executor.go`
+      against the v0005 wire stub in `executor/k8s-openhands/test/`. - REF: `executor/k8s-openhands/internal/executor/executor.go`
       (`Config.Validate`, `LoadConfig`), the
-      `executor_k8s_openhands/internal/stateregistryclient/client.go`
+      `executor/k8s-openhands/internal/stateregistryclient/client.go`
       wire surface.
 - [x] **GREEN VERIFY:** rerun the targeted Playwright command and the
       related Go tests; require concrete first-start `201`, refresh `200`,
@@ -134,10 +134,10 @@ contains the immutable `v0005.<n>` id.
       against a fresh live `k3d` cluster in 1.8 minutes; suite teardown
       removed the temporary cluster. - Partial in-repo verification:
       in-process tests pass against the v0005 wire stub. - REF:
-      `executor_k8s_openhands/test/v0002_test.go`.
+      `executor/k8s-openhands/test/v0002_test.go`.
 - [x] **REFACTOR:** isolate identity verification and `team_id`
       immutability checks behind narrow Executor-client interfaces while
-      keeping the targeted and related tests green. - GREEN: in-repo unit tests pass after the refactor. - REF: `executor_k8s_openhands/internal/stateregistryclient/client.go`
+      keeping the targeted and related tests green. - GREEN: in-repo unit tests pass after the refactor. - REF: `executor/k8s-openhands/internal/stateregistryclient/client.go`
       (`HTTPError`, `Identity.validate`).
 
 ## 3. Team-isolated pending FIFO discovery and claim
@@ -153,14 +153,14 @@ contains the immutable `v0005.<n>` id.
       registered-tag-only enforcement, and `(ingested_at ASC, task_id ASC)`
       ordering with the eligibility predicate applied first; add
       point-resource tests for the foreign-team `404`; verify they fail
-      before the team-scoped pending discovery and FIFO claim code exists. - GREEN: `go test ./executor_k8s_openhands/test/... -run TestV0005 -v`
-      passes against the v0005 wire stub. - REF: `executor_k8s_openhands/test/v0002_test.go`.
+      before the team-scoped pending discovery and FIFO claim code exists. - GREEN: `go test ./executor/k8s-openhands/test/... -run TestV0005 -v`
+      passes against the v0005 wire stub. - REF: `executor/k8s-openhands/test/v0002_test.go`.
 - [x] **GREEN:** implement collection-level discovery that filters by
       `team_id` BEFORE shaping results, returning only `pending` tasks
       whose `required_tag` equals the Executor's single `authorized_tag`
       AND whose `team_id` equals the Executor's bound `team_id`, ordered
       `(ingested_at ASC, task_id ASC)` with the eligibility predicate
-      applied first. - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/internal/executor/v0002.go`
+      applied first. - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/internal/executor/v0002.go`
       (`tickV0002`, FIFO sort).
 - [x] **GREEN:** implement FIFO claim through
       `POST /v1/executors/{executor_id}/claim` carrying `task_id` and a
@@ -170,8 +170,8 @@ contains the immutable `v0005.<n>` id.
 older_task_must_be_claimed_first` as "discard the candidate"; on the
       same `(task_id, command_id)` retry consume the original `200 claimed`
       body without starting an additional Pod or appending an additional
-      event. - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/internal/executor/v0002.go`
-      (`startTaskV0002`), `executor_k8s_openhands/internal/stateregistryclient/client.go`
+      event. - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/internal/executor/v0002.go`
+      (`startTaskV0002`), `executor/k8s-openhands/internal/stateregistryclient/client.go`
       (`ClaimTask`, `IsTaskAlreadyClaimed`, `IsOlderTaskMustBeClaimedFirst`,
       `IsNotFound`).
 - [x] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
@@ -182,7 +182,7 @@ older_task_must_be_claimed_first` as "discard the candidate"; on the
       v0005 wire stub.
 - [x] **REFACTOR:** consolidate team-scoped query construction and
       FIFO claim guards behind narrow interfaces while keeping all
-      discovery/claim tests green. - GREEN: in-repo tests pass after the refactor. - REF: `executor_k8s_openhands/internal/stateregistryclient/client.go`.
+      discovery/claim tests green. - GREEN: in-repo tests pass after the refactor. - REF: `executor/k8s-openhands/internal/stateregistryclient/client.go`.
 
 ## 3a. System-owned cross-team FIFO discovery and claim (`v0005.10`)
 
@@ -191,12 +191,12 @@ older_task_must_be_claimed_first` as "discard the candidate"; on the
       before production edits. - GREEN: must observe the targeted Playwright command fail. NOT RUN.
 - [x] **RED unit/integration:** add scope-table tests for team/system
       registration, immutable scope, system discovery, and assigned-task
-      team envelope derivation. - GREEN: `go test ./executor_k8s_openhands/internal/executor/... -run TestConfigValidate -v`
-      passes. - REF: `executor_k8s_openhands/internal/executor/executor_unit_test.go`.
+      team envelope derivation. - GREEN: `go test ./executor/k8s-openhands/internal/executor/... -run TestConfigValidate -v`
+      passes. - REF: `executor/k8s-openhands/internal/executor/executor_unit_test.go`.
 - [x] **GREEN:** implement the minimum scope-aware K8s registration,
       discovery, claim, Pod labels, event envelopes, environment access,
-      control reads, and restart reconciliation required by `v0005.10`. - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/internal/executor/executor.go`,
-      `executor_k8s_openhands/internal/executor/v0002.go`.
+      control reads, and restart reconciliation required by `v0005.10`. - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/internal/executor/executor.go`,
+      `executor/k8s-openhands/internal/executor/v0002.go`.
 - [x] **GREEN VERIFY:** rerun the exact targeted Playwright command and
       the related Go tests; require all to pass. - GREEN: must observe the targeted Playwright command pass against
       a live `k3d` cluster. NOT RUN. - Partial in-repo verification: in-process tests pass.
@@ -221,15 +221,15 @@ older_task_must_be_claimed_first` as "discard the candidate"; on the
       `failed_cleanup_delay`, capacity retention, idempotent deletion,
       envelope `team_id` mismatch (`403 team_mismatch`), unassigned
       same-team writer (`403 not_assigned`), and foreign point probe
-      (`404`). - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/test/{v0002_test.go,k8s_lifecycle_test.go}`,
-      `executor_k8s_openhands/internal/executor/executor_unit_test.go`.
+      (`404`). - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/test/{v0002_test.go,k8s_lifecycle_test.go}`,
+      `executor/k8s-openhands/internal/executor/executor_unit_test.go`.
 - [x] **GREEN:** implement seven-field event envelope validation on
       every Executor-emitted task event; emit `running` AFTER `200 claimed`
       and BEFORE creating the Kubernetes Pod; derive exactly one of
       `finished` or `failed`; select and start `finished_cleanup_delay` or
       `failed_cleanup_delay` only after `202 accepted`; enforce the
-      event-denial taxonomy. - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/internal/executor/v0002.go`,
-      `executor_k8s_openhands/internal/executor/executor.go`.
+      event-denial taxonomy. - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/internal/executor/v0002.go`,
+      `executor/k8s-openhands/internal/executor/executor.go`.
 - [x] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
       require the documented `200 claimed` / `202 accepted` / `404` /
       `403` outcomes, no Pod before `running`, no `dispatched` event,
@@ -243,25 +243,25 @@ older_task_must_be_claimed_first` as "discard the candidate"; on the
       during a non-zero selected delay, and perform idempotent
       stop/removal without a duplicate terminal task event; prove
       pre-`finished` container exit produces exactly one `failed` with
-      `failure_reason = "container_exited_before_finish"`. - GREEN: must run `go test -tags=integration ./executor_docker_openhands/... -run TestV0002`
+      `failure_reason = "container_exited_before_finish"`. - GREEN: must run `go test -tags=integration ./executor/docker_openhands/... -run TestV0002`
       against a Docker Engine with the OpenHands agent-server image
       available. - GREEN: on 2026-08-08 the exact command passed. The real
       Engine test covers event-selected delay, capacity retention, and
       idempotent removal; the lifecycle test covers exactly one early-exit
       failure with the required `failure_reason`. - REF:
-      `executor_docker_openhands/internal/executor/executor_integration_test.go`,
-      `executor_docker_openhands/test/v0002_test.go`.
+      `executor/docker_openhands/internal/executor/executor_integration_test.go`,
+      `executor/docker_openhands/test/v0002_test.go`.
 - [x] **GREEN Docker regression:** add the cleanup-delay setting to
       `executor_docker_openhands`, apply it between accepted terminal
-      conversation event and container cleanup. - GREEN: `go test ./executor_docker_openhands/internal/executor/... -run TestConfigValidate|TestConfigLoadHonours|TestSlotAcceptedTerminalRecord`
-      passes. - REF: commit `f50456e` — `executor_docker_openhands/internal/executor/executor.go`
+      conversation event and container cleanup. - GREEN: `go test ./executor/docker_openhands/internal/executor/... -run TestConfigValidate|TestConfigLoadHonours|TestSlotAcceptedTerminalRecord`
+      passes. - REF: commit `f50456e` — `executor/docker_openhands/internal/executor/executor.go`
       `Config.FinishedCleanupDelay`, `FailedCleanupDelay`, slot
       bookkeeping, `applyTerminalCleanupDelay`,
       `cleanupContainer`.
 - [x] **REFACTOR:** consolidate envelope validation and team-scoped
       event filtering behind narrow Executor-client interfaces without
       separating envelope validation from event forwarding; rerun all
-      targeted tests. - GREEN: in-repo tests pass. - REF: `executor_k8s_openhands/internal/executor/v0002.go`
+      targeted tests. - GREEN: in-repo tests pass. - REF: `executor/k8s-openhands/internal/executor/v0002.go`
       `appendTaskEvent`.
 
 ## 5. Local capacity ownership (no Registry-side rejection)
@@ -273,14 +273,14 @@ older_task_must_be_claimed_first` as "discard the candidate"; on the
       absent. - GREEN: must observe the targeted Playwright command fail. NOT RUN.
 - [x] **RED unit/integration:** add capacity-observation tests covering
       saturated `running_count = max_capacity`, sparse `running_count <
-max_capacity`, and self-event observation writes. - GREEN: `go test ./executor_k8s_openhands/test/... -run TestK8sLocalCapacityGated -v`
-      passes. - REF: `executor_k8s_openhands/test/k8s_lifecycle_test.go`.
+max_capacity`, and self-event observation writes. - GREEN: `go test ./executor/k8s-openhands/test/... -run TestK8sLocalCapacityGated -v`
+      passes. - REF: `executor/k8s-openhands/test/k8s_lifecycle_test.go`.
 - [x] **GREEN:** keep the existing v0002 capacity-observation contract:
       observe Pods locally, request claim only when a local slot is
       available, start no Pod before `200 claimed`, start none after `404`
       or `409`; report `max_capacity` and `running_count` through
       `POST /v1/executors/{executor_id}/events` with the seven-field
-      envelope including `team_id`. - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/internal/executor/v0002.go`.
+      envelope including `team_id`. - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/internal/executor/v0002.go`.
 - [x] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
       require no `422 executor_at_capacity` and no capacity-based rejection
       from the Registry. - GREEN: must observe the targeted Playwright command pass against
@@ -301,9 +301,9 @@ max_capacity`, and self-event observation writes. - GREEN: `go test ./executor_k
       MAC constant-time comparison, retired-key rejection, foreign-team
       requests, terminal task-state rejection, unassigned-Executor
       rejection, and uniform `404` parity across every invalid variation. - GREEN: in-process coverage is delegated to the State Registry
-      suite; `executor_k8s_openhands/internal/stateregistryclient/client_test.go`
-      asserts the wire surface. - REF: `executor_k8s_openhands/internal/stateregistryclient/client_test.go`.
-- [x] **GREEN:** inherit the finalized v0002 token contract verbatim. - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/internal/stateregistryclient/client.go`
+      suite; `executor/k8s-openhands/internal/stateregistryclient/client_test.go`
+      asserts the wire surface. - REF: `executor/k8s-openhands/internal/stateregistryclient/client_test.go`.
+- [x] **GREEN:** inherit the finalized v0002 token contract verbatim. - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/internal/stateregistryclient/client.go`
       `OpenEnvironment`.
 - [x] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
       require a `200` with env-style values only for the fully-valid token,
@@ -326,10 +326,10 @@ max_capacity`, and self-event observation writes. - GREEN: `go test ./executor_k
 - [x] **RED unit/integration:** add control-read tests covering the
       assigned+same-team happy path, the cross-team denial, the
       same-team `403 not_assigned` denial, and the audit entry shape. - GREEN: in-process wire coverage in
-      `executor_k8s_openhands/internal/stateregistryclient/client_test.go`.
+      `executor/k8s-openhands/internal/stateregistryclient/client_test.go`.
 - [x] **GREEN:** poll the State Registry for pending controls only for
       tasks whose `task_id` is assigned to the Executor AND whose
-      `team_id` equals the Executor's bound `team_id`. - GREEN: `go test ./executor_k8s_openhands/...` passes. - REF: `executor_k8s_openhands/internal/stateregistryclient/client.go`
+      `team_id` equals the Executor's bound `team_id`. - GREEN: `go test ./executor/k8s-openhands/...` passes. - REF: `executor/k8s-openhands/internal/stateregistryclient/client.go`
       `ListAssignedControls`.
 - [x] **GREEN VERIFY:** rerun the targeted Playwright and Go tests;
       require `200` with the pending control for the assigned same-team
@@ -353,9 +353,9 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       `owner_command_id` -> `flowai.command_id` label match, and exactly
       one terminal event per Pod; cover persistent-cache reload, event
       write-before-send, mark-accepted-after-`202`, same-event-ID retry,
-      and OpenHands conversation reconnection. - GREEN: `go test ./executor_k8s_openhands/internal/cache/...` and
-      `go test ./executor_docker_openhands/internal/cache/...` pass. - REF: `executor_k8s_openhands/internal/cache/cache_test.go`,
-      `executor_docker_openhands/internal/cache/cache_test.go`.
+      and OpenHands conversation reconnection. - GREEN: `go test ./executor/k8s-openhands/internal/cache/...` and
+      `go test ./executor/docker_openhands/internal/cache/...` pass. - REF: `executor/k8s-openhands/internal/cache/cache_test.go`,
+      `executor/docker_openhands/internal/cache/cache_test.go`.
 - [x] **RED in-cluster restart:** delete the running Executor Deployment
       Pod while task Pods are active, require the dynamically provisioned
       PVC/PV and task Pods to survive, and require the replacement Pod to
@@ -371,12 +371,12 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       uncertain claim with the identical `(task_id, command_id)`,
       assignment persistence after `200 claimed` but before `running` or
       runtime creation, event persistence before send, and transition to
-      `accepted` only after `202`. - GREEN: `go test ./executor_k8s_openhands/internal/cache/...` and
-      `go test ./executor_docker_openhands/internal/cache/...` pass.
+      `accepted` only after `202`. - GREEN: `go test ./executor/k8s-openhands/internal/cache/...` and
+      `go test ./executor/docker_openhands/internal/cache/...` pass.
 - [x] **RED backend HTTP:** configure missing and malformed legacy
       certificate, key, and CA paths for K8s and Docker. Require startup
       and registration to succeed over HTTP without accessing any configured
-      path or constructing client TLS configuration. - GREEN: `go test ./executor_k8s_openhands/internal/executor/... -run TestConfigValidate -v`
+      path or constructing client TLS configuration. - GREEN: `go test ./executor/k8s-openhands/internal/executor/... -run TestConfigValidate -v`
       and the equivalent Docker test pass.
 - [x] **RED failure recovery:** cover missing, unreadable, corrupt, and
       identity-mismatched cache; require unhealthy status, zero new claims,
@@ -393,20 +393,20 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       conversation without restarting work, retries pending events with
       their original `event_id`, emits no duplicate `running` event, and
       emits exactly one terminal `finished` or `failed` event per Pod
-      whose lifecycle ends. - GREEN: `go test ./executor_k8s_openhands/...` passes; the
-      reconciler is exercised in-process against the fake K8s client. - REF: `executor_k8s_openhands/internal/executor/v0002.go`
+      whose lifecycle ends. - GREEN: `go test ./executor/k8s-openhands/...` passes; the
+      reconciler is exercised in-process against the fake K8s client. - REF: `executor/k8s-openhands/internal/executor/v0002.go`
       `Reconciler`.
 - [x] **GREEN in-cluster deployment:** add E2E manifests/fixtures for the
       single-replica Deployment, ServiceAccount, namespace-scoped RBAC, PVC,
       explicit local-path StorageClass, probes, and non-overlapping
-      replacement strategy. - GREEN: `helmfile -f executor_k8s_openhands/deploy/k8s/helmfile.yaml
+      replacement strategy. - GREEN: `helmfile -f executor/k8s-openhands/deploy/k8s/helmfile.yaml
     apply` completed against `k3d v5.9.0`; Deployment was `1/1`, the PVC
       was `Bound`, and the Service proxy returned HTTP 200 from `/readyz`
       with `state_registry_registered=true` and `kube_reachable=true`.
 - [x] **GREEN bbolt cache:** implement separate cache packages inside
       `executor_k8s_openhands` and `executor_docker_openhands` using bbolt;
-      do not introduce shared service code. - GREEN: `go test ./executor_k8s_openhands/internal/cache/...` and
-      `go test ./executor_docker_openhands/internal/cache/...` pass.
+      do not introduce shared service code. - GREEN: `go test ./executor/k8s-openhands/internal/cache/...` and
+      `go test ./executor/docker_openhands/internal/cache/...` pass.
 - [x] **GREEN backend HTTP:** use plain HTTP for Registry calls, accept
       legacy backend TLS fields for staged cleanup, and never read
       certificate paths, construct client TLS configuration, or mount
@@ -438,9 +438,9 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       same host-backed cache volume; require the first to hold
       `<cache_dir>/executor.lock` and the second to become unhealthy with
       zero registration, discovery, claim, event, Pod, or container
-      mutations. - GREEN: `go test ./executor_k8s_openhands/internal/cache/... -run TestLockFileSecondProcessFails -v`
-      and the equivalent Docker test pass against a host-backed volume. - REF: `executor_k8s_openhands/internal/cache/cache_test.go`,
-      `executor_docker_openhands/internal/cache/cache_test.go`.
+      mutations. - GREEN: `go test ./executor/k8s-openhands/internal/cache/... -run TestLockFileSecondProcessFails -v`
+      and the equivalent Docker test pass against a host-backed volume. - REF: `executor/k8s-openhands/internal/cache/cache_test.go`,
+      `executor/docker_openhands/internal/cache/cache_test.go`.
 - [x] **GREEN cache lock:** acquire the non-blocking exclusive OS file
       lock before POST/PUT registration, retain its file descriptor for
       process lifetime, require POSIX advisory-lock-capable storage, and
@@ -461,13 +461,13 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       directory, command, binary, config YAML, Go import path, wire
       `executor_type`, slog `service` field, probe service label, package
       name, and documentation identifier `executor_docker_openhands`, with
-      Go constant `ExecutorTypeDockerOpenHands`. - GREEN: `go test ./executor_docker_openhands/internal/platform/... -run TestExecutorTypeDockerOpenHandsWireValue -v`
+      Go constant `ExecutorTypeDockerOpenHands`. - GREEN: `go test ./executor/docker_openhands/internal/platform/... -run TestExecutorTypeDockerOpenHandsWireValue -v`
       passes.
 - [x] **GREEN filesystem:** rename top-level
-      `executor_docker_opehands/` to `executor_docker_openhands/`, rename
+      `executor_docker_opehands/` to `executor/docker_openhands/`, rename
       its `cmd/` directory and config YAML to the same concrete identifier,
       and rename `autotest/executor_docker_opehands/` to
-      `autotest/executor_docker_openhands/`. - GREEN: `ls executor_docker_openhands/` and
+      `autotest/executor_docker_openhands/`. - GREEN: `ls executor/docker_openhands/` and
       `ls autotest/executor_docker_openhands/` exist with the renamed
       paths; `git log --follow` shows preserved history.
 - [x] **GREEN contract:** replace the misspelled current-state identifier
@@ -519,7 +519,7 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       valid RED-before-GREEN evidence. - GREEN: `grep -l 'Implementation reference' autotest/test-cases/v0005.*.md`
       returns all 11 files; commit `763531a` records the change.
 - [x] Run `gofmt` on changed Go files, `go test -race ./...`,
-      `go test -tags=integration ./executor_k8s_openhands/...`, and
+      `go test -tags=integration ./executor/k8s-openhands/...`, and
       `go build ./...`. - GREEN: `go build ./...` clean, `go test -race ./...` 0 fail,
       `go vet ./...` clean.
 - [x] Run the full K8s Executor Playwright suite with

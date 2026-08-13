@@ -283,11 +283,11 @@ The Docker Executor SHALL request an environment only after State Registry claim
 
 ### Requirement: Docker OpenHands concrete service uses the correctly spelled identifier
 
-The existing Docker OpenHands Executor SHALL use
-`executor_docker_openhands` consistently as its top-level directory,
-command, binary, config YAML basename, Go import-path segment, wire
-`executor_type`, slog `service` value, probe service label, autotest package,
-and current documentation identifier. Its Go constant SHALL remain
+The existing Docker OpenHands Executor SHALL use `executor/docker_openhands`
+as its service directory and Go import-path segment. It SHALL use
+`executor_docker_openhands` consistently as its command, binary, config YAML
+basename, wire `executor_type`, slog `service` value, probe service label,
+autotest package, and current documentation identifier. Its Go constant SHALL remain
 `ExecutorTypeDockerOpenHands` and SHALL have the wire value
 `executor_docker_openhands`. Non-archived runtime code SHALL provide no alias
 or compatibility registration for `executor_docker_openhands`; archived
@@ -297,15 +297,15 @@ OpenSpec artifacts MAY retain that spelling as historical evidence.
 
 - **WHEN** the renamed Docker OpenHands Executor starts and registers with
   State Registry
-- **THEN** it runs from the `executor_docker_openhands` service surface and
+- **THEN** it runs from the `executor/docker_openhands` service surface and
   registers `executor_type = "executor_docker_openhands"`, while the old
   spelling is absent from non-archived runtime and current-state files
 
 ### Requirement: K8s Executor participates in State Registry FIFO task claims
 
-The K8s Executor SHALL register with the State Registry using the concrete
-service and wire identifier `executor_k8s_openhands`, with OpenHands as its
-agent tool, and exactly one immutable ownership
+The K8s Executor SHALL live under `executor/k8s-openhands/` and register with
+the State Registry using the concrete service and wire identifier
+`executor_k8s_openhands`, with OpenHands as its agent tool, and exactly one immutable ownership
 `scope` from `{team, system}`. It SHALL submit exactly one
 `authorized_tag`, observed `max_capacity`, observed `running_count`, and
 runtime metadata. It SHALL NOT submit an `identity`; State Registry SHALL

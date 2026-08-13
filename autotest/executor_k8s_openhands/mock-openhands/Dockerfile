@@ -1,8 +1,8 @@
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-COPY executor_k8s_openhands/test/mock_openhands ./executor_k8s_openhands/test/mock_openhands
-RUN go build -o /mock-openhands ./executor_k8s_openhands/test/mock_openhands
+COPY executor/k8s-openhands/test/mock_openhands ./executor/k8s-openhands/test/mock_openhands
+RUN go build -o /mock-openhands ./executor/k8s-openhands/test/mock_openhands
 
 FROM alpine:3.22
 COPY --from=build /mock-openhands /usr/local/bin/mock-openhands

@@ -56,10 +56,11 @@ events.
 ## What Changes
 
 - Add the concrete K8s OpenHands Executor service named
-  `executor_k8s_openhands`. Its directory, binary,
-  config, import path, wire `executor_type`, slog/probe service name, and
-  constant regression test derive from that same concrete identifier. The
-  change ID remains `v0005-executor-k8s`.
+  `executor_k8s_openhands` under `executor/k8s-openhands/`. Its binary,
+  config, wire `executor_type`, slog/probe service name, and constant
+  regression test derive from that concrete identifier; its import path
+  derives from the service directory. The change ID remains
+  `v0005-executor-k8s`.
 - Have State Registry generate `executor_id` as a UUID in the first-start
   `POST /v1/executors` response, atomically persist it in the recovery cache
   before task intake, and reuse it through PUT on every restart. Store the K8s cache on a PVC and the Docker Executor cache on a
@@ -280,10 +281,10 @@ seconds`, SHALL verify the literal audience
 - Affected test cases: `openspec/changes/v0005-executor-k8s/specs/test-cases/`
   (eleven E2E definitions, contiguous `v0005.1` through `v0005.11`,
   updated in place to the FIFO claim contract).
-- Affected code: new `executor_k8s_openhands/` service (new top-level
-  directory) and terminal cleanup configuration/lifecycle in the existing
+- Affected code: new `executor/k8s-openhands/` service and terminal cleanup
+  configuration/lifecycle in the existing
   Docker OpenHands service, which is renamed from
-  `executor_docker_openhands/` to `executor_docker_openhands/` (none is
+  `executor/docker_openhands/` to `executor/docker_openhands/` (none is
   modified by this OpenSpec artifact update itself).
 - Verification creates one fresh, uniquely named local `k3d` cluster per
   Playwright suite run and uses Docker Engine for Docker. The harness captures

@@ -16,18 +16,19 @@
 
 ## Repository layout convention: one directory per service, no shared code
 
-Each runtime service in this repository MUST live under its own top-level
-directory named after the service. The directory is fully self-contained:
+Each runtime service in this repository MUST live under its own directory.
+Concrete Executors live under `executor/`; every service directory is fully self-contained:
 every package, binary, config, migration, and test lives inside it. **No
 shared code between services** — only third-party libraries. Cross-cutting
 concerns (HTTP scaffolding, logging, wire types, persistence) are duplicated
 per service so each service can evolve independently.
 
 ```
-executor_docker_openhands/         # v0001 concrete Executor service
-├── cmd/executor_docker_openhands/
-├── configs/executor_docker_openhands.yaml
-├── internal/
+executor/
+├── docker_openhands/              # v0001 concrete Executor service
+│   ├── cmd/executor_docker_openhands/
+│   ├── configs/executor_docker_openhands.yaml
+│   ├── internal/
 │   ├── config/                   # YAML loader (this service only)
 │   ├── httpapi/                  # chi scaffolding (this service only)
 │   ├── logging/                  # slog setup (this service only)
@@ -42,9 +43,10 @@ executor_docker_openhands/         # v0001 concrete Executor service
 │   └── mocks/                    # Test fakes for executor-only interfaces
 │       ├── docker/
 │       └── openhands/
-└── test/                         # integration tests for this service
+│   └── test/                      # integration tests for this service
+└── k8s-openhands/                 # v0005 concrete Executor service
 
-autotest/                         # Cross-service Playwright e2e tests (root only)
+autotest/                          # Cross-service Playwright e2e tests (root only)
 ├── executor_docker_openhands/     # Playwright e2e for the concrete Executor
 │   ├── tests/
 │   ├── package.json              # name = "executor_docker_openhands"
@@ -70,7 +72,7 @@ Rules:
    coupling.
 3. **Test fakes follow the package they fake.** A test fake for an
    executor-only interface (e.g. `dockerclient.Client`) goes under
-   `executor_docker_openhands/internal/mocks/`. Test fakes for a shared component (e.g.
+   `executor/docker_openhands/internal/mocks/`. Test fakes for a shared component (e.g.
    the mocked task server, which is itself a service) live with that service.
 4. **Per-service `test/` directory.** Unit and integration tests for a
    single service live under `<service>/test/`. These tests use only the
@@ -82,11 +84,9 @@ Rules:
    drive running services via their public HTTP/CLI surfaces.
 6. **One `go.mod` at the root.** The whole repository is a single Go module
    (`github.com/flowai/platform`); service directories are organization only.
-7. **Future services follow the same pattern.** When
-   v0005-executor-k8s and later services land, they each get their own
-   top-level directory named following the concrete Executor naming convention
-   (see _Concrete Executor service naming_ below) — for example,
-   `executor_k8s_openhands/` for the selected OpenHands tool. Each is fully
+7. **Future services follow the same pattern.** Concrete Executors get their
+   own directory under `executor/` — for example, `executor/k8s-openhands/`
+   for the selected OpenHands tool. Each is fully
    self-contained. No Router service is planned; durable task intake,
    deduplication, FIFO discovery, atomic claims, and assignments belong to State Registry.
 8. **The mocked task server has been removed.** Executors require the durable
@@ -98,8 +98,8 @@ Rules:
 The platform hosts one or more **concrete Executor services**. Each concrete
 Executor implements the generic Executor contract from `openspec/specs/executor/`
 against a specific runtime and a specific agent tool. To keep the wire surface,
-filesystem layout, and registration body stable, every concrete Executor
-directory and wire identifier follows one pattern:
+registration body stable, every concrete Executor wire identifier follows one
+pattern:
 
 ```
 executor_<runtime>_<tool>
@@ -113,17 +113,19 @@ executor_<runtime>_<tool>
   OpenHands.
 
 Both `<runtime>` and `<tool>` are lowercase, alphanumeric, and joined with `_`
-to one token. The runtime tool stays lowercase too — uppercase is reserved for
-the external product spelling (e.g. `OpenHands`) and never appears in the wire
-value, the directory name, the binary name, the log/probe service name, or
-the `executor_type` field on `PUT /v1/executors/{executor_id}`.
+to one wire token. Uppercase is reserved for the external product spelling
+(e.g. `OpenHands`) and never appears in the wire value, binary name,
+log/probe service name, or the `executor_type` field on
+`PUT /v1/executors/{executor_id}`. Filesystem paths are independent mappings
+under `executor/`.
 
 Concrete Executor rule summary:
 
-- The directory, the `cmd/` subdirectory, the config YAML, the binary name,
-  the Go import path, the wire `executor_type` value, the slog `service`
-  field, the chi `RegisterProbes` service label, and the `flowai.runtime`
-  label's tool portion all derive from `executor_<runtime>_<tool>`.
+- The `cmd/` subdirectory, config YAML, binary name, wire `executor_type`
+  value, slog `service` field, chi `RegisterProbes` service label, and the
+  `flowai.runtime` label's tool portion derive from
+  `executor_<runtime>_<tool>`. Go import paths derive from the service's
+  directory under `executor/`.
 - The platform OpenSpec change IDs (`v0001-executor-docker`,
   `v0005-executor-k8s`, …) and the implementation-active test IDs are
   **not** renamed by this rule — they keep their pre-convention ordinals.
@@ -139,14 +141,14 @@ Concrete Executor rule summary:
 
 Current concrete services:
 
-- `executor_docker_openhands` — runtime = `docker`, tool = `openhands`.
-  `openhands` is the deliberate service identifier (it matches the
-  `executor_<runtime>_<tool>` pattern and the directory layout); the external
+- `executor_docker_openhands` — runtime = `docker`, tool = `openhands`,
+  filesystem path = `executor/docker_openhands/`. `openhands` is the
+  deliberate service identifier; the external
   product spelling `OpenHands` stays unchanged everywhere it appears as a
   product name (`internal/openhands`, `flowai.runtime=openhands`, OpenHands
   API/image/env vars, ADRs).
-- `executor_k8s_openhands` — runtime = `k8s`, tool = `openhands`. Same
-  identifier rule as the Docker Executor; the wire constant is
+- `executor_k8s_openhands` — runtime = `k8s`, tool = `openhands`, filesystem
+  path = `executor/k8s-openhands/`. The wire constant is
   `ExecutorTypeK8sOpenHands` and the Go wire value is
   `executor_k8s_openhands`. The cross-service Playwright k3d suite lives
   at `autotest/executor_k8s_openhands/`.
