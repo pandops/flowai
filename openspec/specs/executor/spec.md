@@ -287,7 +287,7 @@ The existing Docker OpenHands Executor SHALL use `executor/docker_openhands`
 as its service directory and Go import-path segment. It SHALL use
 `executor_docker_openhands` consistently as its command, binary, config YAML
 basename, wire `executor_type`, slog `service` value, probe service label,
-autotest package, and current documentation identifier. Its Go constant SHALL remain
+qa-e2e package, and current documentation identifier. Its Go constant SHALL remain
 `ExecutorTypeDockerOpenHands` and SHALL have the wire value
 `executor_docker_openhands`. Non-archived runtime code SHALL provide no alias
 or compatibility registration for `executor_docker_openhands`; archived

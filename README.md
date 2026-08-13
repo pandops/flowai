@@ -14,10 +14,10 @@ mocked task server, Router, or separate Env Registry.
 
 ```bash
 env -u GOROOT go test ./...
-cd autotest/state-registry && npm test
+cd qa-e2e/state-registry && npm test
 ```
 
-Playwright reports and traces are written under `autotest/reports/`; see
-[autotest/README.md](autotest/README.md). Current normative behavior lives in
+Playwright reports and traces are written under `qa-e2e/reports/`; see
+[qa-e2e/README.md](qa-e2e/README.md). Current normative behavior lives in
 `openspec/specs/`, accepted decisions in `docs/adr/`, and current diagrams
 in `docs/architecture/diagrams/`.

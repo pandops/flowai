@@ -290,7 +290,7 @@ func newAdminHarness(t *testing.T) *adminHarness {
 
 // adminRequest is the documented request body for POST /admin/*.
 // All fields are JSON-tagged to match the OpenAPI-aligned wire shape
-// the autotest suite sends.
+// the qa-e2e suite sends.
 type adminRequest struct {
 	TeamName         string                   `json:"team_name,omitempty"`
 	DefaultImage     *platform.ImageReference `json:"default_image,omitempty"`
@@ -1014,7 +1014,7 @@ func TestSourceSystemListenerIdentityUniqueness(t *testing.T) {
 
 // TestAdminSourceSystemRejectsDuplicateListenerIdentity is the
 // HTTP-level equivalent of the same-team duplicate-rejection
-// scenario in autotest/state-registry/tests/contracts/10-admin.spec.ts
+// scenario in qa-e2e/state-registry/tests/contracts/10-admin.spec.ts
 // (v0002.61 step "negative control: same listener_identity under the
 // SAME team is rejected with 409").
 func TestAdminSourceSystemRejectsDuplicateListenerIdentity(t *testing.T) {

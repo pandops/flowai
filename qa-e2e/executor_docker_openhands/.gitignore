@@ -1,0 +1,7 @@
+# Autotest runtime artifacts (regenerated on every `npm test`).
+playwright-report/
+test-results/
+
+# node_modules is already in the root .gitignore; this file is the local
+# fallback in case the qa-e2e subtree is ever vendored standalone.
+node_modules/

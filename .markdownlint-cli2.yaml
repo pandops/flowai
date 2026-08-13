@@ -9,5 +9,5 @@ config:
   MD056: false
 ignores:
   - "node_modules/**"
-  - "autotest/reports/**"
+  - "qa-e2e/reports/**"
   - "openspec/changes/archive/**"

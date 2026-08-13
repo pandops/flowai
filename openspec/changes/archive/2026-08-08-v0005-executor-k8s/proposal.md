@@ -84,7 +84,7 @@ events.
 - Correct the existing Docker OpenHands concrete service identifier from
   `executor_docker_openhands` to `executor_docker_openhands` across its
   directory, command, binary, config, import path, wire `executor_type`,
-  logs/probes, autotest package, current documentation, and active
+  logs/probes, qa-e2e package, current documentation, and active
   contracts. Keep the Go constant name `ExecutorTypeDockerOpenHands`, change
   its wire value to `executor_docker_openhands`, provide no compatibility
   alias for the misspelled wire value, and preserve archived OpenSpec
@@ -292,7 +292,7 @@ seconds`, SHALL verify the literal audience
   and failure; it never attaches to a pre-existing cluster. OpenHands API edge
   cases use a deterministic compatible mock; a
   separate smoke gate runs the same real short task in the real
-  `autotest/agent-openhands-image` through both Pod and container runtimes.
+  `qa-e2e/agent-openhands-image` through both Pod and container runtimes.
   That real agent-server calls a local deterministic OpenAI-compatible mock
   LLM which scripts the marker-writing tool call and terminal response. The
   smoke gate requires no external LLM or CI API-key secret.

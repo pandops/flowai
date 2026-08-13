@@ -75,7 +75,7 @@ deployment).
 
 - [ ] **RED PREPARATION:** preflight destinations, then move
       `specs/test-cases/v0008.1-*.md` through `v0008.14-*.md`
-      unchanged into `autotest/test-cases/` as the first
+      unchanged into `qa-e2e/test-cases/` as the first
       implementation mutation; verify all 14 immutable IDs are
       contiguous, no destination collides, and no v0008
       definition remains under the change folder.
@@ -97,7 +97,7 @@ deployment).
       supported external HTTP/WS interface, and no test SHALL be
       skipped or replaced by an in-process assertion.
 - [ ] **GREEN VERIFY:** run
-      `npm --prefix autotest/state-registry test -- --list` and
+      `npm --prefix qa-e2e/state-registry test -- --list` and
       require exactly one discoverable runnable test per
       `v0008.<ordinal>` from 1 through 14 with no gaps or
       duplicates.
@@ -163,7 +163,7 @@ TestSecretVersionsIdentityUpdateRejected'`; require the
 
 - [ ] **RED E2E:** implement the harness for `v0008.1` and
       `v0008.2`; run
-      `npm --prefix autotest/state-registry test -- --grep
+      `npm --prefix qa-e2e/state-registry test -- --grep
 'v0008\.(1|2)\b'` and require behavior-specific failures
       for the happy-path Transit write / open and the persisted
       opaque envelope.
@@ -227,7 +227,7 @@ TestNoRewrapCallRecorded'`; require the interface to be
 
 - [ ] **RED E2E:** keep `v0008.1` and `v0008.2` green; add
       the harness for `v0008.3` and `v0008.4`; run
-      `npm --prefix autotest/state-registry test -- --grep
+      `npm --prefix qa-e2e/state-registry test -- --grep
 'v0008\.(3|4)\b'` and require behavior-specific failures
       for every denied open that runs zero provider decrypt
       operations and for tampered-ciphertext / wrong-
@@ -287,7 +287,7 @@ TestNoRewrapCallRecorded'`; require the tests to fail
 ## 4. Implement the failure-injection and the response-shape invariant
 
 - [ ] **RED E2E:** add the harness for `v0008.5`; run
-      `npm --prefix autotest/state-registry test -- --grep
+      `npm --prefix qa-e2e/state-registry test -- --grep
 'v0008\.5\b'` and require behavior-specific failures for
       every provider failure class returning the same non-
       revealing 404 shape with zero provider decrypt operations
@@ -317,7 +317,7 @@ TestNonRevealing404ShapePinning'`; require the identical
 ## 5. Implement the audit / log scrubber for the new provider
 
 - [ ] **RED E2E:** add the harness for `v0008.14`; run
-      `npm --prefix autotest/state-registry test -- --grep
+      `npm --prefix qa-e2e/state-registry test -- --grep
 'v0008\.14\b'` and require behavior-specific failures
       for the scrubber.
 - [ ] **RED unit/integration:** add a regex-based scanner
@@ -352,7 +352,7 @@ key_name)` mapping path, and any `associated_data` byte
 
 - [ ] **RED E2E:** add the harness for `v0008.6`, `v0008.7`,
       and `v0008.8`; run
-      `npm --prefix autotest/state-registry test -- --grep
+      `npm --prefix qa-e2e/state-registry test -- --grep
 'v0008\.(6|7|8)\b'` and require behavior-specific
       failures for the local-to-Transit migration, the
       restart-safe idempotent resume from the per-row durable
@@ -444,7 +444,7 @@ TestMigrationActiveEncryptUsesV0008AAD'`; require the
 ## 7. Implement the deployment cutover procedure as an internal command
 
 - [ ] **RED E2E:** add the harness for `v0008.9`; run
-      `npm --prefix autotest/state-registry test -- --grep
+      `npm --prefix qa-e2e/state-registry test -- --grep
 'v0008\.9\b'` and require behavior-specific failures for
       the cutover consistency scan and the documented rejection
       shape.
@@ -506,7 +506,7 @@ TestCutoverRejection|TestCutoverGuard'`; require zero new
 
 - [ ] **RED E2E:** add the harness for `v0008.10` and
       `v0008.11`; run
-      `npm --prefix autotest/state-registry test -- --grep
+      `npm --prefix qa-e2e/state-registry test -- --grep
 'v0008\.(10|11)\b'` and require behavior-specific failures
       for the new-latest-key-version behavior and the explicit
       no-rewrap-of-AAD-bound-ciphertext behavior.

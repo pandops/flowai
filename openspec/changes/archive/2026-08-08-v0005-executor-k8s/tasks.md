@@ -5,7 +5,7 @@ only after its corresponding RED task has failed for the expected
 behavior-specific reason. Record the exact RED and GREEN
 command/result before checking an implementation task. The K8s Executor
 SHALL NOT be implemented before every `v0005.<n>` definition has a
-runnable Playwright test in `autotest/executor_k8s_openhands/tests/` whose title
+runnable Playwright test in `qa-e2e/executor_k8s_openhands/tests/` whose title
 contains the immutable `v0005.<n>` id.
 
 > **Acceptance note (2026-08-08).** The live rootless Podman-backed `k3d` lifecycle matrix
@@ -20,13 +20,13 @@ contains the immutable `v0005.<n>` id.
 
 - [x] Move every
       `openspec/changes/v0005-executor-k8s/specs/test-cases/v0005.<n>-*.md`
-      unchanged into `autotest/test-cases/` as the first implementation
+      unchanged into `qa-e2e/test-cases/` as the first implementation
       mutation; verify ordinals remain contiguous from `v0005.1` through
       `v0005.11`, destinations do not collide, and no v0005 definition
-      remains under the change folder. - GREEN: `ls autotest/test-cases/v0005.*.md | wc -l` returns 11;
+      remains under the change folder. - GREEN: `ls qa-e2e/test-cases/v0005.*.md | wc -l` returns 11;
       the source folder `openspec/changes/v0005-executor-k8s/specs/test-cases/`
       contains only `.gitkeep`. - REF: commit `5bf7948` — `git mv` rename.
-- [x] Bootstrap `autotest/executor_k8s_openhands/` as a Playwright-driven
+- [x] Bootstrap `qa-e2e/executor_k8s_openhands/` as a Playwright-driven
       suite that starts the real State Registry and PostgreSQL processes,
       creates one fresh real local `k3d` cluster per suite run under a
       collision-resistant name, loads test runtime images, provides
@@ -36,11 +36,11 @@ contains the immutable `v0005.<n>` id.
       process restarts, and drives only supported HTTP/read interfaces;
       verify the harness can report a behavior-specific connection or
       unimplemented-operation failure rather than a fixture or dependency
-      failure. - GREEN: must run `npm --prefix autotest/executor_k8s_openhands install`
-      then `npm --prefix autotest/executor_k8s_openhands test` and observe
+      failure. - GREEN: must run `npm --prefix qa-e2e/executor_k8s_openhands install`
+      then `npm --prefix qa-e2e/executor_k8s_openhands test` and observe
       a behaviour-specific failure for a not-yet-implemented contract
-      rather than a fixture/dependency error. NOT RUN in this worktree. - REF: `autotest/executor_k8s_openhands/{package.json,playwright.config.js,fixtures/k3d-suite.ts,tests/v0005.*-*.spec.ts}`,
-      `autotest/scripts/install-k3d.sh`. - GREEN: the full live suite passed 12/12
+      rather than a fixture/dependency error. NOT RUN in this worktree. - REF: `qa-e2e/executor_k8s_openhands/{package.json,playwright.config.js,fixtures/k3d-suite.ts,tests/v0005.*-*.spec.ts}`,
+      `qa-e2e/scripts/install-k3d.sh`. - GREEN: the full live suite passed 12/12
       against a fresh `k3d v5.9.0` cluster on 2026-08-08.
 - [x] Deploy `executor_k8s_openhands` as a single-replica Deployment inside
       the temporary cluster using a dedicated ServiceAccount, least-privilege
@@ -71,11 +71,11 @@ contains the immutable `v0005.<n>` id.
       that diagnostics survive while the temporary cluster is deleted. - GREEN: must run an intentionally failing test and observe the
       collected diagnostics survive the cluster delete. NOT RUN. - Partial in-repo verification: `k3d-suite.ts` records diagnostics
       via `kubectl -n flowai-executor-k8s get pods,svc,deployments,pvc -o yaml`
-      into `artifacts/cluster.txt` before `k3d cluster delete`. - REF: `autotest/executor_k8s_openhands/fixtures/k3d-suite.ts`. Live
+      into `artifacts/cluster.txt` before `k3d cluster delete`. - REF: `qa-e2e/executor_k8s_openhands/fixtures/k3d-suite.ts`. Live
       cluster creation blocked by sandbox.
 - [x] Add a shared real-runtime smoke fixture used by both K8s and Docker
       Executor E2E. Build the repository's real
-      `autotest/agent-openhands-image`, load the exact same image into `k3d`
+      `qa-e2e/agent-openhands-image`, load the exact same image into `k3d`
       and Docker Engine, submit one short task that writes a unique workspace
       marker, require actual OpenHands `execution_status = finished`, and
       verify the marker. Start one local deterministic OpenAI-compatible mock
@@ -91,18 +91,18 @@ contains the immutable `v0005.<n>` id.
 - [x] Add one runnable Playwright test for every moved v0005 definition
       and make each test title contain its immutable `v0005.<ordinal>` id;
       leave every `## Implementation reference` blank until the
-      corresponding test has a stable file path and test title. - GREEN: must run `npm --prefix autotest/executor_k8s_openhands test`
+      corresponding test has a stable file path and test title. - GREEN: must run `npm --prefix qa-e2e/executor_k8s_openhands test`
       and observe every spec pass. - GREEN: 12/12 passed in the live k3d suite.
 
 ## 2. Team-bound registration and identity immutability
 
 - [x] **RED E2E:** implement the runnable tests for `v0005.1`
       and `v0005.2`; run
-      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.(1|2)\b'`
+      `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.(1|2)\b'`
       and verify failure because team-bound registration, identity match,
       and immutability rules are absent. - GREEN: must observe the targeted Playwright command fail with
-      a contract-specific assertion. NOT RUN. - REF: `autotest/executor_k8s_openhands/tests/v0005.1-…spec.ts`,
-      `autotest/executor_k8s_openhands/tests/v0005.2-…spec.ts`.
+      a contract-specific assertion. NOT RUN. - REF: `qa-e2e/executor_k8s_openhands/tests/v0005.1-…spec.ts`,
+      `qa-e2e/executor_k8s_openhands/tests/v0005.2-…spec.ts`.
 - [x] **RED unit/integration:** add table-driven tests for zero, one,
       and multiple `team_id` submissions, identity-mismatched `team_id`,
       forbidden client-supplied `identity` and `team_name` fields, and
@@ -129,7 +129,7 @@ contains the immutable `v0005.<n>` id.
       `400 invalid_team_id_count`, `403`, and `404` outcomes, persistence of
       the supplied `team_id` on the canonical Executor record, and
       immutability of `team_id` across re-registration. - GREEN: must observe the documented outcomes from
-      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.(1|2)\b'`.
+      `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.(1|2)\b'`.
       - GREEN: on 2026-08-08 the targeted Playwright command passed 2/2
       against a fresh live `k3d` cluster in 1.8 minutes; suite teardown
       removed the temporary cluster. - Partial in-repo verification:
@@ -143,7 +143,7 @@ contains the immutable `v0005.<n>` id.
 ## 3. Team-isolated pending FIFO discovery and claim
 
 - [x] **RED E2E:** implement the runnable test for `v0005.3`; run
-      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.3\b'`
+      `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.3\b'`
       and verify failure because same-team exact-tag pending FIFO discovery,
       the team-filter-before-result-shaping rule, and the non-revealing
       cross-team `404` rule on point resources are absent. - GREEN: must observe the targeted Playwright command fail with
@@ -203,13 +203,13 @@ older_task_must_be_claimed_first` as "discard the candidate"; on the
 - [x] **REFACTOR:** centralize scope predicates and task-team envelope
       derivation while keeping the targeted and related suites green; fill
       the moved `v0005.10` definition with its exact implementation
-      reference and RED/GREEN evidence. - GREEN: in-repo tests pass. - REF: `autotest/test-cases/v0005.10-system-owned-k8s-executor-dispatches-across-teams.md`
+      reference and RED/GREEN evidence. - GREEN: in-repo tests pass. - REF: `qa-e2e/test-cases/v0005.10-system-owned-k8s-executor-dispatches-across-teams.md`
       (Implementation reference appended in commit `763531a`).
 
 ## 4. Pod lifecycle with team_id envelope and team-scoped event writes
 
 - [x] **RED E2E:** implement the runnable tests for `v0005.4` and `v0005.5`;
-      run `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.(4|5)\b'`
+      run `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.(4|5)\b'`
       and verify failure because the FIFO claim response shape, the
       `resolved_image` flow, the Registry-appended first `created` event,
       the team_id envelope, `running`-after-claim ordering, and the
@@ -267,7 +267,7 @@ older_task_must_be_claimed_first` as "discard the candidate"; on the
 ## 5. Local capacity ownership (no Registry-side rejection)
 
 - [x] **RED E2E:** implement the runnable test for `v0005.6`; run
-      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.6\b'`
+      `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.6\b'`
       and verify failure because the saturated-capacity rule,
       capacity-independent FIFO claim, and local-only slot enforcement are
       absent. - GREEN: must observe the targeted Playwright command fail. NOT RUN.
@@ -291,7 +291,7 @@ max_capacity`, and self-event observation writes. - GREEN: `go test ./executor/k
 ## 6. Assigned task environment open with team-bound scope token
 
 - [x] **RED E2E:** implement the runnable test for `v0005.7`; run
-      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.7\b'`
+      `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.7\b'`
       and verify failure because the inherited v0002 token-contract
       validation, the `kid == key_id` check, the `issued_at`/`expiry`
       window, the project-scope rule for `project_id`, plaintext-free
@@ -320,7 +320,7 @@ max_capacity`, and self-event observation writes. - GREEN: `go test ./executor/k
 ## 7. Pending controls only for assigned tasks in the bound team
 
 - [x] **RED E2E:** implement the runnable test for `v0005.8`; run
-      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.8\b'`
+      `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.8\b'`
       and verify failure because assigned-task-only control reads and the
       cross-team `404` are absent. - GREEN: must observe the targeted Playwright command fail. NOT RUN.
 - [x] **RED unit/integration:** add control-read tests covering the
@@ -342,7 +342,7 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
 ## 8. Restart reconciliation without reassignment
 
 - [x] **RED E2E:** implement the runnable test for `v0005.9`; run
-      `npm --prefix autotest/executor_k8s_openhands test -- --grep 'v0005\.9\b'`
+      `npm --prefix qa-e2e/executor_k8s_openhands test -- --grep 'v0005\.9\b'`
       and verify failure because non-reassigning reconciliation,
       `team_id` immutability across restart, persistent-cache-only
       recovery, the `owner_command_id` -> `flowai.command_id` Pod-matching
@@ -453,7 +453,7 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
 
 - [x] **BASELINE:** before the rename, run `go build ./...`,
       `go test ./...`, `go test -race ./...`, and the existing
-      `autotest/executor_docker_opehands` Playwright suite; record the
+      `qa-e2e/executor_docker_opehands` Playwright suite; record the
       results so the rename remains separable from behavior changes. - GREEN: pre-rename history in commit `896c56c` shows
       `go build ./...`, `go test ./...`, `go test -race ./...` clean.
 - [x] **RED E2E/contract:** implement the runnable test for `v0005.11` and
@@ -466,9 +466,9 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
 - [x] **GREEN filesystem:** rename top-level
       `executor_docker_opehands/` to `executor/docker_openhands/`, rename
       its `cmd/` directory and config YAML to the same concrete identifier,
-      and rename `autotest/executor_docker_opehands/` to
-      `autotest/executor_docker_openhands/`. - GREEN: `ls executor/docker_openhands/` and
-      `ls autotest/executor_docker_openhands/` exist with the renamed
+      and rename `qa-e2e/executor_docker_opehands/` to
+      `qa-e2e/executor_docker_openhands/`. - GREEN: `ls executor/docker_openhands/` and
+      `ls qa-e2e/executor_docker_openhands/` exist with the renamed
       paths; `git log --follow` shows preserved history.
 - [x] **GREEN contract:** replace the misspelled current-state identifier
       with `executor_docker_openhands` across Go imports, binary/build
@@ -516,14 +516,14 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
 - [x] Fill every moved v0005 definition's
       `## Implementation reference` with its exact Playwright file path
       and test title; verify no test is skipped and every task records
-      valid RED-before-GREEN evidence. - GREEN: `grep -l 'Implementation reference' autotest/test-cases/v0005.*.md`
+      valid RED-before-GREEN evidence. - GREEN: `grep -l 'Implementation reference' qa-e2e/test-cases/v0005.*.md`
       returns all 11 files; commit `763531a` records the change.
 - [x] Run `gofmt` on changed Go files, `go test -race ./...`,
       `go test -tags=integration ./executor/k8s-openhands/...`, and
       `go build ./...`. - GREEN: `go build ./...` clean, `go test -race ./...` 0 fail,
       `go vet ./...` clean.
 - [x] Run the full K8s Executor Playwright suite with
-      `npm --prefix autotest/executor_k8s_openhands test`; require every
+      `npm --prefix qa-e2e/executor_k8s_openhands test`; require every
       v0005 E2E to pass against `k3d`. Run the separate real-runtime smoke
       against both the `k3d` Pod and Docker container with the same real
       image, task, and local deterministic OpenAI-compatible mock LLM;
@@ -531,8 +531,8 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       the suite-created k3d cluster to be absent after both a passing run
       and an intentionally failing harness self-test, with diagnostics
       retained for the failure. - GREEN: must observe every v0005 E2E pass against a live `k3d`
-      cluster. NOT RUN. - REF: `autotest/executor_k8s_openhands/{playwright.config.js,fixtures/k3d-suite.ts,tests/v0005.*-*.spec.ts}`,
-      `autotest/scripts/install-k3d.sh`. Live cluster creation blocked by
+      cluster. NOT RUN. - REF: `qa-e2e/executor_k8s_openhands/{playwright.config.js,fixtures/k3d-suite.ts,tests/v0005.*-*.spec.ts}`,
+      `qa-e2e/scripts/install-k3d.sh`. Live cluster creation blocked by
       sandbox (CoreDNS configmap injection timeout).
 - [x] Run change validation:
       `npx -y @fission-ai/openspec@1.5.0 validate v0005-executor-k8s

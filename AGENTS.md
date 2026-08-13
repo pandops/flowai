@@ -54,7 +54,7 @@ svc/
     ├── migrations/
     └── test/
 
-autotest/                          # Cross-service Playwright e2e tests (root only)
+qa-e2e/                          # Cross-service Playwright e2e tests (root only)
 ├── executor_docker_openhands/     # Playwright e2e for the concrete Executor
 │   ├── tests/
 │   ├── package.json              # name = "executor_docker_openhands"
@@ -86,9 +86,9 @@ Rules:
    single service live under `<service>/test/`. These tests use only the
    service's own packages + stdlib + in-process fakes. They do NOT import
    packages from other services (Go's `internal/` rule prevents this anyway).
-5. **Cross-service e2e tests live in `autotest/` at the root.** Tests that
+5. **Cross-service e2e tests live in `qa-e2e/` at the root.** Tests that
    span more than one service — typically Playwright e2e tests — live at
-   `autotest/` in the repo root, NOT inside any service directory. They
+   `qa-e2e/` in the repo root, NOT inside any service directory. They
    drive running services via their public HTTP/CLI surfaces.
 6. **One `go.mod` at the root.** The whole repository is a single Go module
    (`github.com/flowai/platform`); service directories are organization only.
@@ -159,7 +159,7 @@ Current concrete services:
   path = `executor/k8s-openhands/`. The wire constant is
   `ExecutorTypeK8sOpenHands` and the Go wire value is
   `executor_k8s_openhands`. The cross-service Playwright k3d suite lives
-  at `autotest/executor_k8s_openhands/`.
+  at `qa-e2e/executor_k8s_openhands/`.
 
 ## OpenSpec management rules
 

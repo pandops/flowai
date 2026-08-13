@@ -1,5 +1,5 @@
 node_modules/
-autotest/reports/
+qa-e2e/reports/
 openspec/changes/archive/
 *.puml
 executor/k8s-openhands/deploy/k8s/chart/templates/

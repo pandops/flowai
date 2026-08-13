@@ -35,7 +35,7 @@ After backend services and executors exist, FlowAI needs an operator surface for
 - Affected ADRs: none
 - Affected diagrams: `specs/diagrams/01-operator-surface-no-auth.puml`, `specs/diagrams/02-gateway-routing-no-auth.puml`, `specs/diagrams/03-live-events-no-auth.puml`, `specs/diagrams/04-env-secret-write-no-auth.puml`, `specs/diagrams/05-control-request-no-auth.puml`
 - Affected test cases: `specs/test-cases/v0006.*.md` (11 contiguous E2E definitions)
-- Affected code: future `web-ui/`, `api-gateway/`, and root `autotest/` implementation paths
+- Affected code: future `web-ui/`, `api-gateway/`, and root `qa-e2e/` implementation paths
 
 ## Out of Scope
 

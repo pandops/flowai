@@ -145,7 +145,7 @@ type rowQueryer interface {
 // via the active AES key, and returns authorized env-style values.
 // The supplied request's RecordDecrypt callback is invoked once per
 // successful AES-256-GCM open and never for any denied or
-// unavailable case so the autotest harness can prove the
+// unavailable case so the qa-e2e harness can prove the
 // no-decrypt-on-denial invariant. The request's RequestID is
 // persisted verbatim on the audit row so operators can correlate
 // the access with the call-site that triggered it.

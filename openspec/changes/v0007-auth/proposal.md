@@ -21,7 +21,7 @@ The configured single-team no-auth bootstrap introduced by `v0006-web-ui` cannot
 - Affected ADRs: none
 - Affected diagrams: `specs/diagrams/01-auth-login.puml`, `specs/diagrams/02-authenticated-request.puml`, `specs/diagrams/03-authenticated-websocket.puml`
 - Affected test cases: `specs/test-cases/v0007.*.md`
-- Affected code: future `web-ui/`, `api-gateway/`, and root `autotest/` implementation paths
+- Affected code: future `web-ui/`, `api-gateway/`, and root `qa-e2e/` implementation paths
 
 ## Out of Scope
 

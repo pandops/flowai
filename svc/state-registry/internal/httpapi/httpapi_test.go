@@ -1,6 +1,6 @@
 // Package httpapi tests cover the readiness probes, the conditional
 // mounting of the test-only decrypt-ops endpoint, and the counter
-// behavior used by the autotest harness.
+// behavior used by the qa-e2e harness.
 package httpapi
 
 import (

@@ -10,7 +10,7 @@
   objects as test artifacts, then deletes the cluster on success or failure.
   Deterministic API/lifecycle/error tests use an
   OpenHands-compatible agent API mock. In addition, one smoke test per
-  runtime uses the same real `autotest/agent-openhands-image` and runs one
+  runtime uses the same real `qa-e2e/agent-openhands-image` and runs one
   short real OpenHands task through to conversation `finished`. The real
   agent-server is configured against a local deterministic OpenAI-compatible
   mock LLM shared by both smoke paths. The mock returns the scripted tool-call

@@ -193,7 +193,7 @@ func RegisterProbes(r chi.Router, serviceName, executorID string, ready health.R
 	})
 }
 
-// DecryptOps is the test-only counter that lets the autotest harness
+// DecryptOps is the test-only counter that lets the qa-e2e harness
 // observe the number of decrypt operations the State Registry has
 // performed. The counter is incremented only inside the protected
 // scope-token open path (not implemented at this scaffold step).
@@ -206,7 +206,7 @@ type DecryptOps struct {
 func NewDecryptOps() *DecryptOps { return &DecryptOps{} }
 
 // Record is called by the future protected decrypt path. The scaffold
-// does not invoke it; the autotest harness uses Snapshot to confirm
+// does not invoke it; the qa-e2e harness uses Snapshot to confirm
 // no decrypt operation ran during a smoke request.
 func (o *DecryptOps) Record() {
 	o.mu.Lock()
@@ -221,7 +221,7 @@ func (o *DecryptOps) Snapshot() int64 {
 	return o.count
 }
 
-// Reset clears the counter. Used by the autotest harness between
+// Reset clears the counter. Used by the qa-e2e harness between
 // smoke phases when a fresh observation window is required.
 func (o *DecryptOps) Reset() {
 	o.mu.Lock()

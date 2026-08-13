@@ -1,7 +1,7 @@
 ## 1. Implementation start and E2E telemetry harness
 
 - [ ] 1.1 Move every `specs/test-cases/v0012.*.md` definition to `autotests/test-cases/` without copying or renumbering, verify the source directory contains no Markdown files, and keep each implementation reference blank until its runnable test exists.
-- [ ] 1.2 Add a self-contained E2E OpenTelemetry Collector configuration and inspectable test exporter under `autotest/`, pin all images and dependencies, and verify the existing non-telemetry E2E suite remains green.
+- [ ] 1.2 Add a self-contained E2E OpenTelemetry Collector configuration and inspectable test exporter under `qa-e2e/`, pin all images and dependencies, and verify the existing non-telemetry E2E suite remains green.
 - [ ] 1.3 Add service-local OpenTelemetry Go dependencies and record the resolved versions while preserving the repository's single root `go.mod` and no-shared-service-code rule.
 
 ## 2. RED — export, propagation, and durable task correlation

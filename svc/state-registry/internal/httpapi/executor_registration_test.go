@@ -70,7 +70,7 @@ import (
 // ---------------------------------------------------------------------------
 // Executor identity headers — canonical names from
 // openspec/changes/v0002-state-registry/specs/openapi/state-registry.openapi.yaml
-// plus the autotest/state-registry/fixtures/identities.ts contract
+// plus the qa-e2e/state-registry/fixtures/identities.ts contract
 // (team-executor / system-executor role assignments).
 // ---------------------------------------------------------------------------
 

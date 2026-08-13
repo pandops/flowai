@@ -16,7 +16,7 @@ hook that blocks commits until all checks pass.
 - Change type: development
 - Affected specs: developer-tooling
 - Affected code: root tooling configuration, scripts, and Git hooks
-- Affected test cases: `autotest/test-cases/v0009.1-precommit-rejects-unformatted-change.md`
+- Affected test cases: `qa-e2e/test-cases/v0009.1-precommit-rejects-unformatted-change.md`
 
 ## Out of scope
 

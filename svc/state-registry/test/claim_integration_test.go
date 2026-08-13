@@ -379,7 +379,7 @@ func TestClaimRejectsNonPendingTask(t *testing.T) {
 	// requester names the same task_id with a different
 	// command_id; the task is visible because the requester is
 	// on the same team (foreign-team calls would collapse to
-	// ErrTaskNotFound per rule (a)). This matches the autotest
+	// ErrTaskNotFound per rule (a)). This matches the qa-e2e
 	// v0002.22 expectation.
 	otherID := "exec-a2"
 	_, err = h.repo.ClaimTask(context.Background(),
