@@ -2,10 +2,10 @@
   "name": "flowai-platform",
   "private": true,
   "scripts": {
-    "format": "bash scripts/quality.sh format",
-    "format:check": "bash scripts/quality.sh check",
+    "format": "bash .hooks/quality.sh format",
+    "format:check": "bash .hooks/quality.sh check",
     "lint:markdown": "markdownlint-cli2 '**/*.md' '#node_modules' '#autotest/reports' '#openspec/changes/archive'",
-    "precommit": "bash scripts/quality.sh precommit"
+    "precommit": "bash .hooks/quality.sh precommit"
   },
   "devDependencies": {
     "markdownlint-cli2": "0.18.1",

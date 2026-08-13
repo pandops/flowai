@@ -40,7 +40,7 @@ contains the immutable `v0005.<n>` id.
       then `npm --prefix autotest/executor_k8s_openhands test` and observe
       a behaviour-specific failure for a not-yet-implemented contract
       rather than a fixture/dependency error. NOT RUN in this worktree. - REF: `autotest/executor_k8s_openhands/{package.json,playwright.config.js,fixtures/k3d-suite.ts,tests/v0005.*-*.spec.ts}`,
-      `scripts/install-k3d.sh`. - GREEN: the full live suite passed 12/12
+      `autotest/scripts/install-k3d.sh`. - GREEN: the full live suite passed 12/12
       against a fresh `k3d v5.9.0` cluster on 2026-08-08.
 - [x] Deploy `executor_k8s_openhands` as a single-replica Deployment inside
       the temporary cluster using a dedicated ServiceAccount, least-privilege
@@ -532,7 +532,7 @@ not_assigned` for same-team unassigned requests. - GREEN: must observe the targe
       and an intentionally failing harness self-test, with diagnostics
       retained for the failure. - GREEN: must observe every v0005 E2E pass against a live `k3d`
       cluster. NOT RUN. - REF: `autotest/executor_k8s_openhands/{playwright.config.js,fixtures/k3d-suite.ts,tests/v0005.*-*.spec.ts}`,
-      `scripts/install-k3d.sh`. Live cluster creation blocked by
+      `autotest/scripts/install-k3d.sh`. Live cluster creation blocked by
       sandbox (CoreDNS configmap injection timeout).
 - [x] Run change validation:
       `npx -y @fission-ai/openspec@1.5.0 validate v0005-executor-k8s
