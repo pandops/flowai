@@ -243,13 +243,21 @@ The Docker Executor SHALL discover `pending` tasks from State Registry by exact 
 - **WHEN** State Registry returns a pending control for a task assigned to this Executor in its team
 - **THEN** the Executor applies the control only to that task's runtime and records the resulting task events
 
-### Requirement: Docker Executor uses its registered scope as its authorization identity
+### Requirement: Executors preserve configured ownership without transport identity
 
-A Docker Executor process and its authenticated service identity SHALL honor the `scope` it registered with State Registry for the process lifetime. When `scope = team`, the Executor SHALL use its immutable `team_id` binding for registration, discovery, claim, task events, self events, control reads, and environment opens; it SHALL reject any task, control, token, or environment data whose `team_id` differs from that binding. When `scope = system`, the Executor SHALL NOT assume a single team; it SHALL use the parent task's `team_id` as the per-task authorization context for claim, task events, environment opens, and control reads, and SHALL reject any task, control, token, or environment data whose task-side `team_id` is missing, foreign to the canonical task, or contradicts any other claim. In both scopes, the Executor SHALL NOT use `team_name` as authorization evidence. The Executor SHALL NOT use image equality or reuse of an opaque image string as evidence that the same team owns the task.
+Every concrete Executor SHALL honor its configured and persisted `scope` for
+the process lifetime without using transport identity as authorization
+evidence. For team scope, it SHALL keep its immutable configured `team_id` in
+registration, discovery, claims, events, controls, and environment opens. For
+system scope, it SHALL omit registration `team_id` and use each claimed task's
+canonical `team_id` for task-scoped operations. State Registry rejection of
+inconsistent canonical data SHALL stop the affected operation. An Executor
+SHALL NOT treat `executor_id`, `team_name`, or image equality as credentials or
+authorization evidence.
 
 #### Scenario: Team-owned Executor receives data with a mismatched team
 
-- **WHEN** a State Registry response or scope token contains a `team_id` different from the team-owned Executor's authenticated team binding
+- **WHEN** a State Registry response or scope token contains a `team_id` different from the team-owned Executor's configured binding
 - **THEN** the Executor rejects the data locally, starts no runtime, injects no environment value, and surfaces the protocol violation
 
 #### Scenario: System-owned Executor receives a task with envelope team_id mismatched
@@ -261,6 +269,25 @@ A Docker Executor process and its authenticated service identity SHALL honor the
 
 - **WHEN** the team's display-only `team_name` changes while `team_id` remains the same
 - **THEN** the team-owned Executor's authorization identity and registered ownership remain unchanged; a system-owned Executor is unaffected because it has no team binding
+
+### Requirement: Executors use unauthenticated backend HTTP
+
+Every concrete Executor SHALL call State Registry over plain HTTP without a
+client certificate, private key, CA bundle, authorization credential, or
+certificate-derived service identity. It SHALL preserve the current
+registration lifecycle and take `scope`, optional `team_id`, and
+`authorized_tag` from configuration. Legacy State Registry TLS/mTLS fields
+SHALL be accepted and ignored without reading referenced files.
+
+#### Scenario: Team-owned Executor starts without certificate files
+
+- **WHEN** an Executor starts with a State Registry `http://` URL, `scope = team`, configured `team_id`, one tag, and no certificate files
+- **THEN** it registers and proceeds using persisted scope rules without constructing a TLS client
+
+#### Scenario: Legacy mTLS fields remain configured
+
+- **WHEN** legacy certificate, key, CA, or TLS fields contain missing or invalid paths
+- **THEN** the Executor ignores them, performs no filesystem read for those paths, and bases readiness on HTTP connectivity
 
 ### Requirement: Docker Executor opens task-bound environments from State Registry
 
@@ -639,26 +666,22 @@ accepted `scope` or team binding after first registration.
   already-claimed tasks and without creating duplicate Pods or
   duplicate `running` events
 
-### Requirement: K8s Executor binds to a single authenticated team identity
+### Requirement: K8s Executor binds to one configured team
 
-The K8s Executor SHALL register exactly one `team_id` bound to the
-authenticated Executor service identity when `scope = team` and SHALL
-refuse to operate when the supplied `team_id` differs from the team
-bound to that identity. The State Registry SHALL accept a registration
-only when the supplied `team_id` matches the team carried by the
-authenticated Executor credential, SHALL reject a registration that
-omits `team_id` when `scope = team`, SHALL reject a registration that
-supplies more than one `team_id`, and SHALL reject any later write that
-attempts to change the stored `team_id`. `team_id` is authoritative for
-the Executor's matching and authorization scope. The Executor registration
-body SHALL NOT carry `team_name`.
+The K8s Executor SHALL register exactly one configured `team_id` when
+`scope = team` and SHALL refuse to operate when submitted or returned data
+differs from that immutable binding. State Registry SHALL verify that the
+submitted team exists, SHALL reject registration that omits `team_id` for team
+scope or supplies it for system scope, and SHALL reject later writes that
+attempt to change the stored `team_id`. It SHALL perform these checks without
+an authenticated transport identity. The registration body SHALL NOT carry
+`team_name`.
 
 #### Scenario: K8s Executor registers with one team_id
 
 - **WHEN** a K8s Executor with `scope = team` supplies one `team_id`,
   one `authorized_tag`, observed `max_capacity`, observed
-  `running_count`, and metadata, all bound to the
-  authenticated Executor service identity
+  `running_count`, and metadata
 - **THEN** the State Registry accepts the registration, stores the
   `team_id` on the canonical Executor record, and exposes the same
   `team_id` on subsequent reads
@@ -670,11 +693,10 @@ body SHALL NOT carry `team_name`.
 - **THEN** the State Registry rejects the registration without creating
   an Executor record
 
-#### Scenario: K8s Executor registration with mismatched team_id is rejected
+#### Scenario: K8s Executor registration with unknown team_id is rejected
 
-- **WHEN** a K8s Executor submits a registration whose `team_id` does
-  not match the team bound to the authenticated Executor service
-  identity
+- **WHEN** a K8s Executor submits a registration whose `team_id` does not
+  reference an existing team
 - **THEN** the State Registry rejects the registration without creating
   or updating an Executor record
 

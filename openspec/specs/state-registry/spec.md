@@ -358,11 +358,11 @@ Each task SHALL declare exactly one immutable `team_id` and exactly one required
 
 ### Requirement: Executors register one tag and either team-owned or system-owned scope
 
-Each Executor SHALL register at most one ownership `scope` chosen from `{team, system}`. First-start registration SHALL use `POST /v1/executors`; State Registry SHALL generate an immutable UUID `executor_id`, persist it on the new canonical row, and return it in `201 Created`. The request body SHALL carry neither `executor_id` nor `identity`; State Registry SHALL derive the canonical service identity exclusively from authenticated mTLS. Restart refresh SHALL use `PUT /v1/executors/{executor_id}` with the identifier previously returned and cached by the Executor; PUT SHALL update only the existing matching row and SHALL return `404` rather than create a missing Executor. When `scope = team`, the Executor service identity SHALL be bound to exactly one immutable authorized `team_id` and SHALL submit that `team_id` in the registration body; State Registry SHALL verify the submitted `team_id` exists and SHALL persist that `team_id` on the `executors` row. When `scope = system`, the Executor service identity SHALL NOT be bound to any team and the registration body SHALL omit the `team_id` property; State Registry SHALL persist `team_id` as NULL on the `executors` row and SHALL mark the Executor as system-owned. Both scopes SHALL register exactly one authorized tag, Executor type, and runtime metadata. The Registry SHALL reject any registration that omits the tag or supplies more than one tag, SHALL reject any registration that supplies `team_id` with `scope = system` including explicit null, SHALL reject any registration that omits `team_id` with `scope = team`, and SHALL reject a registration that supplies a `team_id` that does not reference an existing team. Executor registration and refresh SHALL NOT create or update any team.
+Each Executor SHALL register at most one ownership `scope` chosen from `{team, system}`. First-start registration SHALL use `POST /v1/executors`; State Registry SHALL generate an immutable UUID `executor_id`, persist it on the new canonical row, and return it in `201 Created`. The request body SHALL carry neither `executor_id` nor `identity`, and State Registry SHALL NOT treat the generated ID as a credential. Restart refresh SHALL use `PUT /v1/executors/{executor_id}` with the identifier previously returned and cached by the Executor; PUT SHALL update only the existing matching row and SHALL return `404` rather than create a missing Executor. When `scope = team`, the Executor SHALL submit exactly one configured immutable `team_id`; State Registry SHALL verify that the team exists and persist the binding without authenticating the caller. When `scope = system`, the registration body SHALL omit the `team_id` property and State Registry SHALL persist `team_id` as NULL. Both scopes SHALL register exactly one authorized tag, Executor type, and runtime metadata. State Registry SHALL resolve submitted identifiers against canonical records, reject changes to scope, team, or tag, and SHALL NOT derive identity or authority from transport. The Registry SHALL reject any registration that omits the tag or supplies more than one tag, SHALL reject any registration that supplies `team_id` with `scope = system` including explicit null, SHALL reject any registration that omits `team_id` with `scope = team`, and SHALL reject a registration that supplies a `team_id` that does not reference an existing team. Executor registration and refresh SHALL NOT create or update any team.
 
 #### Scenario: Team-owned Executor registers one team and one tag
 
-- **WHEN** an Executor identity authorized for `team-a` posts first-start registration with `scope = team`, `team_id = team-a`, one tag, type, and metadata
+- **WHEN** an Executor posts first-start registration with `scope = team`, an existing configured `team_id = team-a`, one tag, type, and metadata
 - **THEN** State Registry generates and returns one immutable UUID `executor_id` and persists one immutable team and one tag
 
 #### Scenario: Executor refreshes with its cached server identifier
@@ -372,12 +372,12 @@ Each Executor SHALL register at most one ownership `scope` chosen from `{team, s
 
 #### Scenario: Team-owned Executor attempts another team
 
-- **WHEN** an Executor identity authorized for `team-a` registers or re-registers with `scope = team` and `team_id = team-b`
+- **WHEN** an Executor registered for `team-a` re-registers with `scope = team` and `team_id = team-b`
 - **THEN** the State Registry rejects the request without creating or changing an Executor record
 
 #### Scenario: System-owned Executor registers without a team
 
-- **WHEN** an Executor identity with no team binding registers with `scope = system`, omits the `team_id` property, and supplies one tag, type, and metadata
+- **WHEN** an Executor registers with `scope = system`, omits the `team_id` property, and supplies one tag, type, and metadata
 - **THEN** the State Registry accepts the registration, persists `team_id = NULL` on the `executors` row, and records the Executor as system-owned
 
 #### Scenario: System-owned Executor registration with team_id is rejected
@@ -800,14 +800,43 @@ For each auditable authorized operator action, control, environment or secret mu
 - **WHEN** an assigned Executor successfully opens an environment
 - **THEN** the audit entry identifies the team, Executor actor, environment resource, request, and success outcome without containing returned values, secret material, key, nonce, ciphertext, or authentication tag
 
-### Requirement: State Registry enforces team-bound service identities with conditional Executor binding
+### Requirement: State Registry accepts backend HTTP without service authentication
 
-State Registry SHALL authenticate listener, Executor, and API Gateway service identities. Each listener identity SHALL be bound to exactly one immutable authorized `team_id` and to exactly one immutable authorized `source_system_id`; listener source identifiers and submitted `team_id` SHALL be bound to the authenticated listener. Each Executor identity SHALL be bound to either exactly one immutable authorized `team_id` (`scope = team`) or to no `team_id` (`scope = system`). Listener and team-owned Executor registration, team and tag authorization, discovery, claim, task-event writes, Executor-event writes, control reads, and environment opens SHALL be bound to the authenticated service identity. System-owned Executor registration, discovery, claim, task-event writes, and Executor-event writes SHALL be bound to the authenticated Executor identity and SHALL use `tasks.team_id` as the team predicate for any per-task ownership check; the parent task's `team_id` is immutable for the row's lifetime. API Gateway-only reads, subscriptions, environment/secret writes, and controls SHALL require the trusted Gateway identity and verified operator context. `/admin/*` endpoints SHALL require an authenticated system-administrator identity. Untrusted client headers SHALL NOT establish a team.
+State Registry SHALL expose its backend HTTP and WebSocket APIs without TLS,
+client certificates, service credentials, or certificate-derived identity. No
+endpoint SHALL require an authenticated listener, Executor, Gateway, or
+administrator service identity. Submitted identifiers and context fields SHALL
+be resolved against canonical Registry records and SHALL be treated as request
+data, never as authentication proof.
 
-#### Scenario: Caller impersonates another service or team
+#### Scenario: Backend caller uses HTTP without credentials
 
-- **WHEN** a caller uses another listener, Executor, Gateway, or `team_id` without the corresponding trusted service credential and authorization
-- **THEN** State Registry rejects the request without revealing or changing protected state
+- **WHEN** an Executor, listener, or API Gateway calls its State Registry route over HTTP without a client certificate or authorization credential
+- **THEN** State Registry applies normal schema, existence, scope, ownership, assignment, lifecycle, and ordering validation without rejecting the request for missing service authentication
+
+### Requirement: State Registry trusts Gateway context without authenticating Gateway
+
+State Registry SHALL accept Gateway-mediated operator and admin context as
+forwarded request data without authenticating the Gateway connection. Gateway
+SHALL remain responsible for user authentication. Deployment network controls,
+outside State Registry, SHALL prevent bypass of Gateway-mediated routes.
+
+#### Scenario: Gateway forwards authenticated operator context
+
+- **WHEN** API Gateway forwards canonical `operator_id`, `team_id`, and `request_id` over backend HTTP
+- **THEN** State Registry applies its team filters and audit rules without requiring a Gateway client certificate
+
+### Requirement: State Registry accepts configured listener ownership
+
+State Registry SHALL accept listener task ingestion over HTTP without service
+authentication. Submitted `team_id` and `source_system_id` SHALL be validated
+for existence, immutable relationship, payload consistency, deduplication, and
+task-type rules, but SHALL NOT be compared with a transport identity.
+
+#### Scenario: Listener ingests with configured ownership
+
+- **WHEN** a listener submits a valid task with an existing related `team_id` and `source_system_id`
+- **THEN** State Registry persists or deduplicates it under the submitted canonical ownership without requiring listener credentials
 
 ### Requirement: State Registry remains independent from execution and identity management
 
@@ -828,14 +857,19 @@ State Registry SHALL NOT execute tasks, control Docker containers or Kubernetes 
 - **WHEN** `team-a` and `team-b` both store or reference the same opaque image string on their tasks, teams, source systems, or task types
 - **THEN** neither team gains, broadens, or weakens any tenant authorization because of the shared image reference; image strings are not team-owned resources
 
-### Requirement: State Registry uses mutually authenticated encrypted transport
+### Requirement: State Registry uses Ingress-terminated transport
 
-All listener, Executor, and API Gateway connections to State Registry SHALL use encrypted transport. Service HTTP and WebSocket callers SHALL use mutually authenticated TLS identities bound to service role and team authorization rules; the database client SHALL validate server identity and certificate chains.
+State Registry SHALL expose plain HTTP and WebSocket transport to backend
+services. External HTTPS SHALL terminate at Ingress. State Registry SHALL NOT
+configure a backend HTTP TLS listener, request client certificates, or load
+backend HTTP certificate, key, or CA files. Legacy backend HTTP TLS/mTLS fields
+SHALL be accepted and ignored. The database client SHALL continue to validate
+the PostgreSQL server identity and certificate chain.
 
-#### Scenario: Caller uses an untrusted transport identity
+#### Scenario: HTTP backend and secure database coexist
 
-- **WHEN** a caller presents no trusted client identity, an expired identity, or an identity for another service role
-- **THEN** State Registry rejects the connection before reading or changing protected data
+- **WHEN** State Registry starts with an HTTP listener, valid secure PostgreSQL settings, and legacy HTTP mTLS fields
+- **THEN** it ignores the legacy fields without reading their paths, serves backend HTTP, and connects to PostgreSQL with server-certificate verification
 
 ### Requirement: State Registry requires a default image at team registration
 
