@@ -2,7 +2,7 @@
 
 ### Requirement: Gateway runs configured single-team no-auth proxy mode
 
-The API Gateway SHALL disable the configured-team no-auth operator proxy mode from v0006 and SHALL require a valid bearer token on every protected Web UI REST request and WebSocket upgrade. It SHALL establish exactly one canonical active operator/team context and reject the request before proxying when authentication or team context is unusable.
+The API Gateway SHALL disable the configured-team no-auth operator proxy mode from v0006, SHALL authenticate users with Keycloak, SHALL resolve validated Keycloak groups to teams through State Registry, and SHALL require a valid one-team working bearer on every protected Web UI REST request and WebSocket upgrade. It SHALL establish exactly one canonical active operator/team context and reject the request before proxying when authentication or team context is unusable.
 
 > Historical requirement identifier retained verbatim from v0006 so this
 > MODIFIED delta can replace it. The normative paragraph above defines the
@@ -20,7 +20,7 @@ The API Gateway SHALL disable the configured-team no-auth operator proxy mode fr
 
 ### Requirement: Gateway establishes trusted configured-team context
 
-For every authenticated REST request and WebSocket subscription, the API Gateway SHALL remove all client-supplied internal identity/context headers, validate the bearer token's canonical `operator_id` and exactly one immutable active `team_id`, and inject `X-FlowAI-Operator-ID`, `X-FlowAI-Team-ID`, optional display-only `X-FlowAI-Team-Name`, and a Gateway-generated `X-FlowAI-Request-ID` into the State Registry child request. It SHALL omit `X-FlowAI-Team-Name` when no canonical name is present and SHALL never use that name for authorization.
+For every authenticated team-scoped REST request and WebSocket subscription, the API Gateway SHALL remove all client-supplied group and internal identity/context headers, validate the working bearer's canonical `operator_id` and exactly one immutable active `team_id` against a fresh Keycloak-group-to-State-Registry-team resolution, and inject `X-FlowAI-Operator-ID`, `X-FlowAI-Team-ID`, display-only `X-FlowAI-Team-Name`, and a Gateway-generated `X-FlowAI-Request-ID` into the State Registry child request. It SHALL never use `team_name` for authorization.
 
 #### Scenario: Browser spoofs authenticated context headers
 
@@ -54,16 +54,16 @@ The API Gateway SHALL return State Registry REST response status, headers, and b
 
 ### Requirement: Gateway rejects unusable authenticated team context
 
-The API Gateway SHALL reject a protected REST request or WebSocket upgrade before proxying when `operator_id` or `team_id` is missing, when team identity is duplicated or ambiguous, or when the token's team assignment is inactive or stale relative to canonical authentication state.
+The API Gateway SHALL reject a protected REST request or WebSocket upgrade before proxying when `operator_id` or `team_id` is missing, when team identity is duplicated, when the token team is not resolved from the operator's current canonical Keycloak groups, or when the group membership or team mapping is inactive or stale.
 
 #### Scenario: Team claim is missing or ambiguous
 
-- **WHEN** a bearer token lacks `team_id` or represents more than one team identity
+- **WHEN** a working bearer lacks `team_id`, represents more than one team identity, or names a team absent from fresh group resolution
 - **THEN** the Gateway rejects it before State Registry receives a child request
 
 #### Scenario: Team claim is stale
 
-- **WHEN** the token's immutable `team_id` no longer matches the operator's active canonical team assignment
+- **WHEN** the token's immutable `team_id` no longer appears in the fresh State Registry resolution of canonical Keycloak groups
 - **THEN** the Gateway rejects both REST and WebSocket access before proxying
 
 ### Requirement: Gateway contains browser bearer credentials
@@ -74,6 +74,29 @@ The API Gateway SHALL remove the browser `Authorization` header and SHALL NOT fo
 
 - **WHEN** the Gateway validates a browser bearer token and creates a State Registry child request
 - **THEN** State Registry receives trusted identity context headers and no browser credential
+
+### Requirement: Gateway obtains canonical groups from Keycloak
+
+The API Gateway SHALL implement Keycloak OIDC authorization-code flow with PKCE, SHALL validate authorization response state and nonce, token issuer, signature, audience, authorized party, and expiry, and SHALL obtain the authenticated user's canonical stable group identifiers only from validated Keycloak token claims or a validated UserInfo response. It SHALL NOT accept a group list, group name, operator identifier, or team identifier asserted by Web UI.
+
+#### Scenario: Browser forges group membership
+
+- **WHEN** the browser supplies group or team values that differ from validated Keycloak identity state
+- **THEN** the Gateway ignores the browser values and sends only canonical Keycloak group identifiers to State Registry
+
+### Requirement: Gateway resolves groups to teams through State Registry
+
+After successful Keycloak authentication and before issuing a working bearer, the API Gateway SHALL call `POST /v1/auth/team-resolutions` on State Registry with canonical `operator_id`, canonical Keycloak group identifiers, and a Gateway-generated `request_id`. It SHALL return the deterministic canonical `{team_id, team_name}` result to Web UI unchanged. It SHALL issue a working bearer only when the selected `team_id` exists in a fresh resolution result and SHALL embed exactly that one `team_id` and its canonical display-only `team_name`.
+
+#### Scenario: User belongs to several mapped Keycloak groups
+
+- **WHEN** State Registry resolves the user's canonical groups to several active teams
+- **THEN** the Gateway returns all resolved teams to Web UI and issues a one-team working bearer only for a selected entry from that result
+
+#### Scenario: Browser selects an unresolved team
+
+- **WHEN** the browser requests a working bearer for a `team_id` absent from the fresh State Registry resolution
+- **THEN** the Gateway rejects the selection and issues no working bearer
 
 ### Requirement: Gateway provides canonical audit attribution context
 

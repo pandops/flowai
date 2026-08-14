@@ -2,26 +2,36 @@
 @startuml
 title v0007-auth - authenticated team-scoped REST request
 
-participant "Web UI / Browser" as UI
-participant "API Gateway" as GW
-participant "Canonical Auth State" as Auth
-participant "State Registry\nresource + audit authority" as State
+participant "Web UI / Browser" as web_ui
+participant "API Gateway" as api_gateway
+participant "Keycloak" as keycloak
+participant "State Registry\nteam mapping, resource, and audit authority" as state_registry
 
-UI -> GW : REST + bearer token\n(possibly forged X-FlowAI-* headers)
-GW -> GW : validate signature/issuer, audience, expiry,\noperator_id, exactly one team_id
-GW -> Auth : confirm active team assignment is current
-Auth --> GW : current / stale
-alt missing, ambiguous, invalid, expired, or stale context
-  GW --> UI : reject before proxying
+web_ui -> api_gateway : REST + one-team working bearer\n(possibly forged groups or X-FlowAI-* headers)
+activate api_gateway
+api_gateway -> api_gateway : validate signature/issuer, audience, expiry,\noperator_id, exactly one team_id
+api_gateway -> keycloak : obtain current canonical groups
+activate keycloak
+keycloak --> api_gateway : canonical group IDs / invalid identity
+deactivate keycloak
+api_gateway -> state_registry : resolve canonical groups
+activate state_registry
+state_registry --> api_gateway : current accessible teams
+deactivate state_registry
+alt missing, invalid, expired, unresolved, or stale context
+  api_gateway --> web_ui : reject before proxying
 else valid canonical context
-  GW -> GW : strip browser identity headers + Authorization\ngenerate request_id
-  GW -> State : child request with canonical Operator-ID, Team-ID,\noptional display-only Team-Name, Request-ID\n(no browser bearer credential)
-  State -> State : authorize resource by stable team_id
+  api_gateway -> api_gateway : strip browser groups, identity headers, Authorization\ngenerate request_id
+  api_gateway -> state_registry : child request with canonical Operator-ID, Team-ID,\ndisplay-only Team-Name, Request-ID\n(no browser or Keycloak credential)
+  activate state_registry
+  state_registry -> state_registry : authorize resource by stable team_id
   opt operator mutation
-    State -> State : persist canonical audit using\noperator_id + team_id + request_id
+    state_registry -> state_registry : persist canonical audit using\noperator_id + team_id + request_id
   end
-  State --> GW : backend response
-  GW --> UI : status, headers, and body unchanged
+  state_registry --> api_gateway : backend response
+  deactivate state_registry
+  api_gateway --> web_ui : status, headers, and body unchanged
 end
+deactivate api_gateway
 
 @enduml

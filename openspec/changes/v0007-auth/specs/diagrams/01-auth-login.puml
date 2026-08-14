@@ -1,24 +1,51 @@
 ' diagram-type: sequence
 @startuml
-title v0007-auth - canonical operator/team login and token issue
+title v0007-auth - Keycloak group resolution and working-token issue
 
-participant "Web UI" as UI
-participant "API Gateway" as GW
-participant "Canonical Auth State" as Auth
+participant "Web UI" as web_ui
+participant "API Gateway" as api_gateway
+participant "Keycloak" as keycloak
+participant "State Registry" as state_registry
 
-UI -> GW : login credentials
-GW -> Auth : validate credentials and resolve\noperator + active team assignment
-Auth --> GW : canonical operator_id, one team_id,\noptional team_name
-alt missing or multiple active teams
-  GW --> UI : reject; no token
-else exactly one active team
-  GW -> GW : issue signed token with operator_id,\nimmutable team_id, optional display-only team_name,\naudience, expiry
-  GW --> UI : bearer token for API Gateway only
+web_ui -> api_gateway : start login
+activate api_gateway
+api_gateway -> keycloak : OIDC authorization-code flow with PKCE
+activate keycloak
+keycloak --> api_gateway : validated identity token / UserInfo\noperator_id + canonical group IDs
+deactivate keycloak
+api_gateway -> api_gateway : validate state, nonce, issuer, signature,\naudience, authorized party, expiry
+api_gateway -> state_registry : resolve canonical group IDs\noperator_id + request_id
+activate state_registry
+state_registry -> state_registry : map immutable keycloak_group_id\nto active team_id + team_name
+state_registry --> api_gateway : ordered accessible teams
+deactivate state_registry
+api_gateway --> web_ui : canonical [{team_id, team_name}]
+deactivate api_gateway
+
+alt no resolved team
+  web_ui -> api_gateway : request working token
+  activate api_gateway
+  api_gateway --> web_ui : reject; no working token
+  deactivate api_gateway
+else one or more resolved teams
+  web_ui -> api_gateway : select one returned team_id
+  activate api_gateway
+  api_gateway -> state_registry : fresh group-to-team resolution
+  activate state_registry
+  state_registry --> api_gateway : selected team is accessible / absent
+  deactivate state_registry
+  alt selected team absent
+    api_gateway --> web_ui : reject; no working token
+  else selected team accessible
+    api_gateway -> api_gateway : issue token with operator_id, one immutable team_id,\ndisplay-only team_name, audience, expiry
+    api_gateway --> web_ui : working bearer for API Gateway only
+  end
+  deactivate api_gateway
 end
 
-note over UI,GW
-Refresh preserves the immutable team_id.
-A changed/stale assignment requires a new login.
+note over web_ui, api_gateway
+Browser-supplied groups and teams never establish authority.
+Selecting another accessible team requires a new working token.
 end note
 
 @enduml
