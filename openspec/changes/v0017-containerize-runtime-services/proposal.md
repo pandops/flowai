@@ -9,14 +9,20 @@ production startup paths to drift and leaves image buildability unverified.
 - Require State Registry, Docker OpenHands Executor, and K8s OpenHands
   Executor to own production container build definitions inside their service
   directories.
-- Require integration and cross-service E2E harnesses to build and start the
-  real services from those images rather than host binaries or in-process
-  servers.
+- Require every E2E suite to build the required real-service images from the
+  checked-out source before testing, pass immutable image references into the
+  tests, and start a fresh service container per test rather than a host binary
+  or in-process real service.
 - Run the Docker Executor image with an explicitly scoped Docker-compatible
   runtime socket and run the K8s Executor as a Pod image.
-- Record image identity in E2E evidence so a host-process substitution fails
-  deterministically.
-- Keep unit tests host-runnable when they do not start a runtime service.
+- Require every E2E request to target only the published port of the fresh
+  container; for K8s, load the image into k3d and target only the fresh Pod
+  through its test exposure. Record image identity in E2E evidence.
+- Stop and remove every per-test container, Pod, namespace, network, and other
+  owned runtime resource in teardown, including after assertion failure.
+- Keep unit tests host-runnable when they do not start a real runtime service;
+  test-only fakes may remain in-process but SHALL NOT replace the real service
+  under E2E test.
 - Leave Web UI containerization in `v0006-web-ui`.
 
 ## Capabilities

@@ -1,0 +1,62 @@
+@startuml
+' diagram-type: sequence
+title Live task Kanban snapshot, replay, and reconciliation
+
+actor "Operator" as operator
+participant "Web UI" as web_ui
+participant "Configured Adapter / API Gateway" as api_gateway
+participant "State Registry" as state_registry
+
+operator -> web_ui: Open selected-team dashboard
+activate web_ui
+web_ui -> api_gateway: Establish team stream boundary
+activate api_gateway
+api_gateway -> state_registry: Read latest authorized team cursor
+activate state_registry
+state_registry --> api_gateway: boundary cursor
+deactivate state_registry
+api_gateway --> web_ui: boundary cursor
+deactivate api_gateway
+
+par Fetch bounded status snapshots
+  web_ui -> api_gateway: List tasks and counts by current_state
+  activate api_gateway
+  api_gateway -> state_registry: Team-scoped filtered reads
+  activate state_registry
+  state_registry --> api_gateway: pages, counts, cursors
+  deactivate state_registry
+  api_gateway --> web_ui: canonical board snapshot
+  deactivate api_gateway
+else Subscribe after boundary
+  web_ui -> api_gateway: Open WebSocket after boundary
+  activate api_gateway
+  api_gateway -> state_registry: Subscribe to authorized team stream
+  activate state_registry
+  state_registry --> api_gateway: ordered replay then live frames
+  api_gateway --> web_ui: ordered replay then live frames
+end
+
+web_ui -> web_ui: Apply each cursor once by task_id
+web_ui -> web_ui: Move card and adjust counts atomically
+
+alt resumable disconnect
+  api_gateway --> web_ui: connection closes
+  deactivate state_registry
+  deactivate api_gateway
+  web_ui -> api_gateway: Reconnect after last applied cursor
+  activate api_gateway
+  api_gateway -> state_registry: Resume authorized team stream
+  activate state_registry
+  state_registry --> api_gateway: missing ordered frames
+  api_gateway --> web_ui: missing ordered frames
+else continuity cannot be proved
+  api_gateway --> web_ui: cursor expired or replay unavailable
+  deactivate state_registry
+  deactivate api_gateway
+  web_ui -> web_ui: Discard stale projection
+  web_ui -> web_ui: Repeat boundary, snapshot, subscription
+end
+
+web_ui --> operator: Current read-only Kanban board
+deactivate web_ui
+@enduml
