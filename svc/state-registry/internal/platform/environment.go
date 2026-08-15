@@ -42,10 +42,11 @@ type EnvironmentPage struct {
 }
 
 type OpenEnvironmentResponse struct {
-	TeamID        string            `json:"team_id"`
-	ProjectID     *string           `json:"project_id"`
-	TaskID        string            `json:"task_id"`
-	EnvironmentID string            `json:"environment_id"`
-	ExecutorID    string            `json:"executor_id"`
-	Values        map[string]string `json:"values"`
+	TeamID     string            `json:"team_id"`
+	TaskID     string            `json:"task_id"`
+	ExecutorID string            `json:"executor_id"`
+	Values     map[string]string `json:"values"`
+	// Deprecated compatibility fields; the v0006 wire response omits them.
+	ProjectID     *string `json:"-"`
+	EnvironmentID string  `json:"-"`
 }

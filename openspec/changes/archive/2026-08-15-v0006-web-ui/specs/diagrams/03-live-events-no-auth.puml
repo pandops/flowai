@@ -1,0 +1,19 @@
+' diagram-type: sequence
+@startuml
+title v0006 Web UI — selected-team live stream
+actor Operator
+participant "Web UI" as UI
+participant "Mocked proxy" as Proxy
+database "State Registry" as Registry
+UI -> Proxy: WS /ui/v1/teams/team-alpha/stream
+Proxy -> Registry: open alpha stream
+Operator -> UI: select team-beta
+UI -> Proxy: close alpha stream
+Proxy -> Registry: close alpha stream
+UI -> Proxy: WS /ui/v1/teams/team-beta/stream
+Proxy -> Registry: open beta stream
+Registry --> Proxy: beta frames
+Proxy --> UI: beta frames
+Registry --> Proxy: late alpha frame
+Proxy -> Proxy: discard closed-generation frame
+@enduml

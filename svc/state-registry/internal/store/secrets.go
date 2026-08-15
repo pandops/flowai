@@ -39,12 +39,8 @@ func (s *Store) CreateSecret(ctx context.Context, identity platform.GatewayIdent
 		return platform.SecretWriteResponse{}, fmt.Errorf("begin secret create: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	environment, err := readEnvironmentForSecret(ctx, tx, identity.TeamID, environmentID)
-	if err != nil {
+	if err := verifyLaunchDefinitionForSecret(ctx, tx, identity.TeamID, environmentID, true); err != nil {
 		return platform.SecretWriteResponse{}, err
-	}
-	if !sameEnvironmentScope(environment.Scope, req.Scope) {
-		return platform.SecretWriteResponse{}, ErrEnvironmentUnavailable
 	}
 	secretID := uuid.NewString()
 	ciphertext, nonce, tag, err := s.encryptSecret(identity.TeamID, secretID, 1, req.Value)
@@ -65,13 +61,15 @@ func (s *Store) CreateSecret(ctx context.Context, identity platform.GatewayIdent
 	if err != nil {
 		return platform.SecretWriteResponse{}, err
 	}
+	if err := appendSecretDefinitionRevision(ctx, tx, identity, environmentID); err != nil {
+		return platform.SecretWriteResponse{}, err
+	}
 	if err := appendSecretAudit(ctx, tx, identity, "secret.create", secretID); err != nil {
 		return platform.SecretWriteResponse{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return platform.SecretWriteResponse{}, fmt.Errorf("commit secret create: %w", err)
 	}
-	secret.Scope = environment.Scope
 	return platform.SecretWriteResponse{Secret: secret, Version: version}, nil
 }
 
@@ -84,8 +82,7 @@ func (s *Store) ReplaceSecret(ctx context.Context, identity platform.GatewayIden
 		return platform.SecretWriteResponse{}, fmt.Errorf("begin secret replace: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	environment, err := readEnvironmentForSecret(ctx, tx, identity.TeamID, environmentID)
-	if err != nil {
+	if err := verifyLaunchDefinitionForSecret(ctx, tx, identity.TeamID, environmentID, true); err != nil {
 		return platform.SecretWriteResponse{}, err
 	}
 	var secret platform.LogicalSecret
@@ -114,7 +111,9 @@ func (s *Store) ReplaceSecret(ctx context.Context, identity platform.GatewayIden
 		return platform.SecretWriteResponse{}, fmt.Errorf("advance logical secret version: %w", err)
 	}
 	secret.LatestVersion = nextVersion
-	secret.Scope = environment.Scope
+	if err := appendSecretDefinitionRevision(ctx, tx, identity, environmentID); err != nil {
+		return platform.SecretWriteResponse{}, err
+	}
 	if err := appendSecretAudit(ctx, tx, identity, "secret.replace", secretID); err != nil {
 		return platform.SecretWriteResponse{}, err
 	}
@@ -125,7 +124,7 @@ func (s *Store) ReplaceSecret(ctx context.Context, identity platform.GatewayIden
 }
 
 func (s *Store) GetSecret(ctx context.Context, teamID, environmentID, secretID string) (platform.LogicalSecret, error) {
-	environment, err := s.GetEnvironment(ctx, teamID, environmentID)
+	_, err := s.GetLaunchParameters(ctx, teamID, environmentID)
 	if err != nil {
 		return platform.LogicalSecret{}, err
 	}
@@ -140,7 +139,6 @@ func (s *Store) GetSecret(ctx context.Context, teamID, environmentID, secretID s
 		}
 		return platform.LogicalSecret{}, fmt.Errorf("get logical secret: %w", err)
 	}
-	secret.Scope = environment.Scope
 	return secret, nil
 }
 
@@ -164,14 +162,8 @@ func (s *Store) ListSecretsPaged(ctx context.Context, teamID, environmentID stri
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	environment, err := scanEnvironment(tx.QueryRowContext(ctx, `SELECT environment_id, team_id, revision, name,
-		project_id, task_id, parent_task_id, values, deleted, created_at, updated_at FROM environment_definitions
-		WHERE team_id = $1 AND environment_id = $2 AND deleted = false`, teamID, environmentID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, ErrEnvironmentUnavailable
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("verify environment for secret list: %w", err)
+	if err := verifyLaunchDefinitionForSecret(ctx, tx, teamID, environmentID, false); err != nil {
+		return nil, nil, err
 	}
 
 	query := `SELECT secret_id, team_id, environment_id, name,
@@ -204,7 +196,6 @@ func (s *Store) ListSecretsPaged(ctx context.Context, teamID, environmentID stri
 			&secret.LatestVersion, &secret.Revoked, &secret.CreatedAt, &secret.UpdatedAt); err != nil {
 			return nil, nil, fmt.Errorf("scan logical secret: %w", err)
 		}
-		secret.Scope = environment.Scope
 		items = append(items, secret)
 	}
 	if err := rows.Err(); err != nil {
@@ -247,13 +238,8 @@ func (s *Store) ListSecretVersionsPaged(ctx context.Context, teamID, environment
 	// referenced through secrets.team_id without verifying it
 	// still lives in the named environment. The explicit (team_id,
 	// environment_id, secret_id) lookup is the canonical defense.
-	if _, err := scanEnvironment(tx.QueryRowContext(ctx, `SELECT environment_id, team_id, revision, name,
-		project_id, task_id, parent_task_id, values, deleted, created_at, updated_at FROM environment_definitions
-		WHERE team_id = $1 AND environment_id = $2 AND deleted = false`, teamID, environmentID)); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, ErrEnvironmentUnavailable
-		}
-		return nil, nil, fmt.Errorf("verify environment for secret version list: %w", err)
+	if err := verifyLaunchDefinitionForSecret(ctx, tx, teamID, environmentID, false); err != nil {
+		return nil, nil, err
 	}
 	var probe int
 	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM secrets
@@ -333,8 +319,7 @@ func (s *Store) RevokeSecret(ctx context.Context, identity platform.GatewayIdent
 		return platform.LogicalSecret{}, fmt.Errorf("begin secret revoke: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	environment, err := readEnvironmentForSecret(ctx, tx, identity.TeamID, environmentID)
-	if err != nil {
+	if err := verifyLaunchDefinitionForSecret(ctx, tx, identity.TeamID, environmentID, true); err != nil {
 		return platform.LogicalSecret{}, err
 	}
 	var secret platform.LogicalSecret
@@ -357,6 +342,9 @@ func (s *Store) RevokeSecret(ctx context.Context, identity platform.GatewayIdent
 		}
 		secret.Revoked = true
 		secret.UpdatedAt = time.Now().UTC()
+		if err := appendSecretDefinitionRevision(ctx, tx, identity, environmentID); err != nil {
+			return platform.LogicalSecret{}, err
+		}
 		if err := appendSecretAudit(ctx, tx, identity, "secret.revoke", secretID); err != nil {
 			return platform.LogicalSecret{}, err
 		}
@@ -364,7 +352,6 @@ func (s *Store) RevokeSecret(ctx context.Context, identity platform.GatewayIdent
 	if err := tx.Commit(); err != nil {
 		return platform.LogicalSecret{}, fmt.Errorf("commit secret revoke: %w", err)
 	}
-	secret.Scope = environment.Scope
 	return secret, nil
 }
 
@@ -400,22 +387,22 @@ func insertSecretVersion(ctx context.Context, tx *sql.Tx, teamID, secretID strin
 	return version, nil
 }
 
-func readEnvironmentForSecret(ctx context.Context, tx *sql.Tx, teamID, environmentID string) (platform.Environment, error) {
-	environment, err := scanEnvironment(tx.QueryRowContext(ctx, `SELECT environment_id, team_id, revision, name,
-		project_id, task_id, parent_task_id, values, deleted, created_at, updated_at FROM environment_definitions
-		WHERE team_id = $1 AND environment_id = $2 AND deleted = false FOR UPDATE`, teamID, environmentID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return platform.Environment{}, ErrEnvironmentUnavailable
+func verifyLaunchDefinitionForSecret(ctx context.Context, tx *sql.Tx, teamID, environmentID string, lock bool) error {
+	var exists int
+	query := `SELECT 1 FROM environment_definitions
+		WHERE team_id = $1 AND environment_id = $2 AND scope_kind IN ('team', 'task_type')
+		AND deleted = false`
+	if lock {
+		query += ` FOR UPDATE`
 	}
-	return environment, err
-}
-
-func sameEnvironmentScope(left, right platform.EnvironmentScope) bool {
-	return sameStringPtr(left.ProjectID, right.ProjectID) && sameStringPtr(left.TaskID, right.TaskID) && sameStringPtr(left.ParentTaskID, right.ParentTaskID)
-}
-
-func sameStringPtr(left, right *string) bool {
-	return (left == nil && right == nil) || (left != nil && right != nil && *left == *right)
+	err := tx.QueryRowContext(ctx, query, teamID, environmentID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEnvironmentUnavailable
+	}
+	if err != nil {
+		return fmt.Errorf("verify launch parameter definition for secret: %w", err)
+	}
+	return nil
 }
 
 func appendSecretAudit(ctx context.Context, tx *sql.Tx, identity platform.GatewayIdentity, action, secretID string) error {
@@ -427,4 +414,27 @@ func appendSecretAudit(ctx context.Context, tx *sql.Tx, identity platform.Gatewa
 		return fmt.Errorf("append secret audit: %w", err)
 	}
 	return nil
+}
+
+func appendSecretDefinitionRevision(ctx context.Context, tx *sql.Tx, identity platform.GatewayIdentity, environmentID string) error {
+	var item platform.LaunchParameterDefinition
+	var taskTypeID, image sql.NullString
+	var values []byte
+	err := tx.QueryRowContext(ctx, `UPDATE environment_definitions
+		SET revision = revision + 1, updated_at = now()
+		WHERE team_id = $1 AND environment_id = $2 AND scope_kind IN ('team', 'task_type')
+		AND deleted = false
+		RETURNING environment_id, team_id, revision, scope_kind, task_type_id, name,
+		          values, image, created_at, updated_at`, identity.TeamID, environmentID).Scan(
+		&item.EnvironmentID, &item.TeamID, &item.Revision, &item.Scope, &taskTypeID,
+		&item.Name, &values, &image, &item.CreatedAt, &item.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEnvironmentUnavailable
+	}
+	if err != nil {
+		return fmt.Errorf("advance launch parameter revision for secret: %w", err)
+	}
+	fillLaunchParameters(&item, taskTypeID, image, values)
+	return appendLaunchParameterRevision(ctx, tx, identity, item, false)
 }

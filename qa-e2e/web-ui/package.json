@@ -1,0 +1,18 @@
+{
+  "name": "flowai-web-ui-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright browser suite and test-only mocked proxy for v0006 Web UI.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "playwright test",
+    "test:smoke": "playwright test tests/harness_smoke.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.1.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "^7.0.2",
+    "ws": "^8.21.1"
+  }
+}

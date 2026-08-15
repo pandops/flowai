@@ -9,6 +9,29 @@ import { test, expect } from "../fixtures/k3d-suite";
 test("v0005.8 pending controls are read only for assigned task", async ({
   suite,
 }) => {
+  await suite.kubectl(
+    "delete",
+    "pod",
+    "-n",
+    "flowai-executor-k8s",
+    "-l",
+    "flowai.runtime=k8s",
+    "--ignore-not-found=true",
+    "--wait=true",
+  );
+  await expect
+    .poll(
+      async () => {
+        const response = await fetch(
+          `${suite.registryBaseURL}/ui/v1/teams/${suite.teamA.admin.team_id}/executors/${suite.executorID}`,
+        );
+        if (!response.ok) return 0;
+        return ((await response.json()) as { available_capacity: number })
+          .available_capacity;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(1);
   const task = await suite.ingestTask(suite.teamA, {
     prompt: "hold controls v0005.8",
   });

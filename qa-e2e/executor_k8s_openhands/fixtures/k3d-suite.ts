@@ -51,6 +51,7 @@ const NAMESPACE = "flowai-executor-k8s";
 const EXECUTOR_IMAGE = "localhost/flowai/executor_k8s_openhands:v0005-e2e";
 const AGENT_IMAGE = "localhost/flowai/mock-openhands:v0005-e2e";
 const REAL_AGENT_IMAGE = "localhost/agent-openhands-image:latest";
+const STORAGE_HELPER_IMAGE = "docker.io/library/busybox:1.36.1";
 
 function freshClusterName(): string {
   const suffix = Math.random().toString(36).slice(2, 8);
@@ -328,10 +329,14 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
       const artifactsDir = await fs.mkdtemp(
         path.join(os.tmpdir(), `${clusterName}-artifacts-`),
       );
-      // Keep containerd data off /tmp: developer machines may mount it as a
-      // quota-limited tmpfs that cannot unpack the real OpenHands image.
+      // Keep the default off /tmp because some developer machines mount it
+      // as a small tmpfs. CI or constrained workstations may explicitly
+      // select a larger filesystem without changing the fixture contract.
+      const nodeDataRoot = process.env.FLOWAI_K3D_DATA_ROOT
+        ? path.resolve(process.env.FLOWAI_K3D_DATA_ROOT)
+        : path.resolve(__dirname, "..", "..", "..");
       const nodeDataDir = await fs.mkdtemp(
-        path.resolve(__dirname, "..", "..", "..", ".k3d-data-"),
+        path.join(nodeDataRoot, ".k3d-data-"),
       );
       let registry: RegistryWorker | undefined;
       let registryProxy: net.Server | undefined;
@@ -462,6 +467,7 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
         await importImage(clusterName, EXECUTOR_IMAGE);
         await importImage(clusterName, AGENT_IMAGE);
         await importImage(clusterName, REAL_AGENT_IMAGE);
+        await importImage(clusterName, STORAGE_HELPER_IMAGE);
 
         const registryURL = `http://${hostGateway}:${proxy.port}`;
         await run(

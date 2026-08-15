@@ -1,0 +1,17 @@
+' diagram-type: sequence
+@startuml
+title v0006 Web UI — mocked proxy routing boundary
+participant Browser
+participant "Mocked proxy\n(test only)" as Proxy
+database "State Registry" as Registry
+Browser -> Proxy: supported /ui/v1/teams/{team_id}/... operation
+Proxy -> Registry: forward integration-mode request
+Registry --> Proxy: status + headers + body
+Proxy --> Browser: unchanged response
+Browser -> Proxy: /admin/*, ingestion, Executor, arbitrary target
+Proxy --> Browser: reject without backend request
+note over Proxy
+No API Gateway, authentication,
+Keycloak, membership, or canonical state.
+end note
+@enduml

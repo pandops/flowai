@@ -139,6 +139,12 @@ export async function DetectRuntime(): Promise<ContainerRuntime> {
 class DockerRuntime implements ContainerRuntime {
   public readonly binary = "docker" as const;
   async pull(image: string): Promise<void> {
+    try {
+      await runShell("docker", ["image", "inspect", image]);
+      return;
+    } catch {
+      // Pull only when the immutable test fixture image is not cached.
+    }
     await runShell("docker", ["pull", "--quiet", image]);
   }
   async runDetached(args: string[]): Promise<ContainerHandle> {
@@ -193,6 +199,12 @@ class DockerRuntime implements ContainerRuntime {
 class PodmanRuntime implements ContainerRuntime {
   public readonly binary = "podman" as const;
   async pull(image: string): Promise<void> {
+    try {
+      await runShell("podman", ["image", "exists", image]);
+      return;
+    } catch {
+      // Pull only when the immutable test fixture image is not cached.
+    }
     await runShell("podman", ["pull", "--quiet", image]);
   }
   async runDetached(args: string[]): Promise<ContainerHandle> {

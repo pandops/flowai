@@ -32,7 +32,7 @@ func (s *Store) GetTask(ctx context.Context, teamID, taskID string) (platform.Ta
 	entry, _, err := scanTaskRow(s.db.QueryRowContext(ctx, `
 		SELECT task_id, team_id, source_system_id, source_id,
 		       task_type_id, required_tag, payload, current_state,
-		       owner_command_id, executor_id, project_id, environment_id,
+		       owner_command_id, executor_id, project_id,
 		       image, resolved_image, image_source, ingested_at, claimed_at
 		  FROM tasks
 		 WHERE team_id = $1 AND task_id = $2`,

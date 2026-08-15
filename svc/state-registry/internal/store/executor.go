@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/flowai/platform/svc/state-registry/internal/platform"
@@ -358,7 +359,11 @@ func (s *Store) ClaimTask(ctx context.Context, req platform.ClaimRequest, execut
 	// Resolve the effective image from the four-level precedence
 	// chain inside the same transaction so the persisted values
 	// reflect the canonical image at commit time.
-	resolvedImage, imageSourceStr, err := resolveClaimImageLocked(ctx, tx, taskTeam, sourceSystem, taskTypeID, imageRow)
+	launchParameters, err := resolveLaunchParametersLocked(ctx, tx, taskTeam, taskTypeID, req.TaskID)
+	if err != nil {
+		return platform.ClaimResponse{}, fmt.Errorf("resolve launch parameters: %w", err)
+	}
+	resolvedImage, imageSourceStr, err := resolveClaimImageLocked(ctx, tx, taskTeam, sourceSystem, taskTypeID, imageRow, launchParameters.Image, launchParameters.ImageSource)
 	if err != nil {
 		return platform.ClaimResponse{}, fmt.Errorf("resolve claim image: %w", err)
 	}
@@ -415,7 +420,7 @@ func (s *Store) buildClaimResponseForRow(tx *sql.Tx, ctx context.Context, taskID
 	entry, _, err := scanTaskRow(tx.QueryRowContext(ctx, `
 		SELECT task_id, team_id, source_system_id, source_id,
 		       task_type_id, required_tag, payload, current_state,
-		       owner_command_id, executor_id, project_id, environment_id,
+		       owner_command_id, executor_id, project_id,
 		       image, resolved_image, image_source, ingested_at, claimed_at
 		  FROM tasks WHERE task_id = $1`, taskID,
 	))
@@ -428,9 +433,21 @@ func (s *Store) buildClaimResponseForRow(tx *sql.Tx, ctx context.Context, taskID
 		ResolvedImage: entry.ResolvedImage,
 		ImageSource:   entry.ImageSource,
 		ClaimedAt:     entry.ClaimedAt,
-		EnvironmentID: entry.EnvironmentID,
+	}
+	var hasLaunchParameters bool
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((snap.values <> '{}'::jsonb) OR EXISTS (
+		SELECT 1 FROM task_launch_parameter_secret_refs ref WHERE ref.task_id = $1
+	), false) FROM task_launch_parameter_snapshots snap WHERE snap.task_id = $1`, taskID).Scan(&hasLaunchParameters); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return response, nil
+		}
+		return platform.ClaimResponse{}, fmt.Errorf("read launch parameter snapshot discriminator: %w", err)
+	}
+	if !hasLaunchParameters {
+		return response, nil
 	}
 	response.ScopeToken, err = s.issueScopeToken(ctx, tx, entry)
+	response.LaunchParameters = response.ScopeToken != nil
 	return response, err
 }
 
@@ -476,13 +493,24 @@ func isEarlierPendingTask(tx *sql.Tx, ctx context.Context, tag, scope string, te
 // non-null because admin registration requires it). The returned
 // values are the persisted jsonb bytes (or nil) and the matching
 // image_source discriminator.
-func resolveClaimImageLocked(ctx context.Context, tx *sql.Tx, teamID, sourceSystem, taskType string, taskImage []byte) (json.RawMessage, string, error) {
+func resolveClaimImageLocked(ctx context.Context, tx *sql.Tx, teamID, sourceSystem, taskType string, taskImage []byte, launchImage *string, launchImageSource string) (json.RawMessage, string, error) {
 	if len(taskImage) > 0 {
 		encoded, err := json.Marshal(json.RawMessage(taskImage))
 		if err != nil {
 			return nil, "", err
 		}
 		return encoded, platform.ImageSourceTaskOverride, nil
+	}
+	if launchImage != nil {
+		separator := strings.LastIndex(*launchImage, "@")
+		if separator <= 0 || separator == len(*launchImage)-1 {
+			return nil, "", errors.New("launch parameter image is invalid")
+		}
+		encoded, err := json.Marshal(platform.ImageReference{Repository: (*launchImage)[:separator], Digest: (*launchImage)[separator+1:]})
+		if err != nil {
+			return nil, "", fmt.Errorf("marshal launch parameter image: %w", err)
+		}
+		return encoded, launchImageSource, nil
 	}
 	var ttDefault []byte
 	if err := tx.QueryRowContext(ctx,

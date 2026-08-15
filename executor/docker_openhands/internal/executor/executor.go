@@ -259,15 +259,6 @@ func (c *Config) Validate() error {
 	if c.OpenHandsWorkspace == "" {
 		return errors.New("OPENHANDS_WORKSPACE must be non-empty")
 	}
-	// V1 conversation startup requires either a server-side agent
-	// profile id OR an inline model + api key + usage_id. Profiles
-	// resolve server-side to a fully configured Agent.
-	hasProfile := c.OpenHandsAgentProfile != ""
-	hasInline := c.OpenHandsLLMModel != "" && c.OpenHandsLLMAPIKey != "" && c.OpenHandsLLMUsageID != ""
-	if !hasProfile && !hasInline {
-		return errors.New("OpenHands V1 requires either OPENHANDS_AGENT_PROFILE_ID " +
-			"or (OPENHANDS_LLM_MODEL + OPENHANDS_LLM_API_KEY + OPENHANDS_LLM_USAGE_ID)")
-	}
 	if c.FinishedCleanupDelay < 0 {
 		return errors.New("EXECUTOR_FINISHED_CLEANUP_DELAY must be >= 0")
 	}
@@ -340,7 +331,9 @@ type Executor struct {
 	// the State Registry's idempotent (task_id, command_id) handler
 	// returns the original 200 without appending an additional event.
 	// The map is cleaned up when the slot is terminalized.
-	commandIDs map[string]string
+	commandIDs   map[string]string
+	logMu        sync.Mutex
+	publishedLog map[string]struct{}
 
 	stateOK     atomic.Bool
 	openHandsOK atomic.Bool
@@ -404,6 +397,9 @@ type v0002TaskRef struct {
 	commandID     string
 	resolvedImage string
 	imageSource   string
+	llmAPIKey     string
+	llmBaseURL    string
+	llmModel      string
 }
 
 // slotTaskID returns the canonical task_id from the immutable claim response.
@@ -510,6 +506,7 @@ func New(cfg *Config, docker dockerclient.Client, logger *slog.Logger) *Executor
 		nextPort:      cfg.OpenHandsPortStart,
 		acceptedTasks: map[string]taskLifecycle{},
 		commandIDs:    map[string]string{},
+		publishedLog:  map[string]struct{}{},
 		fatalCh:       make(chan struct{}),
 	}
 	e.state.Store(StateStarting)
@@ -779,7 +776,7 @@ func envCount(values map[string]string) int {
 //     to zero.
 //  5. cleanupContainer remains authoritative and runs
 //     exactly once thanks to sync.Once and uses bounded contexts.
-func (e *Executor) conversationConfig(prompt string) openhands.ConversationConfig {
+func (e *Executor) conversationConfig(prompt, taskAPIKey, taskBaseURL, taskModel string) openhands.ConversationConfig {
 	cfg := openhands.ConversationConfig{
 		Workspace: openhands.Workspace{
 			Kind:       "LocalWorkspace",
@@ -801,10 +798,10 @@ func (e *Executor) conversationConfig(prompt string) openhands.ConversationConfi
 		Kind:  "Agent",
 		Tools: []openhands.Tool{{Name: "terminal"}},
 		LLM: openhands.LLM{
-			Model:   e.cfg.OpenHandsLLMModel,
-			APIKey:  e.cfg.OpenHandsLLMAPIKey,
+			Model:   taskModel,
+			APIKey:  taskAPIKey,
 			UsageID: e.cfg.OpenHandsLLMUsageID,
-			BaseURL: e.cfg.OpenHandsLLMBaseURL,
+			BaseURL: taskBaseURL,
 		},
 	}
 	return cfg
@@ -884,6 +881,7 @@ func (e *Executor) streamOpenHandsEvents(ctx context.Context, slot *taskSlot, co
 		if err := json.Unmarshal(data, &envelope); err != nil {
 			continue
 		}
+		e.appendPublishedOpenHandsLogs(ctx, taskID, envelope)
 		status := taskStatusFromValue(envelope)
 		if !isTerminalTaskStatus(status) {
 			continue

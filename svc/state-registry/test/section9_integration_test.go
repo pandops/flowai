@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && legacy_environment_api
 
 // Section 9 — team-owned environments, logical secrets, immutable
 // versions, scope tokens, AES-256-GCM, plaintext exclusion.

@@ -206,9 +206,11 @@ func assertCrossTeamRejections(t *testing.T, db *sql.DB) {
 		resolved_image = $1::jsonb, image_source = 'team_default', claimed_at = now()
 		WHERE task_id = 'task-a'`, testImage)
 	mustExec(t, db, `INSERT INTO environment_definitions
-		(environment_id, team_id, parent_task_id, name) VALUES ('env-a', 'team-a', 'task-a', 'Environment A')`)
-	mustReject(t, db, "environment with foreign parent task", `INSERT INTO environment_definitions
-		(environment_id, team_id, parent_task_id, name) VALUES ('env-bad', 'team-b', 'task-a', 'Bad Environment')`)
+		(environment_id, team_id, task_type_id, scope_kind, name)
+		VALUES ('env-a', 'team-a', 'type-a', 'task_type', 'Environment A')`)
+	mustReject(t, db, "environment with foreign task type", `INSERT INTO environment_definitions
+		(environment_id, team_id, task_type_id, scope_kind, name)
+		VALUES ('env-bad', 'team-b', 'type-a', 'task_type', 'Bad Environment')`)
 	mustExec(t, db, `INSERT INTO secrets
 		(secret_id, team_id, environment_id, name) VALUES ('secret-a', 'team-a', 'env-a', 'Secret A')`)
 	mustReject(t, db, "secret with foreign environment", `INSERT INTO secrets

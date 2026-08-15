@@ -5,6 +5,8 @@
   "description": "API-only Playwright suite that drives the real state-registry Go process against an ephemeral postgres:16 container.",
   "type": "commonjs",
   "scripts": {
+    "demo:start": "env -u GOROOT npx tsx demo/start.ts",
+    "demo:prompt": "env -u GOROOT npx tsx demo/prompt.ts",
     "test": "env -u GOROOT playwright test",
     "test:report": "playwright show-report ../reports/api/state-registry"
   },

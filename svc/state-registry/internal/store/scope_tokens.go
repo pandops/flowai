@@ -34,15 +34,13 @@ type scopeTokenHeader struct {
 }
 
 type scopeTokenClaims struct {
-	TeamID        string  `json:"team_id"`
-	ProjectID     *string `json:"project_id"`
-	TaskID        string  `json:"task_id"`
-	EnvironmentID string  `json:"environment_id"`
-	ExecutorID    string  `json:"executor_id"`
-	Audience      string  `json:"audience"`
-	KeyID         string  `json:"key_id"`
-	IssuedAt      string  `json:"issued_at"`
-	Expiry        string  `json:"expiry"`
+	TeamID     string `json:"team_id"`
+	TaskID     string `json:"task_id"`
+	ExecutorID string `json:"executor_id"`
+	Audience   string `json:"audience"`
+	KeyID      string `json:"key_id"`
+	IssuedAt   string `json:"issued_at"`
+	Expiry     string `json:"expiry"`
 }
 
 // OpenEnvironmentRequest bundles every authenticated input the
@@ -57,8 +55,9 @@ type scopeTokenClaims struct {
 // unavailable case; the post-decrypt anchor is the only signal
 // that the no-decrypt-on-denial invariant holds.
 type OpenEnvironmentRequest struct {
+	TaskID string
+	// Deprecated: ignored by the task-scoped v0006 snapshot open path.
 	EnvironmentID string
-	TaskID        string
 	Token         string
 	Identity      platform.ExecutorIdentity
 	RequestID     string
@@ -75,27 +74,26 @@ type OpenEnvironmentRepository interface {
 }
 
 // issueScopeToken mints a fresh open-environment scope token for the
-// supplied task. The task must already carry a non-null
-// environment_id and executor_id; the caller decides whether to
-// include a token in the response.
+// supplied task. The task must already be assigned and carry a non-empty
+// resolved launch-parameter snapshot.
 func (s *Store) issueScopeToken(ctx context.Context, query rowQueryer, task platform.TaskListEntry) (*string, error) {
-	if task.EnvironmentID == nil || task.ExecutorID == nil {
+	if task.ExecutorID == nil {
 		return nil, nil
 	}
 	if s.scopeTokenKeyring == nil {
 		return nil, errors.New("scope token keyring unavailable")
 	}
-	var projectID sql.NullString
-	if err := query.QueryRowContext(ctx, `SELECT project_id FROM environment_definitions
-		WHERE team_id = $1 AND environment_id = $2 AND deleted = false`, task.TeamID, *task.EnvironmentID).Scan(&projectID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrEnvironmentUnavailable
-		}
-		return nil, fmt.Errorf("read claim environment scope: %w", err)
+	var hasValues bool
+	if err := query.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM task_launch_parameter_snapshots snapshot
+		WHERE snapshot.team_id = $1 AND snapshot.task_id = $2
+		AND (snapshot.values <> '{}'::jsonb OR EXISTS (
+			SELECT 1 FROM task_launch_parameter_secret_refs ref WHERE ref.task_id = snapshot.task_id
+		)))`, task.TeamID, task.TaskID).Scan(&hasValues); err != nil {
+		return nil, fmt.Errorf("read claim launch parameter snapshot: %w", err)
 	}
-	var project *string
-	if projectID.Valid {
-		project = &projectID.String
+	if !hasValues {
+		return nil, nil
 	}
 	now := time.Now().UTC()
 	if task.ClaimedAt != nil {
@@ -112,8 +110,7 @@ func (s *Store) issueScopeToken(ctx context.Context, query rowQueryer, task plat
 	keyID := s.scopeTokenKeyring.activeKeyID()
 	header := scopeTokenHeader{Algorithm: string(key.alg), KeyID: keyID, Type: scopeTokenType}
 	claims := scopeTokenClaims{
-		TeamID: task.TeamID, ProjectID: project, TaskID: task.TaskID,
-		EnvironmentID: *task.EnvironmentID, ExecutorID: *task.ExecutorID,
+		TeamID: task.TeamID, TaskID: task.TaskID, ExecutorID: *task.ExecutorID,
 		Audience: scopeTokenAudience, KeyID: keyID,
 		IssuedAt: now.Format(time.RFC3339Nano), Expiry: now.Add(5 * time.Minute).Format(time.RFC3339Nano),
 	}
@@ -150,7 +147,6 @@ type rowQueryer interface {
 // persisted verbatim on the audit row so operators can correlate
 // the access with the call-site that triggered it.
 func (s *Store) OpenEnvironment(ctx context.Context, req OpenEnvironmentRequest) (platform.OpenEnvironmentResponse, error) {
-	environmentID := req.EnvironmentID
 	taskID := req.TaskID
 	token := req.Token
 	identity := req.Identity
@@ -158,7 +154,7 @@ func (s *Store) OpenEnvironment(ctx context.Context, req OpenEnvironmentRequest)
 	if err != nil {
 		return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
 	}
-	if claims.EnvironmentID != environmentID || claims.TaskID != taskID || claims.ExecutorID != identity.ExecutorID {
+	if claims.TaskID != taskID || claims.ExecutorID != identity.ExecutorID {
 		return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -167,18 +163,17 @@ func (s *Store) OpenEnvironment(ctx context.Context, req OpenEnvironmentRequest)
 	}
 	defer func() { _ = tx.Rollback() }()
 	var (
-		teamID, assignedExecutor, state                              string
-		taskProject, environmentProject, environmentTask, parentTask sql.NullString
-		valuesJSON                                                   []byte
+		teamID, assignedExecutor, state string
+		valuesJSON                      []byte
 	)
 	if err := tx.QueryRowContext(ctx, `
-		SELECT t.team_id, t.executor_id, t.current_state, t.project_id,
-		       e.project_id, e.task_id, e.parent_task_id, e.values
+		SELECT t.team_id, t.executor_id, t.current_state, snapshot.values
 		  FROM tasks t
-		  JOIN environment_definitions e ON e.environment_id = $1 AND e.team_id = t.team_id AND e.deleted = false
-		 WHERE t.task_id = $2 AND t.environment_id = e.environment_id
-		 FOR UPDATE`, environmentID, taskID,
-	).Scan(&teamID, &assignedExecutor, &state, &taskProject, &environmentProject, &environmentTask, &parentTask, &valuesJSON); err != nil {
+		  JOIN task_launch_parameter_snapshots snapshot
+		    ON snapshot.task_id = t.task_id AND snapshot.team_id = t.team_id
+		 WHERE t.task_id = $1
+		 FOR UPDATE`, taskID,
+	).Scan(&teamID, &assignedExecutor, &state, &valuesJSON); err != nil {
 		return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
 	}
 	if assignedExecutor != identity.ExecutorID || claims.TeamID != teamID || claims.ExecutorID != assignedExecutor ||
@@ -190,38 +185,28 @@ func (s *Store) OpenEnvironment(ctx context.Context, req OpenEnvironmentRequest)
 			return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
 		}
 	}
-	if parentTask.Valid && parentTask.String != taskID {
-		return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
-	}
-	if environmentTask.Valid && environmentTask.String != taskID {
-		return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
-	}
-	if environmentProject.Valid != (claims.ProjectID != nil) ||
-		(environmentProject.Valid && *claims.ProjectID != environmentProject.String) ||
-		(environmentProject.Valid && (!taskProject.Valid || taskProject.String != environmentProject.String)) {
-		return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
-	}
 	values := make(map[string]string)
 	if json.Unmarshal(valuesJSON, &values) != nil {
 		return platform.OpenEnvironmentResponse{}, ErrEnvironmentUnavailable
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT s.name, sv.secret_id, sv.version, sv.ciphertext, sv.nonce, sv.authentication_tag
-		  FROM secrets s
-		  JOIN secret_versions sv ON sv.secret_id = s.secret_id AND sv.team_id = s.team_id AND sv.version = s.latest_version
-		 WHERE s.team_id = $1 AND s.environment_id = $2 AND s.revoked = false`, teamID, environmentID)
+		SELECT ref.key, sv.secret_id, sv.version, sv.ciphertext, sv.nonce,
+		       sv.authentication_tag, COALESCE(sv.team_id, '')
+		  FROM task_launch_parameter_secret_refs ref
+		  JOIN secret_versions sv ON sv.secret_id = ref.secret_id AND sv.version = ref.version
+		 WHERE ref.team_id = $1 AND ref.task_id = $2 ORDER BY ref.key`, teamID, taskID)
 	if err != nil {
 		return platform.OpenEnvironmentResponse{}, fmt.Errorf("list open secrets: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var name, secretID string
+		var name, secretID, encryptionTeamID string
 		var version int
 		var ciphertext, nonce, tag []byte
-		if err := rows.Scan(&name, &secretID, &version, &ciphertext, &nonce, &tag); err != nil {
+		if err := rows.Scan(&name, &secretID, &version, &ciphertext, &nonce, &tag, &encryptionTeamID); err != nil {
 			return platform.OpenEnvironmentResponse{}, fmt.Errorf("scan open secret: %w", err)
 		}
-		plaintext, err := s.decryptSecret(teamID, secretID, version, ciphertext, nonce, tag)
+		plaintext, err := s.decryptSecret(encryptionTeamID, secretID, version, ciphertext, nonce, tag)
 		if err != nil {
 			// Any AEAD authentication failure, including wrong
 			// team/secret/version binding, tamper, or wrong key,
@@ -245,20 +230,15 @@ func (s *Store) OpenEnvironment(ctx context.Context, req OpenEnvironmentRequest)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_entries
 		(audit_id, team_id, actor_id, actor_type, action, resource_type, resource_id, request_id, outcome, executor_scope)
-		VALUES ($1, $2, $3, 'executor', 'environment.open', 'environment', $4, $5, 'succeeded', $6)`,
-		uuid.NewString(), teamID, identity.ExecutorID, environmentID, req.RequestID, identity.Scope); err != nil {
+		VALUES ($1, $2, $3, 'executor', 'launch_parameters.open', 'task', $4, $5, 'succeeded', $6)`,
+		uuid.NewString(), teamID, identity.ExecutorID, taskID, req.RequestID, identity.Scope); err != nil {
 		return platform.OpenEnvironmentResponse{}, fmt.Errorf("append environment open audit: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return platform.OpenEnvironmentResponse{}, fmt.Errorf("commit environment open: %w", err)
 	}
-	var project *string
-	if environmentProject.Valid {
-		project = &environmentProject.String
-	}
 	return platform.OpenEnvironmentResponse{
-		TeamID: teamID, ProjectID: project, TaskID: taskID, EnvironmentID: environmentID,
-		ExecutorID: identity.ExecutorID, Values: values,
+		TeamID: teamID, TaskID: taskID, ExecutorID: identity.ExecutorID, Values: values,
 	}, nil
 }
 
@@ -350,7 +330,7 @@ func (s *Store) verifyScopeToken(token string) (scopeTokenClaims, error) {
 		return scopeTokenClaims{}, ErrEnvironmentUnavailable
 	}
 	now := time.Now().UTC()
-	if claims.TeamID == "" || claims.TaskID == "" || claims.EnvironmentID == "" || claims.ExecutorID == "" ||
+	if claims.TeamID == "" || claims.TaskID == "" || claims.ExecutorID == "" ||
 		claims.Audience != scopeTokenAudience || issuedAt.After(now.Add(30*time.Second)) ||
 		!expiry.After(issuedAt) || expiry.Sub(issuedAt) > 5*time.Minute || !expiry.After(now) {
 		return scopeTokenClaims{}, ErrEnvironmentUnavailable

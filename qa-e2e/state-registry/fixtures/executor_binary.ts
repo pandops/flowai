@@ -217,7 +217,7 @@ async function discoverBindPort(
       cleanup();
       reject(
         new Error(
-          `executor binary exited before logging bind port code=${String(code)} signal=${String(signal)}`,
+          `executor binary exited before logging bind port code=${String(code)} signal=${String(signal)}\n${sanitize(capture.chunks.join(""))}`,
         ),
       );
     };

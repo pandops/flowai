@@ -618,61 +618,102 @@ State Registry SHALL store operator intervention and cancellation requests as au
 
 ### Requirement: State Registry stores team-owned environment definitions
 
-State Registry SHALL accept environment-definition writes only from trusted API Gateway context for the same `team_id`, store immutable team ownership with non-secret `KEY=value` entries and optional project/task applicability, append a team-scoped audit entry, and return a stable environment identifier. Same-team operators manage environments for the team. An environment definition is either team-wide (no task parent) or task-owned (a single `task_id` parent in the same team); in both cases the row's `team_id` is immutable and ownership is enforced through a database-enforced relationship. Project and task scopes SHALL limit applicability inside that team and SHALL NOT grant cross-team access.
+State Registry SHALL store environment definitions as launch-parameter
+definitions. Every definition contains ordinary non-secret `KEY=value`
+entries, logical secret references, and an optional image override, with
+exactly one scope from `global`, `team`, or `task_type`.
+Global definitions are administrator-owned and have no team binding; their
+write API is outside v0006. Team definitions carry one immutable `team_id`
+and apply to every task type and task in that team. Task-type definitions
+carry one immutable `team_id` and same-team `task_type_id`.
 
-#### Scenario: Same-team operator stores an environment definition
+The v0006 UI API SHALL create, read, replace, and delete only
+team- and task-type-scoped definitions in their configured team.
+State Registry SHALL authorize every referenced team and task type,
+environment, and secret before mutation, merge, history shaping, image
+resolution, or decryption. Every successful mutation SHALL append a
+team-scoped plaintext-free audit entry and an immutable definition revision.
+For ordinary env values and logical secrets, State Registry SHALL accept the
+caller-supplied env-style key as explicit data, validate it, persist it
+unchanged, and use that same key during merge and runtime resolution. It SHALL
+NOT derive a key from a display name or generate or normalize one silently.
 
-- **WHEN** an operator submits valid non-secret environment values through trusted API Gateway context without naming a parent `task_id`
-- **THEN** State Registry stores the team-wide definition under that context's immutable `team_id`, appends an audit entry, and returns its environment identifier
+#### Scenario: Same-team operator stores team-wide launch parameters
 
-#### Scenario: Same-team operator stores a task-owned environment definition
+- **WHEN** an operator submits ordinary env values, logical secrets, or an image without a task-type binding
+- **THEN** State Registry stores one team-scoped definition that applies to every task type and task owned by the trusted team
 
-- **WHEN** an operator submits valid non-secret environment values through trusted API Gateway context and names a parent `task_id` that belongs to the same `team_id`
-- **THEN** State Registry stores the task-owned definition with the parent `task_id`, appends an audit entry, and returns its environment identifier; only the parent task in the same team may use the definition
+#### Scenario: Operator-supplied key is preserved
 
-#### Scenario: Task parent belongs to a foreign team
+- **WHEN** a same-team operator creates an ordinary env value or logical secret with a valid explicit key
+- **THEN** State Registry stores and resolves the exact supplied key without deriving, renaming, or normalizing it
 
-- **WHEN** an operator submits an environment definition whose parent `task_id` belongs to another team
-- **THEN** State Registry returns the same non-revealing `404 environment_unknown_or_unavailable` shape, performs no decrypt operation, appends no audit entry, and stores no row
+#### Scenario: Same-team operator stores task-type launch parameters
 
-#### Scenario: Project scope narrows applicability
+- **WHEN** an operator binds a definition to a `task_type_id` owned by the trusted team
+- **THEN** State Registry stores the definition with immutable team and task-type ownership and applies it only to tasks of that type inside the same team
 
-- **WHEN** a team-wide environment is scoped to one project
-- **THEN** tasks from the same team but another project cannot use it, and no project scope can make it available to another team
+#### Scenario: Operator attempts task-scoped launch parameters
+
+- **WHEN** an operator supplies a `task_id` binding for a definition, ordinary env value, or logical secret
+- **THEN** State Registry rejects the request without mutation because `task_id` is not a supported launch-parameter scope
+
+#### Scenario: Referenced task type belongs to another team
+
+- **WHEN** an operator submits a task-type binding owned by another team
+- **THEN** State Registry returns the same non-revealing `404 environment_unknown_or_unavailable` as unknown and stores no definition, revision, secret, or audit entry
+
+#### Scenario: Operator attempts global mutation
+
+- **WHEN** a v0006 UI API request attempts to create, replace, or delete a global definition
+- **THEN** State Registry rejects the request without mutation
 
 ### Requirement: State Registry stores team-owned secrets with immutable versions
 
-State Registry SHALL store each logical secret in a team-owned `secrets` row associated with an environment in the same team. It SHALL encrypt every submitted secret value with a local AES-256-GCM authenticated encryption (256-bit data key, unique random 96-bit nonce per encryption, 128-bit authentication tag) using a key provided through configuration, with authenticated associated data that binds at minimum the team identifier, the logical secret identifier, and the secret version. The opaque provider-neutral `key_id` and `key_version` are recorded on the immutable `secret_versions` row; plaintext is never persisted or logged. Same-team operators manage secrets through trusted API Gateway context; optional project/task scope limits applicability within the team. A `secrets` row inherits its scope from its parent environment: when the parent environment is team-wide the secret is team-scoped, and when the parent environment is task-owned the secret is also task-owned and only the parent task in the same team may open it.
+State Registry SHALL store each logical secret under one launch-parameter
+definition and SHALL inherit that definition's global, team, or task-type
+scope. Each submitted secret value SHALL create a new immutable encrypted
+version using the configured cryptography provider and associated data that
+binds at minimum the owning scope, logical secret identifier, and version.
+Plaintext SHALL never be persisted, returned, or logged.
 
-#### Scenario: Same-team operator stores a secret
+During launch-parameter resolution, State Registry SHALL merge logical secret
+references from global to team to task type. A narrower same-named
+logical secret SHALL replace the broader reference only after all ownership
+and scope checks succeed. State Registry SHALL decrypt only the final resolved
+references for an assigned Executor presenting a valid task-bound scope token.
+Operator responses and revision history SHALL contain only logical references
+and non-sensitive version metadata.
 
-- **WHEN** a valid secret write arrives through trusted API Gateway for a same-team team-wide environment
-- **THEN** State Registry encrypts the value with local AES-256-GCM, stores a logical `secrets` row and immutable referenced `secret_versions` row with non-sensitive `key_id` and `key_version`, appends a plaintext-free audit entry, and returns the secret identifier and version
+#### Scenario: Operator stores a team-wide secret
 
-#### Scenario: Same-team operator stores a secret under a task-owned environment
+- **WHEN** a same-team operator creates a secret under team-scoped launch parameters
+- **THEN** State Registry creates the logical secret and first encrypted version, audits the write without plaintext, and makes the reference applicable to every launch in that team unless a narrower scope overrides it
 
-- **WHEN** a valid secret write arrives through trusted API Gateway for a same-team task-owned environment whose parent `task_id` belongs to the same team
-- **THEN** State Registry stores the secret under that task-owned environment, encrypts the value with local AES-256-GCM, and only the parent task in the same team may open the resulting `secret_versions`
+#### Scenario: Task-type secret overrides a team secret
+
+- **WHEN** same-named logical secrets exist in applicable team and task-type definitions
+- **THEN** State Registry resolves the task-type reference for tasks of that type without exposing either value to the operator
 
 #### Scenario: Secret value changes
 
-- **WHEN** a same-team operator replaces a secret value
-- **THEN** State Registry appends a new encrypted `secret_versions` row referencing the same logical secret with the new `key_id` / `key_version` without modifying or exposing prior plaintext
+- **WHEN** a same-team operator replaces a logical secret value
+- **THEN** State Registry appends a new immutable encrypted version without modifying or exposing prior plaintext
 
-#### Scenario: Secret targets a foreign environment
+#### Scenario: Revoked secret is absent from later resolutions
 
-- **WHEN** trusted Gateway context attempts to create or replace a secret under another team's environment
-- **THEN** State Registry returns non-revealing `404`, performs no encrypt operation, and stores no secret or version
+- **WHEN** a same-team operator deletes a logical secret reference
+- **THEN** State Registry appends plaintext-free secret and definition history, removes the reference from the current projection, and neither resolves nor decrypts that logical secret for any task claimed after the committed revocation
 
-#### Scenario: Startup fails closed when AES-GCM key is missing
+#### Scenario: Secret targets a foreign definition
 
-- **WHEN** the State Registry starts without a configured 256-bit AES-GCM key
-- **THEN** startup fails closed and refuses all secret writes and open-environment reads
+- **WHEN** a UI API path attempts to create, replace, or delete a secret under another team's definition
+- **THEN** State Registry returns non-revealing `404`, performs no encrypt or decrypt operation, and stores no secret, version, revision, or audit entry
 
-#### Scenario: Decryption fails closed when authenticated associated data does not match
+#### Scenario: Global secret administration uses an operator route
 
-- **WHEN** State Registry attempts to decrypt a stored ciphertext using the wrong team, logical secret, or version binding in the associated data
-- **THEN** State Registry returns the non-revealing `404 environment_unknown_or_unavailable` shape, performs no logical-secret disclosure, and logs no key material, nonce, ciphertext, plaintext, or individual claim values
+- **WHEN** a v0006 UI API request attempts to mutate a secret under global launch parameters
+- **THEN** State Registry rejects it because global administration is outside v0006
 
 ### Requirement: State Registry uses local AES-256-GCM authenticated encryption for secret values
 
@@ -695,96 +736,41 @@ State Registry SHALL encrypt every stored secret value with local AES-256-GCM au
 
 ### Requirement: State Registry opens environments only for assigned same-team Executors
 
-State Registry SHALL expose `GET /v1/environments/{environment_id}/open?task_id={task_id}` only to the assigned Executor for the referenced task. The request SHALL carry the canonical `task_id` query parameter and the compact three-part signed token in the `X-FlowAI-Scope-Token` request header (the body SHALL NOT carry any scope-token fields). State Registry SHALL reject the request without any decrypt operation or value disclosure when the `task_id` query parameter is absent, malformed, or, after successful MAC verification and canonical claim parsing, does not equal both the payload `task_id` claim and the canonical assigned task, returning the same non-revealing `404 environment_unknown_or_unavailable` shape. The Executor SHALL present its authenticated identity and a signed, unexpired scope token satisfying the "State Registry signs open-environment scope tokens with an allow-listed HMAC and a server-controlled rotating key" requirement. Before decrypting, State Registry SHALL verify that the protected-header `kid` equals the payload `key_id`, the token MAC under the declared allow-listed HMAC algorithm (`HS256`/`HS384`/`HS512`) and the documented active key window for `key_id`, the expected literal `audience` (`state-registry.environment.open`), the `issued_at <= server_now + 30 seconds` and `expiry > issued_at` and `expiry - issued_at <= 5 minutes` window, every token claim (including the project-scope rule for `project_id`: required, nullable only when the canonical environment has no project scope) against canonical records, same-team ownership across Executor, task, environment, and secrets, task assignment, the non-terminal task state, and project/task applicability. On success it SHALL return authorized env-style values and append a plaintext-free team-scoped audit entry. Plaintext SHALL remain in memory only. State Registry SHALL NOT accept a token whose `key_id` is outside the documented active window, SHALL NOT accept a token after terminal task state or Executor unassignment, and SHALL perform the decrypt operation only after every check passes. A same `(task_id, command_id)` retry by the original claiming Executor MAY be allowed within the token's TTL when every check still passes; it SHALL NOT bypass canonical claim, transition, or assignment checks, SHALL NOT extend TTL, and SHALL NOT revive an expired token. Any invalid or unavailable condition — including a missing token, tampered MAC, algorithm outside the allow-listed set, `kid` mismatch with payload `key_id`, `key_id` outside the active window, lifetime exceeding five minutes, expired or premature tokens, audience or canonical-claim mismatch, mismatched `team_id`, terminal task, or not-assigned caller — returns the same non-revealing `404 environment_unknown_or_unavailable` shape with zero decrypt operations and no token plaintext, individual claim values beyond identifier-level metadata, MAC bytes, key material, or derived key bytes in logs, audit entries, or error responses.
+State Registry SHALL replace definition-addressed environment opening with
+task-addressed opening at
+`GET /v1/tasks/{task_id}/launch-parameters/open`. The assigned Executor SHALL
+present the task-bound `scope_token` returned by claim. State Registry SHALL
+open only the immutable merged snapshot captured for that task and SHALL NOT
+accept an `environment_id`, project scope, task-owned definition, or sibling
+task as authority.
 
-#### Scenario: Assigned Executor opens an environment
+#### Scenario: Assigned Executor opens the immutable task snapshot
 
-- **WHEN** the assigned Executor sends `GET /v1/environments/{environment_id}/open?task_id={task_id}` with the compact three-part scope token in the `X-FlowAI-Scope-Token` request header, the protected header carrying `alg` (allow-listed `HS256`/`HS384`/`HS512`), `kid`, and `typ` (`scope-token+json`) with `kid == payload key_id`, and the payload's `team_id`, `project_id` (required, null only when the canonical environment has no project scope), `task_id`, `environment_id`, `executor_id`, `audience` (literal `state-registry.environment.open`), `key_id`, `issued_at`, and `expiry` (`expiry > issued_at`, `expiry - issued_at <= 5 minutes`, `issued_at <= server_now + 30 seconds`) all matching canonical records and the MAC verifying under constant-time comparison
-- **THEN** State Registry returns authorized values after local AES-256-GCM decryption and records `team_id`, actor, action, resource, request, and outcome without plaintext or any secret material
+- **WHEN** the assigned Executor calls the task launch-parameter open endpoint with the claim-issued token
+- **THEN** State Registry returns the merged ordinary env values and decrypted logical-secret values for that task without returning definition identifiers or secret metadata
 
-#### Scenario: Scope token has a foreign or mismatched claim
+#### Scenario: Definition-addressed and task-scoped opening are unavailable
 
-- **WHEN** any token claim, signature, audience, `key_id`, expiry, assignment, team, project, task, environment, or Executor binding is invalid
-- **THEN** State Registry rejects the request without decrypting or returning any environment or secret value
+- **WHEN** a caller supplies an environment definition identifier, a removed task-owned definition, a foreign task, a sibling task, an unassigned Executor, or an invalid token
+- **THEN** State Registry returns the same non-revealing `404 launch_parameters_unknown_or_unavailable` response and performs no unauthorized decrypt
 
 ### Requirement: State Registry signs open-environment scope tokens with an allow-listed HMAC and a server-controlled rotating key
 
-State Registry SHALL be the sole issuer and verifier of open-environment scope tokens. The compact three-part wire format SHALL be `<header>.<payload>.<signature>` carried only in the `X-FlowAI-Scope-Token` request header for `GET /v1/environments/{environment_id}/open?task_id={task_id}`. Each token SHALL be signed using an allow-listed HMAC algorithm from the set `HS256`/`HS384`/`HS512` (the "HMAC-SHA-256 or a stronger HMAC" family), keyed with a State Registry-controlled key selected by a `key_id` claim included in the payload. The protected header SHALL carry `alg` (allow-listed), `kid`, and `typ`; the payload SHALL carry `team_id`, `project_id` (a required claim whose value is nullable only when the canonical environment has no project scope), `task_id`, `environment_id`, `executor_id`, `audience` (literal `state-registry.environment.open`), `issued_at`, `expiry`, and `key_id`. State Registry SHALL require `expiry > issued_at`, SHALL bound `expiry - issued_at <= 5 minutes`, SHALL require `issued_at <= server_now + 30 seconds` (premature-beyond-skew rejection), SHALL require `audience` to match the documented literal identifier, SHALL verify that the protected-header `kid` equals the payload `key_id` before any MAC computation, SHALL recompute the signature under the declared allow-listed algorithm and compare it under constant-time comparison before any other check, SHALL accept only `key_id` values inside the documented active key window for rotation, SHALL perform canonical claim verification (presence, types, encoding, allowed values, and the project-scope rule for `project_id`) before any team, assignment, or applicability check, and SHALL never log token plaintext, individual claims, MAC bytes, key material, or derived key bytes. A token SHALL be valid only when the calling authenticated Executor identity is the currently assigned Executor for the referenced task (`scope = team` matching the Executor's team and the parent task's `team_id`; `scope = system` matching the parent task's `team_id`) and the referenced task is in a non-terminal state; any other identity, a terminal task, or an unassigned Executor fails before the local AES-256-GCM decrypt operation.
+State Registry SHALL sign a compact task launch-parameter scope token at
+successful claim only when an immutable merged snapshot exists. The token
+SHALL bind `team_id`, `task_id`, `executor_id`, audience, key id, issue time,
+and expiry; it SHALL NOT bind or expose an `environment_id`, project id,
+secret plaintext, ciphertext, nonce, or authentication tag.
 
-#### Scenario: Token envelope carries the documented claims
+#### Scenario: Claim returns a task-bound launch-parameter token
 
-- **WHEN** State Registry issues an open-environment scope token
-- **THEN** the envelope includes non-null `team_id`, `task_id`, `environment_id`, `executor_id`, `audience`, `key_id`, `issued_at`, and `expiry`, and the required `project_id` claim whose value is null only when the canonical environment has no project scope
+- **WHEN** a successful claim captures a non-empty launch-parameter snapshot
+- **THEN** the claim response sets `launch_parameters=true`, returns a signed task-bound `scope_token`, and omits `environment_id`
 
-#### Scenario: Protected-header kid must equal payload key_id
+#### Scenario: Invalid token fails closed
 
-- **WHEN** the protected header `kid` differs from the payload `key_id`
-- **THEN** State Registry rejects the request with the same non-revealing `404 environment_unknown_or_unavailable` response used for every other invalid or unavailable case, performs no MAC comparison, and performs no decrypt operation
-
-#### Scenario: Algorithm outside the allow-listed HMAC set is rejected
-
-- **WHEN** an Executor presents a token whose protected header `alg` is anything other than `HS256`, `HS384`, or `HS512`
-- **THEN** State Registry rejects the request with the same non-revealing `404 environment_unknown_or_unavailable` response used for every other invalid or unavailable case and performs no decrypt operation
-
-#### Scenario: MAC is verified under constant-time comparison
-
-- **WHEN** an Executor presents an open-environment scope token
-- **THEN** State Registry compares the MAC using a constant-time comparison and rejects the request when the comparison fails before any further check or any decrypt operation
-
-#### Scenario: Expiry is bounded by five minutes after issued_at
-
-- **WHEN** a token's `expiry` is more than five minutes after `issued_at`
-- **THEN** State Registry rejects the token as malformed and never uses it for verification
-
-#### Scenario: Expiry must be strictly later than issued_at
-
-- **WHEN** a token's `expiry` is not strictly later than `issued_at`
-- **THEN** State Registry rejects the token with the same non-revealing `404 environment_unknown_or_unavailable` response and performs no decrypt operation
-
-#### Scenario: Issued_at must not be premature beyond the clock-skew window
-
-- **WHEN** a token's `issued_at` is in the future beyond `server_now + 30 seconds`
-- **THEN** State Registry rejects the token with the same non-revealing `404 environment_unknown_or_unavailable` response and performs no decrypt operation
-
-#### Scenario: Audience must match the literal expected identifier
-
-- **WHEN** a token's `audience` differs from the documented literal identifier `state-registry.environment.open`
-- **THEN** State Registry rejects the request without decrypting or returning any environment or secret value
-
-#### Scenario: key_id outside the documented active window is rejected
-
-- **WHEN** a token's `key_id` does not fall inside the documented active key window for HMAC rotation
-- **THEN** State Registry rejects the token and performs no decrypt operation
-
-#### Scenario: Canonical claim verification fails
-
-- **WHEN** a token has unexpected, missing, or malformed claim fields, types, or allowed values, including a null `project_id` for a project-scoped environment or any non-null mismatch with canonical records
-- **THEN** State Registry rejects the request before any team, assignment, applicability, or decrypt operation
-
-#### Scenario: Token replay by a different identity is denied
-
-- **WHEN** an authenticated Executor different from the original assigned Executor presents a token whose claims still pass canonical checks
-- **THEN** State Registry rejects the request without decrypting or returning any environment or secret value and records an audit entry without token plaintext
-
-#### Scenario: Token after terminal task state is denied
-
-- **WHEN** the referenced task is in a terminal state and the assigned Executor presents a still-valid token
-- **THEN** State Registry rejects the request without decrypting or returning any environment or secret value and performs no decrypt operation
-
-#### Scenario: Token after Executor unassignment is denied
-
-- **WHEN** the Executor is no longer the recorded `tasks.executor_id` and that Executor presents a still-valid token
-- **THEN** State Registry rejects the request without decrypting or returning any environment or secret value and performs no decrypt operation
-
-#### Scenario: Retry within TTL by the same assigned identity MAY be allowed
-
-- **WHEN** the same assigned Executor presents the same token again before `expiry`
-- **THEN** State Registry MAY return the same authorized values, but SHALL still verify the MAC, `key_id`, audience, every canonical claim, task non-terminal state, and current assignment on each retry and SHALL NOT extend TTL or revive an expired token
-
-#### Scenario: Operational logs and audit never contain token plaintext or key material
-
-- **WHEN** State Registry processes, accepts, rejects, retries, or logs any scope-token request
-- **THEN** application logs, audit entries, and error responses contain no token plaintext, individual claim values beyond permitted identifier-level metadata, MAC bytes, key material, or derived key bytes
+- **WHEN** token verification fails because the signature, key id, audience, expiry, team, task, or Executor binding is invalid
+- **THEN** State Registry returns the canonical non-revealing 404 response and records no decrypt operation
 
 ### Requirement: State Registry records plaintext-free team audit entries
 
@@ -899,52 +885,6 @@ State Registry SHALL persist an OPTIONAL `image` override on each `tasks` row (p
 - **WHEN** `team-a` and `team-b` both reference the same opaque image string on a task, task type, or source system
 - **THEN** neither team gains or broadens access; image strings carry no team authority
 
-### Requirement: State Registry resolves the effective image at claim by four-level precedence
-
-On atomic claim, State Registry SHALL resolve an effective image reference for the claimed task using this exact precedence:
-
-1. The canonical task's stored `image` override if non-NULL.
-2. Otherwise, the `default_image` of the registered `task_type` referenced by the task if non-NULL.
-3. Otherwise, the `default_image` of the registered `source_system` referenced by the task if non-NULL.
-4. Otherwise, the parent team's stored `default_image` (always required at team registration and therefore always present).
-
-Because the team default is required, resolution SHALL always succeed; the Registry SHALL always persist `tasks.resolved_image` and `image_source` in the same transaction that appends the `created` event on claim. `image_source` SHALL be one of `task_override`, `task_type_default`, `source_system_default`, `team_default`. The Registry SHALL include the resolved image in the claim response and SHALL return it to the claiming Executor; the Executor SHALL use `resolved_image` verbatim and SHALL NOT substitute any local image, perform any fallback, or consult any other source. Image strings are not team-owned resources: the same resolved image MAY be reused across teams without granting any tenant authority.
-
-#### Scenario: Task image override wins over task-type, source-system, and team default
-
-- **WHEN** an eligible Executor claims a `pending` task whose stored `image` is non-NULL while the task-type, source-system, and team `default_image` values are also non-NULL
-- **THEN** State Registry returns `200 claimed`, persists `resolved_image` equal to the task's stored `image`, sets `image_source = task_override`, and includes `resolved_image` and `image_source` in the claim response
-
-#### Scenario: Task-type default applies when no task override
-
-- **WHEN** an eligible Executor claims a `pending` task whose stored `image` is NULL but the referenced `task_type` has a non-NULL `default_image`
-- **THEN** State Registry returns `200 claimed`, persists `resolved_image` equal to the task-type `default_image`, sets `image_source = task_type_default`, and includes `resolved_image` and `image_source` in the claim response
-
-#### Scenario: Source-system default applies when task and task-type are absent
-
-- **WHEN** an eligible Executor claims a `pending` task whose stored `image` is NULL, the referenced `task_type` has NULL `default_image`, and the referenced `source_system` has a non-NULL `default_image`
-- **THEN** State Registry returns `200 claimed`, persists `resolved_image` equal to the source-system `default_image`, sets `image_source = source_system_default`, and includes `resolved_image` and `image_source` in the claim response
-
-#### Scenario: Team default applies as the final source
-
-- **WHEN** an eligible Executor claims a `pending` task whose task, task-type, and source-system image values are all NULL while the parent team `default_image` is non-NULL (always present by registration)
-- **THEN** State Registry returns `200 claimed`, persists `resolved_image` equal to the team's `default_image`, sets `image_source = team_default`, and includes `resolved_image` and `image_source` in the claim response
-
-#### Scenario: Resolved image is immutable from claim onward
-
-- **WHEN** a task has been claimed and `tasks.resolved_image` and `tasks.image_source` have been persisted in the same transaction as the first `created` event
-- **THEN** any later action — restart, re-read through trusted Gateway context, creation of unrelated task types or source systems, or creation of a new team registration — does NOT change the claimed task's `resolved_image` or `image_source`, does NOT alter the projected task state or events, and does NOT mutate the FIRST `created` event; the contract defines no path to mutate an already-claimed task's image record, and any future migration of an existing `resolved_image` would require an explicit change to this contract
-
-#### Scenario: Resolved image survives a Registry restart
-
-- **WHEN** the State Registry is restarted and the claimed task is read back through trusted Gateway context
-- **THEN** the read response returns the same `resolved_image` value that was persisted at claim time
-
-#### Scenario: Resolved image is reused across teams without granting authority
-
-- **WHEN** `team-a` and `team-b` both claim tasks whose `resolved_image` evaluates to the same opaque image string
-- **THEN** no team gains or broadens authority over the other; image equality is not team authority
-
 ### Requirement: State Registry enforces Executor scope as a registration-time decision
 
 State Registry SHALL treat every Executor's `scope` as immutable from registration onward and SHALL derive every team predicate for that Executor from the recorded `scope`. The Registry SHALL persist `executors.scope` on the row and SHALL refuse a re-registration that names a different `scope` than the original. The Registry SHALL NOT infer scope from runtime data, SHALL NOT auto-promote a team-owned Executor to system-owned, and SHALL NOT allow a system-owned Executor to claim a `team_id`. When `scope = system`, every team predicate in discovery, claim, task events, and self events SHALL evaluate against the parent task's `team_id` rather than the Executor's `team_id`; when `scope = team`, the team predicate SHALL continue to evaluate against the Executor's immutable `team_id` AND the parent task's `team_id` (which must match). Audit entries that record an Executor's actions SHALL include `executor_scope` so operators can attribute cross-team actions to the system-owned Executor that performed them.
@@ -963,3 +903,289 @@ State Registry SHALL treat every Executor's `scope` as immutable from registrati
 
 - **WHEN** either a team-owned or a system-owned Executor appends a self event
 - **THEN** the audit entry identifies the executor, the action, the resource, the request, the outcome, and the executor's `scope` without containing secret plaintext or payload values
+
+### Requirement: State Registry exposes the v0006 UI API surface
+
+State Registry SHALL implement the operations declared by
+`specs/state-registry/openapi/ui-operator.openapi.yaml`. Every team-scoped
+operation SHALL carry the stable selected `team_id` in the path
+`/ui/v1/teams/{team_id}/...`; no operation SHALL fall back to the first team,
+a cached team, or a deployment default. The surface SHALL include dashboard
+statistics; task list/detail/lifecycle/control/log reads; cancellation;
+Executor list/detail/event/active-task reads; launch-parameter CRUD and
+revision history; logical-secret create/replace/delete and version history;
+team audit; and the team live stream. Collection operations SHALL support the
+documented filters, opaque cursor, and `limit` values `10`, `25`, `50`, or
+`100`, defaulting to `10`.
+
+Task history SHALL accept an optional strict `date=YYYY-MM-DD` filter. State
+Registry SHALL interpret it as the UTC half-open range from that day's
+midnight through the following midnight and SHALL apply both bounds together
+with team ownership before ordering, pagination, counts, or serialization.
+
+#### Scenario: UI requests one task-history day
+
+- **WHEN** task history requests `date=2026-08-15`
+- **THEN** State Registry returns only same-team tasks with `ingested_at >= 2026-08-15T00:00:00Z` and `ingested_at < 2026-08-16T00:00:00Z`
+
+This API contract accepts `team_id` as request data for the unauthenticated
+v0006 implementation stage. It SHALL NOT claim that the identifier is
+authenticated, derived from Keycloak, or authorized by membership. Those
+security properties are outside this change and are replaced by the auth
+change. State Registry SHALL still apply the supplied `team_id` consistently
+before resource lookup, filtering, pagination, mutation, or streaming.
+
+#### Scenario: UI changes selected team
+
+- **WHEN** a later request uses a different valid `team_id` path value
+- **THEN** State Registry evaluates the complete operation in that new team context and uses no state from the previously selected team
+
+#### Scenario: UI requests an unsupported page size
+
+- **WHEN** a collection request supplies a `limit` other than `10`, `25`, `50`, or `100`
+- **THEN** State Registry returns the documented validation error without reading or returning collection rows
+
+#### Scenario: UI names a resource outside the selected team
+
+- **WHEN** a team-scoped operation names a task, Executor, environment, secret, revision, control, log, or audit resource not owned by the path `team_id`
+- **THEN** State Registry returns the documented non-revealing not-found response
+
+### Requirement: State Registry returns complete selected dashboard calendars
+
+State Registry SHALL accept dashboard selections only as an ISO week
+`week=YYYY-Www` with `period=week` or a calendar month `month=YYYY-MM` with
+`period=month`. An omitted selection SHALL resolve to the current UTC week or
+month. Future and malformed selections SHALL be rejected. A selected week
+SHALL use Monday 00:00 UTC through the following Monday as a half-open range
+and return exactly seven ordered daily buckets. A selected month SHALL use its
+first day through the first day of the following month as a half-open range
+and return exactly 28, 29, 30, or 31 ordered daily buckets. Every bucket SHALL
+contain zero-initialized counts for `pending`, `created`, `running`,
+`finished`, and `failed`; days without tasks, including future days inside the
+current selected range, SHALL remain present. Team ownership and both range
+bounds SHALL be applied before aggregation.
+
+#### Scenario: Selected week contains sparse activity
+
+- **WHEN** a selected ISO week contains tasks on only one day
+- **THEN** State Registry returns all seven Monday-through-Sunday buckets in order and the other six buckets have zero totals
+
+#### Scenario: Selected month has no tasks
+
+- **WHEN** a selected calendar month has no same-team tasks
+- **THEN** State Registry returns every day of that month in order with all five lifecycle counts initialized to zero
+
+#### Scenario: Selection crosses a calendar boundary
+
+- **WHEN** the selected ISO week crosses an ISO year boundary or the selected month is February in a leap year
+- **THEN** State Registry derives the exact UTC half-open range and returns the corresponding seven or twenty-nine daily buckets
+
+### Requirement: State Registry resolves scoped launch parameters
+
+State Registry SHALL store environment definitions as launch-parameter
+definitions with exactly one scope from `global`, `team`, or `task_type`.
+A global definition has no team or task-type binding and is
+managed only through an authenticated system-administrator surface outside
+this change. A team definition has one immutable `team_id`; a task-type
+definition has one immutable `team_id` and one `task_type_id` owned by that
+team. UI API writes in v0006 SHALL create or replace only team- or
+task-type-scoped definitions. State Registry SHALL reject any environment
+definition, ordinary env value, or logical secret binding addressed by
+`task_id`.
+
+For a claimed task, State Registry SHALL merge applicable launch parameters
+from broadest to narrowest in this order: global, team, task type. A
+narrower definition SHALL replace a same-named ordinary env value, logical
+secret reference, or optional `image` from a broader definition. State
+Registry SHALL reject ambiguous duplicate active definitions for the same
+scope key. Scope matching and team authorization SHALL occur before merge,
+image resolution, counts, cursors, or serialization.
+
+#### Scenario: Task-type parameters apply inside one team
+
+- **WHEN** a team-owned task references a `task_type_id` with an active same-team task-type launch-parameter definition
+- **THEN** State Registry applies that definition after global and team definitions
+
+#### Scenario: Task identifier is not a launch-parameter scope
+
+- **WHEN** a caller attempts to bind launch parameters, an ordinary env value, or a logical secret to a `task_id`
+- **THEN** State Registry rejects the request without storing a definition, revision, secret, or audit mutation
+
+#### Scenario: Task type belongs to another team
+
+- **WHEN** an operator attempts to bind launch parameters to a `task_type_id` owned by another team
+- **THEN** State Registry returns the same non-revealing `404 environment_unknown_or_unavailable` shape as unknown and stores no definition, revision, secret, or audit entry
+
+### Requirement: State Registry freezes and opens task launch-parameter snapshots
+
+State Registry SHALL atomically freeze the merged `global → team → task_type`
+ordinary values and the exact selected logical-secret version references when
+an Executor successfully claims a task. The claim response SHALL expose
+`launch_parameters = true` and a task-bound `scope_token` when that immutable
+snapshot contains at least one ordinary value or secret reference; it SHALL
+not expose an `environment_id`, secret plaintext, ciphertext, nonce,
+authentication tag, key identifier, or provider metadata.
+
+The assigned Executor SHALL open the snapshot through
+`GET /v1/tasks/{task_id}/launch-parameters/open` with the claim-issued scope
+token. State Registry SHALL verify the token, current task assignment,
+Executor identity, team ownership, and non-terminal execution state before
+decrypting only the snapshotted secret versions. Later definition edits,
+secret replacements, definition deletion, or secret revocation SHALL affect
+later claims only and SHALL NOT mutate an already committed task snapshot.
+
+#### Scenario: Definition changes after claim
+
+- **WHEN** an assigned Executor opens a task snapshot after the operator changes an applicable env value or replaces a referenced secret
+- **THEN** State Registry returns the ordinary values and exact secret versions frozen by the successful claim
+
+#### Scenario: Unassigned Executor attempts snapshot open
+
+- **WHEN** a different Executor presents the task identifier or scope token
+- **THEN** State Registry returns the same non-revealing not-found response and performs no decryption
+
+#### Scenario: Operator attempts global launch-parameter mutation
+
+- **WHEN** a v0006 UI API request creates, replaces, or deletes a global definition
+- **THEN** State Registry rejects it without mutation because global administration is outside the operator surface
+
+### Requirement: State Registry resolves launch-parameter image overrides
+
+State Registry SHALL support one optional opaque digest-bearing `image`
+override on each launch-parameter definition and SHALL resolve the claimed
+task image using this exact precedence:
+
+1. The canonical task's immutable `image` override.
+2. The merged applicable launch-parameter `image`, selected by task type,
+   team, then global specificity.
+3. The referenced task type's `default_image`.
+4. The referenced source system's `default_image`.
+5. The owning team's required `default_image`.
+
+State Registry SHALL persist the resolved image and source atomically at
+claim. The source SHALL identify the winning task override,
+launch-parameter scope, task-type default, source-system default, or team
+default. An image string SHALL NOT grant or broaden tenant authority.
+
+#### Scenario: Task-type launch parameters override catalog defaults
+
+- **WHEN** a task has no direct image, its applicable task-type launch parameters contain an image, and task-type, source-system, and team defaults are present
+- **THEN** State Registry persists the launch-parameter image and records the task-type launch-parameter scope as its source
+
+#### Scenario: Team default remains the final fallback
+
+- **WHEN** no task, applicable launch-parameter, task-type, or source-system image is present
+- **THEN** State Registry resolves the owning team's required default image
+
+### Requirement: State Registry stores immutable launch-parameter revisions
+
+State Registry SHALL append an immutable revision for every successful create,
+replace, or delete of a launch-parameter definition. Revision numbers SHALL
+start at `1` and increase by exactly one per definition. Each revision SHALL
+contain the definition identifier, scope and immutable bindings, revision
+number, name, complete non-secret env snapshot, optional image, deletion
+marker, trusted actor and request identifiers, audit identifier, and creation
+time. It SHALL contain no secret plaintext, ciphertext, nonce, authentication
+tag, or decryption material.
+
+State Registry SHALL expose selected-team UI reads at
+`GET /v1/environments/{environment_id}/revisions` and
+`GET /v1/environments/{environment_id}/revisions/{revision}`. The collection
+SHALL use opaque cursor pagination and deterministic `revision DESC`
+ordering. Global revision reads SHALL NOT be exposed through the v0006
+operator UI surface.
+
+#### Scenario: Operator changes an ordinary env value
+
+- **WHEN** a same-team UI API request replaces launch parameters with one ordinary env value changed
+- **THEN** State Registry atomically appends the next revision and audit entry, updates the current projection, and returns history from which the key's changes can be derived
+
+#### Scenario: Operator deletes launch parameters
+
+- **WHEN** a same-team UI API request deletes a definition
+- **THEN** State Registry appends a tombstone revision before marking the current projection deleted and preserves all earlier revisions
+
+#### Scenario: Deleted ordinary env value is absent from later resolutions
+
+- **WHEN** a same-team UI API request replaces a definition without an existing ordinary env key or deletes the definition containing it
+- **THEN** State Registry appends the next immutable revision, removes the key from the current projection, and excludes it from every launch-parameter resolution performed after the committed mutation
+
+#### Scenario: Operator reads foreign history
+
+- **WHEN** a UI API path names a definition or revision owned by another team
+- **THEN** State Registry returns the same non-revealing `404` as unknown and reveals no revision, count, cursor, timing, or secret material
+
+### Requirement: State Registry records and streams task-control events
+
+State Registry SHALL append an immutable first control event with
+`event_type = task.control.requested` and `status = pending` in the same
+transaction that accepts a task control and its audit entry. State Registry
+SHALL expose an Executor-only append operation at
+`POST /v1/tasks/{task_id}/controls/{control_id}/events`. Only the
+authenticated Executor assigned to the task may append `acknowledged`,
+`completed`, or `failed` results. Appends SHALL be idempotent by
+`control_event_id`, strictly ordered by
+`(occurred_at, control_event_id)`, and atomically update the control
+projection and audit.
+
+State Registry SHALL expose the ordered selected-team UI read
+`GET /v1/tasks/{task_id}/controls/{control_id}/events` with opaque cursor
+pagination. It SHALL publish every committed control event to
+`/v1/events/stream` as a team-bound `control_event` frame. Control events
+SHALL NOT append task lifecycle events or introduce a cancellation lifecycle
+state.
+
+#### Scenario: Cancellation request enters the task feed
+
+- **WHEN** State Registry accepts a same-team operator cancellation control
+- **THEN** it atomically stores the control, audit entry, and pending requested event and publishes that event to the team's live stream after commit
+
+#### Scenario: Assigned Executor reports the result
+
+- **WHEN** the assigned Executor appends ordered acknowledged and completed or failed control events
+- **THEN** State Registry stores and publishes each result, updates the control projection, and leaves the canonical task lifecycle unchanged
+
+#### Scenario: Unauthorized caller reports a result
+
+- **WHEN** a browser, unassigned Executor, or foreign-team Executor calls the control-event append operation
+- **THEN** State Registry rejects it without changing the control, appending an event, or publishing a frame
+
+### Requirement: State Registry stores and streams ordered task logs
+
+State Registry SHALL accept task-log chunks only from the authenticated
+Executor currently assigned to the task. Each append SHALL carry an
+idempotent `log_chunk_id`; State Registry SHALL assign a strictly increasing
+task-local `log_offset` and a `stream` from `work` or `reasoning`, persist
+committed chunks, and publish them as
+team-bound `task_log` frames without converting them into lifecycle or
+control events. It SHALL expose same-team ordered replay by opaque cursor and
+live continuation through the operator read surface. Ownership SHALL
+be checked before replay, cursor handling, counts, subscription, or content
+serialization.
+
+The selected-team aggregate stream SHALL also publish one stable
+`task_committed` frame for each successfully ingested task, including a
+pending task with no lifecycle event. A client SHALL establish its initial
+`after` boundary before opening the WebSocket and SHALL reconnect with the
+last committed `(occurred_at, frame_id)` pair so the connection handshake
+cannot lose a commit and replay cannot change derived dashboard counts.
+
+The `reasoning` stream SHALL contain only reasoning text explicitly emitted
+by the running agent as execution output. State Registry SHALL NOT infer,
+request, or expose a model provider's hidden chain of thought or other
+provider-internal reasoning state.
+
+#### Scenario: Assigned Executor appends output
+
+- **WHEN** the assigned Executor appends a new log chunk for its running task
+- **THEN** State Registry commits it once with its declared `work` or `reasoning` stream, assigns the next task-local offset, and publishes one team-bound `task_log` frame
+
+#### Scenario: Operator resumes a task log
+
+- **WHEN** a same-team UI read supplies the last committed opaque cursor
+- **THEN** State Registry returns later chunks in ascending offset order without gaps or duplicates before continuing live delivery
+
+#### Scenario: Unauthorized log access
+
+- **WHEN** an unassigned Executor appends or a foreign-team operator reads a task log
+- **THEN** State Registry returns a non-revealing denial and exposes no content, cursor, count, timing, or existence signal

@@ -361,13 +361,13 @@ func TestListTasksFullCanonicalProjection(t *testing.T) {
 		task_id, team_id, source_system_id, source_id, task_type_id,
 		required_tag, payload, image,
 		current_state, owner_command_id, executor_id,
-		project_id, environment_id, resolved_image, image_source,
+		project_id, resolved_image, image_source,
 		ingested_at, claimed_at
 	) VALUES (
 		'task-image-overrides', 'team-a', 'src-a', 'src-overrides', 'tt-a',
 		'tag-a', $1::jsonb, $2::jsonb,
 		'pending', NULL, NULL,
-		NULL, NULL, NULL, NULL,
+		NULL, NULL, NULL,
 		'2024-02-02T00:00:00Z', NULL
 	)`,
 		`{"k":"v","n":42}`,
@@ -378,13 +378,13 @@ func TestListTasksFullCanonicalProjection(t *testing.T) {
 		task_id, team_id, source_system_id, source_id, task_type_id,
 		required_tag, payload, image,
 		current_state, owner_command_id, executor_id,
-		project_id, environment_id, resolved_image, image_source,
+		project_id, resolved_image, image_source,
 		ingested_at, claimed_at
 	) VALUES (
 		'task-image-claimed', 'team-a', 'src-a', 'src-claimed', 'tt-a',
 		'tag-a', $1::jsonb, NULL,
 		'created', 'cmd-a', 'exec-a',
-		'proj-a', 'env-a', $2::jsonb, 'team_default',
+		'proj-a', $2::jsonb, 'team_default',
 		'2024-02-01T00:00:00Z', '2024-02-01T01:02:03.123456Z'
 	)`,
 		`{"hello":"world","arr":[1,2,3]}`,
@@ -449,8 +449,8 @@ func TestListTasksFullCanonicalProjection(t *testing.T) {
 	if claimed.ProjectID == nil || *claimed.ProjectID != "proj-a" {
 		t.Errorf("claimed ProjectID=%+v, want proj-a", claimed.ProjectID)
 	}
-	if claimed.EnvironmentID == nil || *claimed.EnvironmentID != "env-a" {
-		t.Errorf("claimed EnvironmentID=%+v, want env-a", claimed.EnvironmentID)
+	if claimed.EnvironmentID != nil {
+		t.Errorf("claimed compatibility EnvironmentID=%+v, want nil after v0006 removal", claimed.EnvironmentID)
 	}
 }
 

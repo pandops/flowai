@@ -381,7 +381,7 @@ func TestRouteGraphProductionMountsBusinessRoutes(t *testing.T) {
 		"GET /v1/environments/{environment_id}/secrets/{secret_id}/versions",
 		"GET /v1/environments/{environment_id}/secrets/{secret_id}/versions/{version}",
 		// Open environment via signed scope token.
-		"GET /v1/environments/{environment_id}/open",
+		"GET /v1/tasks/{task_id}/launch-parameters/open",
 		// Audit.
 		"GET /v1/audit",
 		"GET /v1/audit/{audit_id}",

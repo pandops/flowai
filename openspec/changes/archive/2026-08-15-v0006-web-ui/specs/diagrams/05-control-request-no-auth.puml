@@ -1,0 +1,19 @@
+' diagram-type: sequence
+@startuml
+title v0006 Web UI — cancellation control
+actor Operator
+participant "Web UI" as UI
+participant "Mocked proxy" as Proxy
+database "State Registry" as Registry
+participant Executor
+Operator -> UI: confirm cancellation
+UI -> Proxy: POST /teams/{selected}/tasks/{task}/controls/cancel
+Proxy -> Registry: forward selected-team request
+Registry -> Registry: append requested/pending control event
+Registry --> UI: 202 pending control
+UI -> UI: append feed event; disable button
+Executor -> Registry: acknowledged then completed|failed
+Registry --> Proxy: selected-team live frames
+Proxy --> UI: control result frames
+UI -> UI: update feed; lifecycle state unchanged
+@enduml

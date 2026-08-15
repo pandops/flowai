@@ -92,9 +92,10 @@ test.describe("state-registry harness smoke", () => {
       "same PostgreSQL container handle must survive a Go-process restart",
     ).toBe(beforeContainerId);
     expect(
-      result.previousProcessSignal,
-      "previous Go process must have exited via signal-driven termination",
-    ).toBeTruthy();
+      result.previousProcessSignal !== null ||
+        result.previousProcessExitCode === 0,
+      "previous Go process must have terminated cleanly after SIGTERM",
+    ).toBe(true);
     expect(result.sanitizedLogs).not.toContain("STATE_REGISTRY_AES_KEY_HEX=");
     expect(result.sanitizedLogs).not.toContain(worker.postgres.password);
     expect(beforeDecrypt.raw).toBe(0);

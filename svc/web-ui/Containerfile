@@ -1,0 +1,18 @@
+FROM golang:1.25.7-alpine AS build
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY svc/web-ui ./svc/web-ui
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/web-ui \
+    ./svc/web-ui/cmd/web-ui
+
+FROM scratch
+
+COPY --from=build /out/web-ui /web-ui
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/web-ui"]

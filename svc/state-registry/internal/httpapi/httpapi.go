@@ -123,6 +123,13 @@ func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, chec
 		}
 		if controls, ok := adminRepositories[0].(store.ControlRepository); ok {
 			RegisterTaskControls(r, logger, controls)
+			RegisterUIControls(r, logger, controls)
+		}
+		if controlEvents, ok := adminRepositories[0].(store.ControlEventRepository); ok {
+			RegisterTaskControlEvents(r, logger, controlEvents)
+		}
+		if taskLogs, ok := adminRepositories[0].(store.TaskLogRepository); ok {
+			RegisterTaskLogs(r, logger, taskLogs)
 		}
 		if audit, ok := adminRepositories[0].(store.AuditRepository); ok && keyring != nil {
 			RegisterAudit(r, logger, audit, keyring)
@@ -130,8 +137,15 @@ func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, chec
 		if environments, ok := adminRepositories[0].(store.EnvironmentRepository); ok {
 			RegisterEnvironments(r, logger, environments, keyring)
 		}
+		if launchParameters, ok := adminRepositories[0].(store.LaunchParameterRepository); ok {
+			RegisterUILaunchParameters(r, logger, launchParameters)
+		}
+		if uiOperator, ok := adminRepositories[0].(store.UIOperatorRepository); ok {
+			RegisterUIOperator(r, logger, uiOperator)
+		}
 		if secrets, ok := adminRepositories[0].(store.SecretRepository); ok {
 			RegisterSecrets(r, logger, secrets, keyring)
+			RegisterUISecrets(r, logger, secrets)
 		}
 		if environmentOpen, ok := adminRepositories[0].(store.OpenEnvironmentRepository); ok {
 			RegisterEnvironmentOpen(r, logger, environmentOpen, ops)

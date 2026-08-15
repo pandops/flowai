@@ -1,8 +1,8 @@
 // v0005.7-assigned-task-environment-opens-with-team-bound-scope-token
 //
 // Inherited v0002 scope-token contract: the assigned K8s Executor
-// opens the environment via GET
-// /v1/environments/{environment_id}/open?task_id={task_id} with the
+// opens the task-bound launch-parameter snapshot via GET
+// /v1/tasks/{task_id}/launch-parameters/open with the
 // compact three-part signed scope token in
 // X-FlowAI-Scope-Token; protected header carries alg (allow-listed
 // HS256/HS384/HS512), kid, and typ; payload carries every claim;
@@ -15,16 +15,17 @@ import { test, expect } from "../fixtures/k3d-suite";
 test("v0005.7 assigned task environment opens with team-bound scope token", async ({
   suite,
 }) => {
-  const createEnvironment = await suite.gatewayFetch(
-    suite.teamA,
-    "/v1/environments",
+  const createEnvironment = await suite.registryFetch(
+    `/ui/v1/teams/${suite.teamA.admin.team_id}/launch-parameters`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: `v0005-7-${Date.now()}`,
-        scope: { project_id: null, task_id: null, parent_task_id: null },
-        values: { FLOWAI_V0005_REGION: "cluster-local" },
+        scope: "team",
+        task_type_id: null,
+        env: { FLOWAI_V0005_REGION: "cluster-local" },
+        image: null,
       }),
     },
   );
@@ -35,7 +36,7 @@ test("v0005.7 assigned task environment opens with team-bound scope token", asyn
   const task = await suite.ingestTask(
     suite.teamA,
     { prompt: "hold environment v0005.7" },
-    environment.environment_id,
+    undefined,
   );
   const deadline = Date.now() + 60_000;
   let pod: {
@@ -68,7 +69,7 @@ test("v0005.7 assigned task environment opens with team-bound scope token", asyn
   });
 
   const invalid = await suite.registryFetch(
-    `/v1/environments/${environment.environment_id}/open?task_id=${task.task_id}`,
+    `/v1/tasks/${task.task_id}/launch-parameters/open`,
     {
       headers: {
         "X-FlowAI-Role": "team-executor",
@@ -81,17 +82,34 @@ test("v0005.7 assigned task environment opens with team-bound scope token", asyn
   );
   expect(invalid.status).toBe(404);
   expect(await invalid.json()).toMatchObject({
-    code: "environment_unknown_or_unavailable",
+    code: "launch_parameters_unknown_or_unavailable",
   });
 
-  await suite.kubectl(
-    "delete",
-    "pod",
-    "-n",
-    "flowai-executor-k8s",
-    "-l",
-    `flowai.task_id=${task.task_id}`,
-    "--wait=true",
+  const cancel = await suite.gatewayFetch(
+    suite.teamA,
+    `/v1/tasks/${task.task_id}/controls`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "cancel",
+        idempotency_key: `v0005-7-cleanup-${crypto.randomUUID()}`,
+        reason: "release executor capacity after environment assertion",
+      }),
+    },
   );
-  await new Promise((resolve) => setTimeout(resolve, 2_000));
+  expect(cancel.status).toBe(202);
+  await expect
+    .poll(
+      async () => {
+        const response = await suite.gatewayFetch(
+          suite.teamA,
+          `/v1/tasks/${task.task_id}`,
+        );
+        return ((await response.json()) as { current_state: string })
+          .current_state;
+      },
+      { timeout: 60_000 },
+    )
+    .toMatch(/^(finished|failed)$/);
 });

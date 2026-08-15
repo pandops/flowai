@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"github.com/flowai/platform/executor/k8s-openhands/internal/cache"
@@ -68,7 +69,11 @@ func (e *Executor) runPodTask(ctx context.Context, slot *podSlot) {
 	}
 	conversationID := slot.conversationID
 	if conversationID == "" {
-		conversation, err := client.StartConversation(ctx, e.conversationConfig(slot.prompt))
+		if slot.llmAPIKey == "" || slot.llmBaseURL == "" || slot.llmModel == "" {
+			e.finishPodTask(ctx, slot, platform.TaskEventTypeFailed, "submit", "task launch parameters require OPENAI_API_KEY, OPENAI_BASE_URL, and OPENAI_MODEL")
+			return
+		}
+		conversation, err := client.StartConversation(ctx, e.conversationConfig(slot.prompt, slot.llmAPIKey, slot.llmBaseURL, slot.llmModel))
 		if err != nil {
 			e.finishPodTask(ctx, slot, platform.TaskEventTypeFailed, "submit", err.Error())
 			return
@@ -92,7 +97,7 @@ func (e *Executor) runPodTask(ctx context.Context, slot *podSlot) {
 	}
 	terminal := make(chan terminalResult, 1)
 	go func() {
-		status, err := e.waitForTerminal(taskCtx, baseURL, conversationID)
+		status, err := e.waitForTerminal(taskCtx, slot.taskID, baseURL, conversationID)
 		terminal <- terminalResult{status: status, err: err}
 	}()
 	controls := time.NewTicker(500 * time.Millisecond)
@@ -139,7 +144,15 @@ func (e *Executor) applyPendingControls(ctx context.Context, client *openhands.C
 		if control.Status != "pending" || control.Action != "cancel" {
 			continue
 		}
+		acknowledgedAt := time.Now().UTC()
+		if err := e.appendControlEvent(ctx, slot.taskID, control.ControlID, "acknowledged", acknowledgedAt, "cancellation received"); err != nil {
+			return false, err
+		}
 		if err := client.PauseConversation(ctx, conversationID); err != nil {
+			_ = e.appendControlEvent(ctx, slot.taskID, control.ControlID, "failed", acknowledgedAt.Add(time.Microsecond), "cancellation could not be sent")
+			return false, err
+		}
+		if err := e.appendControlEvent(ctx, slot.taskID, control.ControlID, "completed", acknowledgedAt.Add(time.Microsecond), "cancellation sent to OpenHands"); err != nil {
 			return false, err
 		}
 		e.logger("applied control %s to task %s", control.ControlID, slot.taskID)
@@ -148,7 +161,17 @@ func (e *Executor) applyPendingControls(ctx context.Context, client *openhands.C
 	return false, nil
 }
 
-func (e *Executor) conversationConfig(prompt string) openhands.ConversationConfig {
+func (e *Executor) appendControlEvent(ctx context.Context, taskID, controlID, status string, occurredAt time.Time, message string) error {
+	payload, _ := json.Marshal(map[string]string{"message": message})
+	postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return e.registry.AppendTaskControlEvent(postCtx, taskID, controlID, platform.TaskControlEventAppendRequest{
+		ControlEventID: "control-event-" + uuid.NewString(), Status: status,
+		OccurredAt: occurredAt, Payload: payload,
+	})
+}
+
+func (e *Executor) conversationConfig(prompt, taskAPIKey, taskBaseURL, taskModel string) openhands.ConversationConfig {
 	cfg := openhands.ConversationConfig{
 		Workspace:      openhands.Workspace{Kind: "LocalWorkspace", WorkingDir: e.cfg.OpenHandsWorkspace},
 		InitialMessage: openhands.InitialMessage{Role: "user", Content: []openhands.ContentPart{{Type: "text", Text: prompt}}, Run: e.cfg.OpenHandsInitialRun},
@@ -158,14 +181,14 @@ func (e *Executor) conversationConfig(prompt string) openhands.ConversationConfi
 	} else {
 		cfg.Agent = &openhands.Agent{
 			Kind:  "Agent",
-			LLM:   openhands.LLM{Model: e.cfg.OpenHandsLLMModel, APIKey: e.cfg.OpenHandsLLMAPIKey, UsageID: e.cfg.OpenHandsLLMUsageID, BaseURL: e.cfg.OpenHandsLLMBaseURL},
+			LLM:   openhands.LLM{Model: taskModel, APIKey: taskAPIKey, UsageID: e.cfg.OpenHandsLLMUsageID, BaseURL: taskBaseURL},
 			Tools: []openhands.Tool{{Name: "terminal"}},
 		}
 	}
 	return cfg
 }
 
-func (e *Executor) waitForTerminal(ctx context.Context, baseURL, conversationID string) (string, error) {
+func (e *Executor) waitForTerminal(ctx context.Context, taskID, baseURL, conversationID string) (string, error) {
 	wsURL := "ws" + strings.TrimPrefix(baseURL, "http") + openhands.WSPath(conversationID)
 	headers := http.Header{}
 	if e.cfg.OpenHandsAPIKey != "" {
@@ -189,6 +212,7 @@ func (e *Executor) waitForTerminal(ctx context.Context, baseURL, conversationID 
 		if json.Unmarshal(data, &event) != nil {
 			continue
 		}
+		e.appendPublishedOpenHandsLogs(ctx, taskID, event)
 		status := conversationStatus(event)
 		switch status {
 		case "finished", "failed", "error", "stuck", "paused":

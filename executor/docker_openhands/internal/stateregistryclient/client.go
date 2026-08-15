@@ -274,6 +274,15 @@ func (c *Client) AppendTaskEvent(ctx context.Context, ev platform.V0002TaskEvent
 	return out, nil
 }
 
+// AppendTaskLog persists one explicitly published OpenHands output chunk.
+func (c *Client) AppendTaskLog(ctx context.Context, taskID string, chunk platform.TaskLogAppendRequest) error {
+	if taskID == "" {
+		return errors.New("stateregistryclient: task_id is required")
+	}
+	u := c.baseURL + "/tasks/" + url.PathEscape(taskID) + "/logs"
+	return c.doJSON(ctx, http.MethodPost, u, chunk, nil, "")
+}
+
 // AppendExecutorEvent POSTs /v1/executors/{executor_id}/events
 // with the documented envelope. The caller supplies the canonical
 // envelope (event_id, team_id-or-null, event_type, occurred_at,
@@ -305,6 +314,14 @@ func (c *Client) ListAssignedControls(ctx context.Context, taskID string) ([]pla
 	return page.Items, nil
 }
 
+func (c *Client) AppendTaskControlEvent(ctx context.Context, taskID, controlID string, event platform.TaskControlEventAppendRequest) error {
+	if taskID == "" || controlID == "" {
+		return errors.New("stateregistryclient: task_id and control_id are required")
+	}
+	u := c.baseURL + "/tasks/" + url.PathEscape(taskID) + "/controls/" + url.PathEscape(controlID) + "/events"
+	return c.doJSON(ctx, http.MethodPost, u, event, nil, "")
+}
+
 // OpenEnvironment GETs /v1/environments/{environment_id}/open with
 // the supplied scope_token in the X-FlowAI-Scope-Token header and
 // the canonical task_id as a query parameter. A 204 means the
@@ -312,13 +329,11 @@ func (c *Client) ListAssignedControls(ctx context.Context, taskID string) ([]pla
 // (empty-map, nil). A 404 is surfaced as HTTPError: the Executor
 // MUST treat the environment as unknown and MUST NOT log the
 // underlying failure reason.
-func (c *Client) OpenEnvironment(ctx context.Context, environmentID, taskID, scopeToken string) (map[string]string, error) {
-	if environmentID == "" || taskID == "" || scopeToken == "" {
-		return nil, errors.New("stateregistryclient: environment_id, task_id, and scope_token are required")
+func (c *Client) OpenEnvironment(ctx context.Context, taskID, scopeToken string) (map[string]string, error) {
+	if taskID == "" || scopeToken == "" {
+		return nil, errors.New("stateregistryclient: task_id and scope_token are required")
 	}
-	q := url.Values{}
-	q.Set("task_id", taskID)
-	u := c.baseURL + "/environments/" + url.PathEscape(environmentID) + "/open?" + q.Encode()
+	u := c.baseURL + "/tasks/" + url.PathEscape(taskID) + "/launch-parameters/open"
 	out := &platform.V0002OpenEnvironmentResponse{}
 	if err := c.doJSON(ctx, http.MethodGet, u, nil, out, scopeToken); err != nil {
 		if he := (*HTTPError)(nil); errors.As(err, &he) {

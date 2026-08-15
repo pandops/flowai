@@ -1,0 +1,3624 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FlowAI v2</title>
+    <style>
+      :root {
+        --bg: #090b12;
+        --surface: #121722;
+        --surface-warm: #1b2233;
+        --fg: #f8fafc;
+        --fg-2: #cbd5e1;
+        --muted: #94a3b8;
+        --meta: #60a5fa;
+        --border: #2a3447;
+        --border-soft: #1d2636;
+        --accent: #60a5fa;
+        --accent-on: #06101d;
+        --accent-hover: color-mix(in oklab, var(--accent), black 8%);
+        --accent-active: color-mix(in oklab, var(--accent), black 14%);
+        --success: #26de81;
+        --warn: #fbbf24;
+        --danger: #ff4757;
+        --font-display: Inter, system-ui, sans-serif;
+        --font-body: Inter, system-ui, sans-serif;
+        --font-mono: "SF Mono", ui-monospace, Menlo, monospace;
+        --text-xs: 11px;
+        --text-sm: 12px;
+        --text-base: 14px;
+        --text-lg: 16px;
+        --text-xl: 20px;
+        --text-2xl: 28px;
+        --text-3xl: 40px;
+        --text-4xl: 56px;
+        --leading-body: 1.45;
+        --leading-tight: 1.06;
+        --tracking-display: -0.025em;
+        --space-1: 4px;
+        --space-2: 8px;
+        --space-3: 12px;
+        --space-4: 16px;
+        --space-5: 20px;
+        --space-6: 24px;
+        --space-8: 32px;
+        --space-12: 48px;
+        --section-y-desktop: 80px;
+        --section-y-tablet: 60px;
+        --section-y-phone: 42px;
+        --radius-sm: 10px;
+        --radius-md: 16px;
+        --radius-lg: 24px;
+        --radius-pill: 9999px;
+        --elev-flat: none;
+        --elev-ring: 0 0 0 1px var(--border);
+        --elev-raised: 0 24px 72px rgba(0, 0, 0, 0.42);
+        --focus-ring: 0 0 0 4px rgba(96, 165, 250, 0.28);
+        --motion-fast: 100ms;
+        --motion-base: 180ms;
+        --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+        --container-max: 1280px;
+        --container-gutter-desktop: 36px;
+        --container-gutter-tablet: 24px;
+        --container-gutter-phone: 16px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: var(--font-body);
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button,
+      a,
+      select {
+        touch-action: manipulation;
+      }
+
+      .topbar {
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 0 28px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg);
+        position: sticky;
+        top: 0;
+        z-index: 20;
+      }
+
+      .mission-context {
+        color: var(--accent);
+        font:
+          600 10px ui-monospace,
+          SFMono-Regular,
+          monospace;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .live-state {
+        color: var(--muted);
+        font:
+          10px ui-monospace,
+          SFMono-Regular,
+          monospace;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .live-state::before {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--success);
+      }
+
+      body[data-demo="true"] .live-state::before {
+        background: var(--warn);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 8px 20px;
+        border-bottom: 1px solid var(--border-soft);
+      }
+
+      .brand-mark {
+        width: 30px;
+        height: 30px;
+        border: 1px solid var(--accent);
+        display: grid;
+        place-items: center;
+        color: var(--accent);
+        font:
+          700 12px ui-monospace,
+          SFMono-Regular,
+          monospace;
+      }
+
+      .brand strong {
+        display: block;
+        color: var(--fg);
+        font-size: 15px;
+      }
+      .brand small {
+        display: block;
+        color: var(--muted);
+        font:
+          10px ui-monospace,
+          SFMono-Regular,
+          monospace;
+      }
+
+      .team {
+        margin-top: auto;
+        border-top: 1px solid var(--border-soft);
+        padding-top: 14px;
+      }
+
+      .team label {
+        display: block;
+        margin: 0 8px 6px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      .team select {
+        width: 100%;
+        min-height: 48px;
+        background: var(--bg);
+      }
+
+      select,
+      input {
+        min-height: 40px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--surface);
+        color: var(--fg);
+        padding: 0 10px;
+      }
+
+      input::placeholder {
+        color: #64748b;
+      }
+
+      button,
+      .button {
+        min-height: 40px;
+        border: 1px solid var(--accent);
+        border-radius: 4px;
+        padding: 0 14px;
+        background: var(--accent);
+        color: var(--accent-on);
+        font-weight: 750;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      button:hover,
+      .button:hover {
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+      }
+      button:active,
+      .button:active {
+        background: var(--accent-active);
+        transform: translateY(1px);
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: none;
+        box-shadow: var(--focus-ring);
+      }
+
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .secondary {
+        background: transparent;
+        border-color: var(--border);
+        color: var(--fg);
+      }
+      .secondary:hover {
+        background: var(--surface-warm);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .danger {
+        background: transparent;
+        border-color: var(--danger);
+        color: #ff7a86;
+      }
+      .danger:hover {
+        background: rgba(255, 71, 87, 0.1);
+        border-color: var(--danger);
+        color: #ff7a86;
+      }
+      .small {
+        min-height: 32px;
+        padding: 0 10px;
+        font-size: 13px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 232px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .workspace {
+        min-width: 0;
+      }
+
+      nav {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        border-right: 1px solid var(--border);
+        padding: 20px 12px;
+        background: var(--surface);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .nav-links {
+        display: grid;
+        gap: 4px;
+        margin-top: 16px;
+      }
+      .nav-links button {
+        width: 100%;
+        min-height: 44px;
+        justify-content: flex-start;
+        background: transparent;
+        color: var(--fg-2);
+        border-color: transparent;
+        margin: 0;
+      }
+
+      .nav-links button[aria-current="page"] {
+        background: var(--surface-warm);
+        color: var(--accent);
+        border-color: var(--border);
+      }
+
+      main {
+        padding: 28px;
+        min-width: 0;
+        max-width: 1540px;
+        width: 100%;
+        margin: 0 auto;
+      }
+
+      .page-head {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 24px;
+      }
+
+      .eyebrow {
+        color: var(--meta);
+        font:
+          700 11px ui-monospace,
+          SFMono-Regular,
+          monospace;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+      }
+
+      h1 {
+        font-size: 32px;
+        margin: 5px 0 0;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 0 0 16px;
+      }
+      h3 {
+        margin: 0;
+        font-size: 16px;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+      }
+      .hidden {
+        display: none;
+      }
+
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 20px;
+        margin-bottom: 18px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(120px, 1fr));
+        gap: 8px;
+      }
+      .stat {
+        text-align: left;
+        background: var(--surface);
+        border-color: var(--border);
+        color: var(--fg);
+        padding: 14px;
+        display: block;
+        height: auto;
+      }
+
+      .stat:hover {
+        background: var(--surface-warm);
+        border-color: var(--accent);
+        color: var(--fg);
+      }
+      .stat strong {
+        font: 700 28px var(--font-mono);
+        display: block;
+        color: var(--fg);
+        margin-top: 9px;
+      }
+      .stat[data-status="running"] strong {
+        color: var(--accent);
+      }
+      .stat[data-status="finished"] strong {
+        color: var(--success);
+      }
+      .stat[data-status="failed"] strong {
+        color: var(--danger);
+      }
+      .stat[data-status="pending"] strong,
+      .stat[data-status="created"] strong {
+        color: var(--warn);
+      }
+      .stat span {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 500;
+      }
+
+      .chart-wrap {
+        margin-top: 18px;
+      }
+      .chart {
+        height: 232px;
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        padding-top: 18px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .bar-shell {
+        flex: 1;
+        min-width: 0;
+      }
+      .bar {
+        width: 100%;
+        min-height: 0;
+        background: color-mix(in oklab, var(--surface-warm), var(--fg) 14%);
+        border: 0;
+        border-radius: 0;
+        position: relative;
+        opacity: 0.88;
+      }
+
+      .bar.zero {
+        background: color-mix(in oklab, var(--surface-warm), var(--fg) 8%);
+        opacity: 0.65;
+      }
+      .bar.future {
+        background: var(--border-soft);
+        opacity: 0.7;
+      }
+      .bar:hover {
+        background: color-mix(in oklab, var(--surface-warm), var(--fg) 22%);
+      }
+      .bar-value {
+        position: absolute;
+        bottom: calc(100% + 5px);
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .bar-label {
+        display: block;
+        margin-top: 8px;
+        text-align: center;
+        color: var(--muted);
+        font:
+          11px ui-monospace,
+          SFMono-Regular,
+          monospace;
+        text-transform: uppercase;
+      }
+
+      .chart.month {
+        gap: 3px;
+      }
+      .chart.month .bar-label {
+        font-size: 9px;
+        letter-spacing: -0.04em;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: end;
+        margin-bottom: 16px;
+      }
+      .field {
+        display: grid;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .task-type-field.hidden {
+        display: none;
+      }
+      .field.grow {
+        flex: 1;
+        min-width: 220px;
+      }
+      .periods {
+        display: flex;
+        gap: 4px;
+      }
+      .periods button {
+        background: transparent;
+        color: var(--fg);
+        border-color: var(--border);
+      }
+      .periods button[aria-pressed="true"] {
+        background: var(--accent);
+        color: var(--accent-on);
+        border-color: var(--accent);
+      }
+      .dashboard-actions,
+      .month-nav,
+      .week-nav {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .month-nav button,
+      .week-nav button {
+        width: 32px;
+        padding: 0;
+      }
+      .month-label {
+        min-width: 132px;
+        text-align: center;
+        color: var(--fg-2);
+        font: 600 var(--text-sm) var(--font-body);
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 14px;
+      }
+      th {
+        text-align: left;
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        border-bottom: 1px solid var(--border);
+        padding: 11px 10px;
+      }
+
+      td {
+        padding: 13px 10px;
+        border-bottom: 1px solid var(--border-soft);
+        vertical-align: middle;
+      }
+      tbody tr:hover {
+        background: var(--surface-warm);
+      }
+
+      .link {
+        color: var(--accent);
+        text-decoration: underline;
+        text-decoration-color: #426a9d;
+        text-underline-offset: 3px;
+        background: none;
+        border: 0;
+        padding: 0;
+        min-height: auto;
+        font-weight: 650;
+      }
+
+      .link:hover {
+        color: #8bbcff;
+        background: none;
+        border-color: transparent;
+      }
+
+      .badge {
+        display: inline-flex;
+        padding: 4px 8px;
+        border: 1px solid var(--border);
+        border-radius: 2px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .badge.running {
+        background: rgba(96, 165, 250, 0.12);
+        border-color: rgba(96, 165, 250, 0.35);
+        color: #82b7fa;
+      }
+      .badge.created,
+      .badge.pending {
+        background: rgba(251, 191, 36, 0.12);
+        border-color: rgba(251, 191, 36, 0.35);
+        color: var(--warn);
+      }
+      .badge.finished {
+        background: color-mix(in oklab, var(--success), transparent 88%);
+        border-color: color-mix(in oklab, var(--success), transparent 70%);
+        color: var(--success);
+      }
+      .badge.failed {
+        background: rgba(255, 71, 87, 0.12);
+        border-color: rgba(255, 71, 87, 0.35);
+        color: #ff6976;
+      }
+
+      .cards {
+        display: none;
+      }
+      .card {
+        border: 1px solid var(--border);
+        background: var(--surface-warm);
+        padding: 14px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+      }
+      .card dl,
+      .metadata {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px 24px;
+      }
+      .card dt,
+      .metadata dt {
+        color: var(--muted);
+        font-size: 11px;
+        margin-bottom: 4px;
+      }
+      .card dd,
+      .metadata dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .status-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.75fr);
+        gap: 18px;
+      }
+      .timeline {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .timeline li {
+        padding: 0 0 20px 24px;
+        border-left: 1px solid var(--border);
+        position: relative;
+      }
+      .timeline li::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        background: var(--accent);
+        border-radius: 50%;
+        position: absolute;
+        left: -5px;
+        top: 4px;
+      }
+
+      .timeline li:last-child {
+        border-left-color: transparent;
+      }
+      .log {
+        height: 360px;
+        overflow: auto;
+        background: var(--bg);
+        border: 1px solid var(--border-soft);
+        padding: 14px;
+        font: 13px/1.55 var(--font-mono);
+      }
+      .log-line {
+        display: grid;
+        grid-template-columns: 94px 1fr;
+        gap: 10px;
+        margin-bottom: 7px;
+      }
+      .log-line .channel {
+        color: var(--warn);
+      }
+      .log-line.reasoning .channel {
+        color: var(--accent);
+      }
+      .log-state {
+        color: var(--muted);
+        padding: 10px 0;
+      }
+      .pager {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 16px;
+      }
+      .inline-state,
+      .inline-fault {
+        padding: 16px 0;
+        color: var(--muted);
+      }
+      .inline-fault {
+        color: var(--danger);
+      }
+      .list {
+        display: grid;
+        gap: 10px;
+      }
+      .event {
+        border-left: 2px solid var(--border);
+        padding: 8px 12px;
+      }
+      .event time {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .scope {
+        font-size: 12px;
+        color: var(--muted);
+        margin-left: 8px;
+      }
+      .definition {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: flex-start;
+        border-bottom: 1px solid var(--border);
+        padding: 14px 0;
+      }
+      .kv {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 9px;
+      }
+      .token {
+        background: var(--surface-warm);
+        border: 1px solid var(--border);
+        padding: 5px 8px;
+        border-radius: 3px;
+        font: 12px var(--font-mono);
+      }
+      .secret {
+        color: var(--warn);
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      dialog {
+        width: min(520px, calc(100% - 28px));
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--surface);
+        color: var(--fg);
+        padding: 22px;
+      }
+
+      dialog::backdrop {
+        background: rgb(0 0 0 / 0.72);
+      }
+      dialog form {
+        display: grid;
+        gap: 16px;
+      }
+      .dialog-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      .notice {
+        border-left: 3px solid var(--accent);
+        background: #172238;
+        padding: 10px 12px;
+        color: #cbd5e1;
+      }
+      .validation {
+        color: #ff7a86;
+        font-size: 12px;
+        min-height: 16px;
+      }
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      @media (max-width: 980px) {
+        .layout {
+          grid-template-columns: 76px minmax(0, 1fr);
+        }
+        nav button {
+          font-size: 0;
+          justify-content: center;
+        }
+        nav button::before {
+          font-size: 18px;
+        }
+        nav button[data-view="dashboard"]::before {
+          content: "▦";
+        }
+        nav button[data-view="history"]::before {
+          content: "≡";
+        }
+        nav button[data-view="executors"]::before {
+          content: "⬡";
+        }
+        nav button[data-view="parameters"]::before {
+          content: "⚙";
+        }
+        nav button[data-view="audit"]::before {
+          content: "◷";
+        }
+        .grid {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .split {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .layout {
+          display: block;
+        }
+        .workspace {
+          min-width: 0;
+        }
+        nav {
+          position: sticky;
+          z-index: 30;
+          top: 0;
+          height: auto;
+          border: 0;
+          border-bottom: 1px solid var(--border);
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 72px;
+          padding: 0;
+          background: var(--surface);
+        }
+
+        .brand {
+          display: none;
+        }
+        .nav-links {
+          display: flex;
+          margin: 0;
+          overflow-x: auto;
+          padding: 6px;
+        }
+        .nav-links button {
+          margin: 0;
+          padding: 0 10px;
+          min-width: 92px;
+          font-size: 11px;
+        }
+        .team {
+          margin: 0;
+          padding: 6px;
+          border: 0;
+        }
+        .team label {
+          display: none;
+        }
+        .team select {
+          width: 60px;
+          max-width: 60px;
+          height: 44px;
+          padding: 0 6px;
+        }
+        .topbar {
+          height: 52px;
+          padding: 0 16px;
+        }
+        .live-state {
+          display: none;
+        }
+        .layout main {
+          padding: 18px 14px 32px;
+        }
+        .page-head {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .table-wrap table {
+          display: none;
+        }
+        .cards {
+          display: block;
+        }
+        .card dl,
+        .metadata {
+          grid-template-columns: 1fr;
+        }
+        .toolbar > * {
+          width: 100%;
+        }
+        .periods > * {
+          flex: 1;
+        }
+        .actions {
+          justify-content: flex-start;
+        }
+        .log-line {
+          grid-template-columns: 1fr;
+        }
+        .log-line .channel {
+          font-size: 11px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <nav aria-label="Main navigation">
+        <div class="brand" data-od-id="product-identity">
+          <span class="brand-mark">FA</span
+          ><span><strong>FlowAI v2</strong><small>FLOWAI V2</small></span>
+        </div>
+        <div class="nav-links">
+          <button
+            type="button"
+            class="secondary"
+            data-view="dashboard"
+            aria-label="Dashboard"
+            aria-current="page"
+          >
+            Overview
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            data-view="history"
+            aria-label="History"
+          >
+            Tasks
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            data-view="executors"
+            aria-label="Executors"
+          >
+            Executors
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            data-view="parameters"
+            aria-label="Launch parameters"
+          >
+            Parameters
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            data-view="audit"
+            aria-label="Audit"
+          >
+            Audit
+          </button>
+        </div>
+        <div class="team" data-od-id="team-identity">
+          <label for="team-selector">Team</label
+          ><select
+            id="team-selector"
+            data-od-id="team-selector"
+            aria-label="Team"
+            disabled
+          ></select
+          ><span class="sr-only" data-testid="selected-team-id">—</span>
+        </div>
+      </nav>
+      <div class="workspace">
+        <header class="topbar" data-od-id="system-status">
+          <div class="mission-context">FlowAI</div>
+          <div class="live-state">LIVE updates</div>
+        </header>
+        <main id="app" data-od-id="application-view" aria-live="polite"></main>
+      </div>
+    </div>
+    <output
+      data-testid="live-frame"
+      class="sr-only"
+      aria-live="polite"
+    ></output>
+
+    <dialog id="env-dialog" aria-labelledby="env-title">
+      <form id="env-form">
+        <h2 id="env-title">Add variable</h2>
+        <label class="field"
+          >Variable scope<select name="scope">
+            <option value="team">Team</option>
+            <option value="task_type">Task category</option>
+          </select></label
+        ><label class="field task-type-field hidden"
+          >Task category<select name="task_type_id" required disabled>
+            <option value="">Select a task category</option>
+          </select></label
+        ><label class="field"
+          >Key name<input
+            name="key"
+            required
+            pattern="[A-Z_][A-Z0-9_]*"
+            autocomplete="off" /></label
+        ><label class="field"
+          >Value<input name="value" required autocomplete="off"
+        /></label>
+        <div class="validation" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" class="secondary" data-close>Cancel</button
+          ><button type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="secret-dialog" aria-labelledby="secret-title">
+      <form id="secret-form">
+        <h2 id="secret-title">Add secret</h2>
+        <p class="notice">
+          The value is accepted once. After saving, it cannot be viewed—only
+          replaced or deleted.
+        </p>
+        <input name="environment_id" type="hidden" /><label class="field"
+          >Secret key name<input
+            aria-label="Secret key"
+            name="key"
+            required
+            pattern="[A-Z_][A-Z0-9_]*"
+            autocomplete="off" /></label
+        ><label class="field"
+          >New secret value<input
+            name="value"
+            type="password"
+            required
+            autocomplete="new-password"
+        /></label>
+        <div class="validation" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" class="secondary" data-close>Cancel</button
+          ><button type="submit">Save secret</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="edit-env-dialog" aria-labelledby="edit-env-title">
+      <form id="edit-env-form">
+        <h2 id="edit-env-title">Edit variable</h2>
+        <input name="environment_id" type="hidden" /><input
+          name="key"
+          type="hidden"
+        /><label class="field"
+          >Variable key<input name="key_display" disabled /></label
+        ><label class="field"
+          >New value<input name="value" required autocomplete="off"
+        /></label>
+        <div class="validation" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" class="secondary" data-close>Cancel</button
+          ><button type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="replace-secret-dialog" aria-labelledby="replace-secret-title">
+      <form id="replace-secret-form">
+        <h2 id="replace-secret-title">Replace secret</h2>
+        <p class="notice">
+          Current and previous values are never shown. A new value creates an
+          immutable version.
+        </p>
+        <input name="environment_id" type="hidden" /><input
+          name="secret_id"
+          type="hidden"
+        /><label class="field">Secret key<input name="key" disabled /></label
+        ><label class="field"
+          >New secret value<input
+            name="value"
+            type="password"
+            required
+            autocomplete="new-password"
+        /></label>
+        <div class="validation" role="alert"></div>
+        <div class="dialog-actions">
+          <button type="button" class="secondary" data-close>Cancel</button
+          ><button type="submit">Replace</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="history-dialog" aria-labelledby="history-title">
+      <h2 id="history-title">Version history</h2>
+      <label class="field"
+        >Rows per page<select name="history_limit" data-filter-key="limit">
+          <option>10</option>
+          <option>25</option>
+          <option>50</option>
+          <option>100</option>
+        </select></label
+      >
+      <div id="history-content" class="list"></div>
+      <div class="dialog-actions">
+        <button type="button" class="secondary" data-close>Close</button>
+      </div>
+    </dialog>
+    <dialog id="cancel-dialog" aria-labelledby="cancel-title">
+      <form id="cancel-form">
+        <h2 id="cancel-title">Cancel task?</h2>
+        <p>
+          The request will be sent to the assigned executor. The current run may
+          take some time to stop.
+        </p>
+        <div class="dialog-actions">
+          <button type="button" class="secondary" data-close>
+            Keep task running</button
+          ><button type="submit" class="danger">Cancel task</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      (() => {
+        const app = document.querySelector("#app");
+        const selector = document.querySelector("#team-selector");
+        const selected = document.querySelector(
+          '[data-testid="selected-team-id"]',
+        );
+        const liveFrame = document.querySelector('[data-testid="live-frame"]');
+        const liveState = document.querySelector(".live-state");
+
+        const labels = {
+          pending: "Pending",
+          created: "Created",
+          running: "Running",
+          finished: "Finished",
+          failed: "Error",
+        };
+
+        const weekLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        const historyPeriods = {
+          "": "All time",
+          day: "Day",
+          week: "Week",
+          month: "Month",
+        };
+
+        const state = {
+          team: null,
+          teams: [],
+          view: "dashboard",
+          period: "week",
+          week: currentIsoWeekKey(),
+          month: currentMonthKey(),
+          generation: 0,
+          controller: null,
+          socket: null,
+          cursors: [],
+          cursor: null,
+          limit: 10,
+          task: null,
+          executor: null,
+          historyFilter: null,
+          streamAfter: null,
+          streamFrameID: "",
+          cancelPendingTasks: new Set(),
+          demo: false,
+          demoDB: createDemoDB(),
+          demoTimer: null,
+          demoRefresh: null,
+        };
+
+        function esc(value) {
+          return String(value ?? "").replace(
+            /[&<>'"]/g,
+            (char) =>
+              ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                "'": "&#39;",
+                '"': "&quot;",
+              })[char],
+          );
+        }
+
+        function fmt(value) {
+          return value
+            ? new Intl.DateTimeFormat("en-GB", {
+                dateStyle: "short",
+                timeStyle: "medium",
+              }).format(new Date(value))
+            : "—";
+        }
+
+        function duration(task) {
+          if (!task.claimed_at) return "—";
+          const end = new Date(task.completed_at || Date.now()).getTime();
+          const start = new Date(task.claimed_at).getTime();
+          return `${Math.max(0, end - start) / 1000} s`;
+        }
+
+        function qs(object) {
+          const params = new URLSearchParams();
+          Object.entries(object).forEach(([key, value]) => {
+            if (value !== "" && value != null) params.set(key, value);
+          });
+          return params.toString();
+        }
+
+        function clone(value) {
+          return JSON.parse(JSON.stringify(value));
+        }
+
+        function nowIso(minutesOffset = 0) {
+          return new Date(Date.now() + minutesOffset * 60_000).toISOString();
+        }
+
+        function currentMonthKey() {
+          const date = new Date();
+          return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        }
+
+        function shiftMonth(monthKey, offset) {
+          const [year, month] = monthKey.split("-").map(Number);
+          const date = new Date(year, month - 1 + offset, 1);
+          return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+        }
+
+        function monthLabel(monthKey) {
+          const [year, month] = monthKey.split("-").map(Number);
+          return new Intl.DateTimeFormat("en-US", {
+            month: "long",
+            year: "numeric",
+          }).format(new Date(year, month - 1, 1));
+        }
+
+        function currentIsoWeekKey() {
+          return isoWeekKey(new Date());
+        }
+
+        function isoWeekKey(date) {
+          const probe = new Date(
+            Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()),
+          );
+          const day = probe.getUTCDay() || 7;
+          probe.setUTCDate(probe.getUTCDate() + 4 - day);
+          const year = probe.getUTCFullYear();
+          const yearStart = new Date(Date.UTC(year, 0, 1));
+          const week = Math.ceil(((probe - yearStart) / 86_400_000 + 1) / 7);
+          return `${year}-W${String(week).padStart(2, "0")}`;
+        }
+
+        function isoWeekStart(weekKey) {
+          const match = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+          if (!match) return isoWeekStart(currentIsoWeekKey());
+          const year = Number(match[1]);
+          const week = Number(match[2]);
+          const januaryFourth = new Date(Date.UTC(year, 0, 4));
+          const day = januaryFourth.getUTCDay() || 7;
+          januaryFourth.setUTCDate(
+            januaryFourth.getUTCDate() - day + 1 + (week - 1) * 7,
+          );
+          return new Date(
+            januaryFourth.getUTCFullYear(),
+            januaryFourth.getUTCMonth(),
+            januaryFourth.getUTCDate(),
+          );
+        }
+
+        function validIsoWeekKey(weekKey) {
+          return (
+            /^\d{4}-W\d{2}$/.test(weekKey || "") &&
+            isoWeekKey(isoWeekStart(weekKey)) === weekKey
+          );
+        }
+
+        function shiftWeek(weekKey, offset) {
+          const date = isoWeekStart(weekKey);
+          date.setDate(date.getDate() + offset * 7);
+          return isoWeekKey(date);
+        }
+
+        function weekLabel(weekKey) {
+          const [year, week] = weekKey.split("-W");
+          return `Week ${week}, ${year}`;
+        }
+
+        function parseBody(options) {
+          if (!options?.body) return {};
+          try {
+            return JSON.parse(options.body);
+          } catch {
+            return {};
+          }
+        }
+
+        function setDemoMode(enabled) {
+          state.demo = enabled;
+          document.body.dataset.demo = enabled ? "true" : "false";
+          liveState.textContent = enabled
+            ? "DEMO fallback active"
+            : "LIVE updates";
+        }
+
+        async function api(path, options = {}) {
+          if (state.demo) return demoApi(path, options);
+          try {
+            const response = await fetch(path, {
+              signal: state.controller?.signal,
+              ...options,
+              headers: {
+                "content-type": "application/json",
+                ...(options.headers || {}),
+              },
+            });
+            if (!response.ok) {
+              let body = {};
+              try {
+                body = await response.json();
+              } catch {
+                body = {};
+              }
+              throw new Error(body.message || `Error ${response.status}`);
+            }
+            return response.status === 204 ? null : response.json();
+          } catch (error) {
+            if (error?.name === "AbortError") throw error;
+            throw error;
+          }
+        }
+
+        function teamPath(suffix) {
+          return `/ui/v1/teams/${encodeURIComponent(state.team.team_id)}${suffix}`;
+        }
+
+        function shell(title, eyebrow = "", actions = "") {
+          return `<header class="page-head"><div>${eyebrow ? `<div class="eyebrow">${eyebrow}</div>` : ""}<h1>${title}</h1></div>${actions}</header><div id="content"></div>`;
+        }
+
+        function errorView(error, retry) {
+          document.querySelector("#content").innerHTML =
+            `<div class="inline-fault" role="alert"><p>${esc(error.message)}</p><button type="button" class="secondary" data-retry>Retry</button></div>`;
+          document.querySelector("[data-retry]").onclick = retry;
+        }
+
+        function setNav() {
+          document.querySelectorAll(".nav-links button").forEach((button) => {
+            button.setAttribute(
+              "aria-current",
+              button.dataset.view === state.view ? "page" : "false",
+            );
+          });
+        }
+
+        function updateUrl(mode = "replace") {
+          const params = new URLSearchParams();
+          params.set("view", state.view);
+          if (state.team) params.set("team", state.team.team_id);
+          if (state.task) params.set("id", state.task);
+          if (state.executor) params.set("id", state.executor);
+          if (state.view === "dashboard") {
+            params.set("period", state.period);
+            if (state.period === "week") params.set("week", state.week);
+            if (state.period === "month") params.set("month", state.month);
+          }
+          if (state.view === "history" && state.historyFilter) {
+            if (state.historyFilter.search)
+              params.set("search", state.historyFilter.search);
+            if (state.historyFilter.status)
+              params.set("status", state.historyFilter.status);
+            if (state.historyFilter.period)
+              params.set("period", state.historyFilter.period);
+            if (state.historyFilter.date)
+              params.set("date", state.historyFilter.date);
+            if (state.cursor) params.set("cursor", state.cursor);
+            params.set("limit", String(state.limit));
+          }
+          history[mode === "push" ? "pushState" : "replaceState"](
+            null,
+            "",
+            `?${params.toString()}`,
+          );
+        }
+
+        async function navigate(view, detail = null, historyMode = "push") {
+          state.view = view;
+          state.task = view === "task" ? detail : null;
+          state.executor = view === "executor" ? detail : null;
+          state.cursor = null;
+          state.cursors = [];
+          setNav();
+          updateUrl(historyMode);
+          await render();
+        }
+
+        async function render() {
+          if (!state.team) return;
+          state.generation += 1;
+          const generation = state.generation;
+          state.controller?.abort();
+          state.controller = new AbortController();
+          try {
+            if (state.view === "dashboard") await dashboard(generation);
+            else if (state.view === "history") await historyView(generation);
+            else if (state.view === "task")
+              await taskView(generation, state.task);
+            else if (state.view === "executors")
+              await executorsView(generation);
+            else if (state.view === "executor")
+              await executorView(generation, state.executor);
+            else if (state.view === "parameters")
+              await parametersView(generation);
+            else if (state.view === "audit") await auditView(generation);
+          } catch (error) {
+            if (
+              error.name !== "AbortError" &&
+              generation === state.generation
+            ) {
+              const content = document.querySelector("#content");
+              if (content) errorView(error, render);
+              else
+                app.innerHTML = `<div class="inline-fault" role="alert">${esc(error.message)}</div>`;
+            }
+          }
+        }
+
+        function renderDashboardBuckets(buckets) {
+          return `<div class="chart-wrap"><div class="chart ${state.period}" aria-label="Runs chart">${buckets
+            .map((bucket) => {
+              const height =
+                bucket.total === 0
+                  ? "2px"
+                  : `${Math.min(190, Math.max(40, bucket.total * 28))}px`;
+              const classes = ["bar"];
+              if (bucket.isFuture) classes.push("future");
+              else if (bucket.total === 0) classes.push("zero");
+              return `<div class="bar-shell" data-od-id="run-day-${esc(bucket.key)}"><button type="button" class="${classes.join(" ")}" data-dashboard-date="${esc(bucket.key)}" aria-label="View runs for ${esc(bucket.key)} (${bucket.total})" title="${esc(bucket.label)}: ${bucket.total}" style="height:${height}"><span class="bar-value">${bucket.total}</span></button><span class="bar-label">${esc(bucket.shortLabel || bucket.label)}</span></div>`;
+            })
+            .join("")}</div></div>`;
+        }
+
+        async function dashboard(generation) {
+          const weekControls =
+            state.period === "week"
+              ? `<div class="week-nav" aria-label="ISO week"><button type="button" class="secondary small" data-week-step="-1" aria-label="Previous week">←</button><span class="month-label" aria-live="polite">${esc(weekLabel(state.week))}</span><button type="button" class="secondary small" data-week-step="1" aria-label="Next week" ${state.week === currentIsoWeekKey() ? "disabled" : ""}>→</button></div>`
+              : "";
+          const monthControls =
+            state.period === "month"
+              ? `<div class="month-nav" aria-label="Calendar month"><button type="button" class="secondary small" data-month-step="-1" aria-label="Previous month">←</button><span class="month-label" aria-live="polite">${esc(monthLabel(state.month))}</span><button type="button" class="secondary small" data-month-step="1" aria-label="Next month" ${state.month === currentMonthKey() ? "disabled" : ""}>→</button></div>`
+              : "";
+          app.innerHTML = shell(
+            "Dashboard",
+            "Operations overview",
+            `<div class="dashboard-actions">${weekControls}${monthControls}<div class="periods" aria-label="Period" data-filter-key="period"><button type="button" class="secondary small" data-period="week" aria-pressed="${state.period === "week"}">Week</button><button type="button" class="secondary small" data-period="month" aria-pressed="${state.period === "month"}">Month</button></div></div>`,
+          );
+
+          document.querySelectorAll("[data-period]").forEach((button) => {
+            button.onclick = () => {
+              state.period = button.dataset.period;
+              if (state.period === "week") state.week = currentIsoWeekKey();
+              if (state.period === "month") state.month = currentMonthKey();
+              updateUrl("push");
+              render();
+            };
+          });
+
+          document.querySelectorAll("[data-month-step]").forEach((button) => {
+            button.onclick = () => {
+              const candidate = shiftMonth(
+                state.month,
+                Number(button.dataset.monthStep),
+              );
+              if (candidate <= currentMonthKey()) {
+                state.month = candidate;
+                updateUrl("push");
+                render();
+              }
+            };
+          });
+
+          document.querySelectorAll("[data-week-step]").forEach((button) => {
+            button.onclick = () => {
+              const candidate = shiftWeek(
+                state.week,
+                Number(button.dataset.weekStep),
+              );
+              if (candidate <= currentIsoWeekKey()) {
+                state.week = candidate;
+                updateUrl("push");
+                render();
+              }
+            };
+          });
+
+          const dashboardQuery = qs({
+            period: state.period,
+            week: state.period === "week" ? state.week : "",
+            month: state.period === "month" ? state.month : "",
+          });
+          const data = await api(teamPath(`/dashboard?${dashboardQuery}`));
+          if (generation !== state.generation) return;
+          const counts = data.counts || {};
+          const total = Object.keys(labels).reduce(
+            (sum, status) => sum + Number(counts[status] || 0),
+            0,
+          );
+
+          document.querySelector("#content").innerHTML =
+            `<section class="panel"><h2>Runs by day</h2><span class="muted mono">${total} runs · ${state.period === "week" ? "Mon–Sun" : `${(data.buckets || []).length} days`}</span>${renderDashboardBuckets(data.buckets || [])}</section>`;
+
+          document
+            .querySelectorAll("[data-dashboard-date]")
+            .forEach((button) => {
+              button.onclick = () => {
+                state.historyFilter = {
+                  date: button.dataset.dashboardDate,
+                  status: "",
+                  period: "",
+                  search: "",
+                };
+                state.cursor = null;
+                state.cursors = [];
+                navigate("history");
+              };
+            });
+
+          document.querySelectorAll("[data-status]").forEach((button) => {
+            button.onclick = () => {
+              state.historyFilter = {
+                status: button.dataset.status,
+                period: state.period,
+                search: "",
+              };
+              navigate("history");
+            };
+          });
+        }
+
+        function filterBar(kind) {
+          if (kind !== "history") return "";
+          return `<div class="toolbar"><label class="field grow">Search<input data-filter-key="search" name="search" placeholder="Task ID, category, or executor"></label><label class="field">Status<select data-filter-key="status" name="status"><option value="">All</option>${Object.entries(
+            labels,
+          )
+            .map(
+              ([value, label]) => `<option value="${value}">${label}</option>`,
+            )
+            .join(
+              "",
+            )}</select></label><label class="field">Period<select data-filter-key="period" name="period"><option value="">All time</option><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label><label class="field">Date<input data-filter-key="date" name="date" type="date"></label><label class="field">Rows per page<select data-filter-key="limit" name="limit">${[10, 25, 50, 100].map((number) => `<option>${number}</option>`).join("")}</select></label><button type="button" class="secondary" data-reset>Reset</button></div>`;
+        }
+
+        async function historyView(generation) {
+          app.innerHTML = `${shell("Task history", "Execution")}<section class="panel">${filterBar("history")}<div id="results"></div></section>`;
+          const urlState = new URLSearchParams(location.search);
+          const preset = state.historyFilter || {
+            search: urlState.get("search") || "",
+            status: urlState.get("status") || "",
+            period: urlState.get("period") || "",
+            date: urlState.get("date") || "",
+          };
+          state.historyFilter = preset;
+          const form = app.querySelector(".toolbar");
+          const search = form.querySelector('[name="search"]');
+          const status = form.querySelector('[name="status"]');
+          const period = form.querySelector('[name="period"]');
+          const date = form.querySelector('[name="date"]');
+          const limit = form.querySelector('[name="limit"]');
+          search.value = preset.search || "";
+          status.value = preset.status || "";
+          period.value = preset.period || "";
+          date.value = preset.date || "";
+          limit.value = String(state.limit);
+          let timer;
+
+          form.querySelectorAll("input,select").forEach((element) => {
+            element.oninput = () => {
+              clearTimeout(timer);
+              timer = setTimeout(load, 180);
+            };
+          });
+
+          form.querySelector("[data-reset]").onclick = () => {
+            form.querySelectorAll("input,select").forEach((element) => {
+              element.value = element.name === "limit" ? "10" : "";
+            });
+            state.cursor = null;
+            state.cursors = [];
+            state.historyFilter = {};
+            load();
+          };
+
+          async function load() {
+            state.limit = Number(limit.value);
+            state.historyFilter = {
+              search: search.value,
+              status: status.value,
+              period: period.value,
+              date: date.value,
+            };
+            updateUrl("replace");
+            const query = qs({
+              search: search.value,
+              status: status.value,
+              period: period.value,
+              date: date.value,
+              limit: state.limit,
+              cursor: state.cursor,
+            });
+            const data = await api(teamPath(`/tasks?${query}`));
+            if (generation !== state.generation) return;
+            renderTasks(data.items || [], data.next_cursor);
+          }
+
+          await load();
+        }
+
+        function renderTasks(items, nextCursor) {
+          const root = document.querySelector("#results");
+          if (!items.length) {
+            root.className = "inline-state";
+            root.textContent = "No tasks match the selected filters";
+            return;
+          }
+
+          root.className = "";
+          root.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Task</th><th>task_type_id</th><th>Status</th><th>Executor</th><th>Time</th><th>Duration</th></tr></thead><tbody>${items.map(taskRow).join("")}</tbody></table><div class="cards">${items.map(taskCard).join("")}</div></div><div class="pager"><button type="button" class="secondary small" data-prev ${state.cursors.length ? "" : "disabled"}>Previous</button><span class="muted">${state.limit} rows per page</span><button type="button" class="secondary small" data-next ${nextCursor ? "" : "disabled"}>Next</button></div>`;
+
+          root.querySelectorAll("[data-task]").forEach((button) => {
+            button.onclick = () => navigate("task", button.dataset.task);
+          });
+
+          root.querySelectorAll("[data-executor]").forEach((button) => {
+            button.onclick = () =>
+              navigate("executor", button.dataset.executor);
+          });
+
+          root.querySelector("[data-prev]").onclick = () => {
+            state.cursor = state.cursors.pop() || null;
+            render();
+          };
+
+          root.querySelector("[data-next]").onclick = () => {
+            state.cursors.push(state.cursor);
+            state.cursor = nextCursor;
+            render();
+          };
+        }
+
+        function taskRow(task) {
+          return `<tr><td><button type="button" class="link mono" data-task="${esc(task.task_id)}">${esc(task.task_id)}</button></td><td>${esc(task.task_type_id)}</td><td><span class="badge ${task.current_state}">${labels[task.current_state] || esc(task.current_state)}</span></td><td>${task.executor_id ? `<button type="button" class="link mono" data-executor="${esc(task.executor_id)}">${esc(task.executor_id)}</button>` : "—"}</td><td>${fmt(task.ingested_at)}</td><td>${duration(task)}</td></tr>`;
+        }
+
+        function taskCard(task) {
+          return `<article class="card"><h3><button type="button" class="link mono" data-task="${esc(task.task_id)}">${esc(task.task_id)}</button></h3><dl><div><dt>Category</dt><dd>${esc(task.task_type_id)}</dd></div><div><dt>Status</dt><dd><span class="badge ${task.current_state}">${labels[task.current_state] || esc(task.current_state)}</span></dd></div><div><dt>Executor</dt><dd>${task.executor_id ? `<button type="button" class="link mono" data-executor="${esc(task.executor_id)}">${esc(task.executor_id)}</button>` : "—"}</dd></div><div><dt>Time</dt><dd>${fmt(task.ingested_at)}</dd></div></dl></article>`;
+        }
+
+        function renderEnvironmentTokens(task) {
+          const entries = Object.entries(task.environment || {});
+          const secretKeys = task.secret_keys || [];
+          if (!entries.length && !secretKeys.length)
+            return '<p class="inline-state">No parameters supplied</p>';
+          return `<div class="kv">${entries.map(([key, value]) => `<span class="token">${esc(key)}=${esc(value)}</span>`).join("")}${secretKeys.map((key) => `<span class="token secret">${esc(key)} ••••••••</span>`).join("")}</div>`;
+        }
+
+        function logLines(items) {
+          return items
+            .map(
+              (item) =>
+                `<div class="log-line ${item.stream}" data-log-offset="${esc(item.log_offset)}"><span class="channel">${item.stream === "reasoning" ? "Reasoning" : "Work"}</span><span>${esc(item.content)}</span></div>`,
+            )
+            .join("");
+        }
+
+        async function taskView(generation, id) {
+          app.innerHTML = shell(
+            "Task details",
+            "Task",
+            `<button type="button" class="secondary" data-back>Back to history</button>`,
+          );
+          app.querySelector("[data-back]").onclick = () => navigate("history");
+
+          const [task, events, logs] = await Promise.all([
+            api(teamPath(`/tasks/${encodeURIComponent(id)}`)),
+            api(teamPath(`/tasks/${encodeURIComponent(id)}/events?limit=100`)),
+            api(teamPath(`/tasks/${encodeURIComponent(id)}/logs?limit=100`)),
+          ]);
+          if (generation !== state.generation) return;
+
+          const canCancel = ["created", "running"].includes(task.current_state);
+          const cancelPending = state.cancelPendingTasks.has(task.task_id);
+          document.querySelector("#content").innerHTML =
+            `<section class="panel"><div class="status-row"><span class="badge ${task.current_state}">${labels[task.current_state]}</span>${canCancel ? `<button type="button" class="danger small" data-cancel ${cancelPending ? "disabled" : ""}>${cancelPending ? "Awaiting cancellation…" : "Cancel task"}</button>` : ""}</div><dl class="metadata"><div><dt>ID</dt><dd class="mono">${esc(task.task_id)}</dd></div><div><dt>task_type_id</dt><dd class="mono">${esc(task.task_type_id)}</dd></div><div><dt>Source</dt><dd class="mono">${esc(task.source_system_id)} / ${esc(task.source_id)}</dd></div><div><dt>Executor</dt><dd>${task.executor_id ? `<button type="button" class="link mono" data-executor="${esc(task.executor_id)}">${esc(task.executor_id)}</button>` : "Unassigned"}</dd></div><div><dt>Created</dt><dd>${fmt(task.ingested_at)}</dd></div><div><dt>Finished</dt><dd>${fmt(task.completed_at)}</dd></div></dl></section><div class="split"><div><section class="panel"><h2>Execution timeline</h2>${events.items?.length || cancelPending ? `<ol class="timeline">${events.items.map((event) => `<li><strong>${esc(event.event_type)}</strong><div class="muted">${fmt(event.occurred_at)}</div></li>`).join("")}${cancelPending ? '<li><strong>task.control.requested</strong><div class="muted">Cancellation sent; awaiting executor response</div></li>' : ""}</ol>` : `<p class="inline-state">${task.current_state === "pending" ? "Waiting for a successful claim. There are no events yet." : "No events yet"}</p>`}</section><section class="panel"><h2>Live log</h2><div class="log" data-log>${logLines(logs.items || []) || '<div class="log-state">Waiting for agent output…</div>'}</div></section></div><aside><section class="panel"><h2>Launch parameters</h2>${renderEnvironmentTokens(task)}</section><section class="panel"><h2>Summary</h2><dl class="metadata"><div><dt>History period</dt><dd>${esc(historyPeriods[state.historyFilter?.period || ""] || "All time")}</dd></div><div><dt>Duration</dt><dd>${duration(task)}</dd></div><div><dt>Mode</dt><dd>backend</dd></div></dl></section></aside></div>`;
+
+          document.querySelectorAll("[data-executor]").forEach((button) => {
+            button.onclick = () =>
+              navigate("executor", button.dataset.executor);
+          });
+
+          const cancelButton = document.querySelector("[data-cancel]");
+          if (cancelButton) {
+            cancelButton.onclick = () =>
+              document.querySelector("#cancel-dialog").showModal();
+          }
+        }
+
+        async function executorsView(generation) {
+          app.innerHTML = `${shell("Executors", "Infrastructure")}<section class="panel"><div class="toolbar"><label class="field grow">Search<input name="search" data-filter-key="search" placeholder="ID, type, or tag"></label><label class="field">State<select name="status" data-filter-key="status"><option value="">All</option><option value="idle">Idle</option><option value="busy">Busy</option></select></label><label class="field">Rows per page<select name="limit" data-filter-key="limit">${[10, 25, 50, 100].map((number) => `<option>${number}</option>`).join("")}</select></label><button type="button" class="secondary" data-reset>Reset</button></div><div id="results"></div></section>`;
+          const toolbar = app.querySelector(".toolbar");
+          const search = toolbar.querySelector('[name="search"]');
+          const status = toolbar.querySelector('[name="status"]');
+          const limit = toolbar.querySelector('[name="limit"]');
+          let timer;
+
+          toolbar.querySelectorAll("input,select").forEach((element) => {
+            element.oninput = () => {
+              clearTimeout(timer);
+              timer = setTimeout(load, 150);
+            };
+          });
+
+          toolbar.querySelector("[data-reset]").onclick = () => {
+            search.value = "";
+            status.value = "";
+            load();
+          };
+
+          async function load() {
+            const data = await api(
+              teamPath(
+                `/executors?${qs({ search: search.value, status: status.value, limit: limit.value })}`,
+              ),
+            );
+            if (generation !== state.generation) return;
+            const root = document.querySelector("#results");
+            if (!data.items?.length) {
+              root.innerHTML = '<p class="inline-state">No executors found</p>';
+              return;
+            }
+
+            root.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Executor</th><th>Type</th><th>Scope</th><th>Tag</th><th>Activity</th><th>Available</th></tr></thead><tbody>${data.items.map((executor) => `<tr><td><button type="button" class="link mono" data-executor="${esc(executor.executor_id)}">${esc(executor.executor_id)}</button></td><td>${esc(executor.executor_type)}</td><td>${esc(executor.scope)}</td><td>${esc(executor.authorized_tag)}</td><td>${esc(executor.status)}</td><td>${executor.available_capacity} / ${executor.max_capacity}</td></tr>`).join("")}</tbody></table><div class="cards">${data.items.map((executor) => `<article class="card"><h3><button type="button" class="link mono" data-executor="${esc(executor.executor_id)}">${esc(executor.executor_id)}</button></h3><dl><div><dt>Type</dt><dd>${esc(executor.executor_type)}</dd></div><div><dt>Tag</dt><dd>${esc(executor.authorized_tag)}</dd></div><div><dt>Status</dt><dd>${esc(executor.status)}</dd></div><div><dt>Capacity</dt><dd>${executor.available_capacity} / ${executor.max_capacity}</dd></div></dl></article>`).join("")}</div></div>`;
+
+            root.querySelectorAll("[data-executor]").forEach((button) => {
+              button.onclick = () =>
+                navigate("executor", button.dataset.executor);
+            });
+          }
+
+          await load();
+        }
+
+        async function executorView(generation, id) {
+          app.innerHTML = shell(
+            "Executor details",
+            "Executor",
+            `<button type="button" class="secondary" data-back>Back to list</button>`,
+          );
+          app.querySelector("[data-back]").onclick = () =>
+            navigate("executors");
+          const [executor, events] = await Promise.all([
+            api(teamPath(`/executors/${encodeURIComponent(id)}`)),
+            api(
+              teamPath(`/executors/${encodeURIComponent(id)}/events?limit=100`),
+            ),
+          ]);
+          if (generation !== state.generation) return;
+
+          document.querySelector("#content").innerHTML =
+            `<section class="panel"><dl class="metadata"><div><dt>ID</dt><dd class="mono">${esc(executor.executor_id)}</dd></div><div><dt>Type</dt><dd>${esc(executor.executor_type)}</dd></div><div><dt>Scope</dt><dd>${esc(executor.scope)}</dd></div><div><dt>Tag</dt><dd>${esc(executor.authorized_tag)}</dd></div><div><dt>Activity</dt><dd>${esc(executor.status)}</dd></div><div><dt>Capacity</dt><dd>${executor.running_count} used, ${executor.available_capacity} available</dd></div></dl></section><div class="split"><section class="panel"><h2>Executor tasks</h2><div class="toolbar"><label class="field">Task status<select name="task_status" data-filter-key="status"><option value="running">Running</option><option value="created">Created</option><option value="finished">Finished</option><option value="failed">Error</option></select></label><label class="field">Rows per page<select name="task_limit" data-filter-key="limit">${[10, 25, 50, 100].map((number) => `<option>${number}</option>`).join("")}</select></label></div><div data-executor-tasks></div></section><section class="panel"><h2>Executor events</h2>${events.items?.length ? `<div class="list">${events.items.map((event) => `<div class="event"><strong>${esc(event.event_type)}</strong><br><time>${fmt(event.occurred_at)}</time></div>`).join("")}</div>` : '<p class="inline-state">No events</p>'}</section></div>`;
+
+          const status = app.querySelector('[name="task_status"]');
+          const limit = app.querySelector('[name="task_limit"]');
+          const root = app.querySelector("[data-executor-tasks]");
+
+          const loadTasks = async () => {
+            const tasks = await api(
+              teamPath(
+                `/executors/${encodeURIComponent(id)}/tasks?${qs({ status: status.value, limit: limit.value })}`,
+              ),
+            );
+            root.innerHTML = tasks.items?.length
+              ? `<div class="list">${tasks.items.map((task) => `<button type="button" class="link mono" data-task="${esc(task.task_id)}">${esc(task.task_id)}</button>`).join("")}</div>`
+              : '<p class="inline-state">No tasks with this status</p>';
+            root.querySelectorAll("[data-task]").forEach((button) => {
+              button.onclick = () => navigate("task", button.dataset.task);
+            });
+          };
+
+          status.onchange = loadTasks;
+          limit.onchange = loadTasks;
+          await loadTasks();
+        }
+
+        async function parametersView(generation) {
+          app.innerHTML = `${shell("Launch parameters", "Configuration", '<div class="actions"><button type="button" class="secondary" id="add-secret">Add secret</button><button type="button" id="add-env">Add variable</button></div>')}<section class="panel"><div class="toolbar"><label class="field">Scope<select data-filter-key="scope" name="scope"><option value="">All</option><option value="global">Global</option><option value="team">Team</option><option value="task_type">Task category</option></select></label><label class="field">Rows per page<select name="limit" data-filter-key="limit">${[10, 25, 50, 100].map((number) => `<option>${number}</option>`).join("")}</select></label></div><div id="definitions"></div></section>`;
+
+          document.querySelector("#add-env").onclick = async () => {
+            await refreshTaskTypeOptions();
+            document.querySelector("#env-dialog").showModal();
+          };
+          const toolbar = app.querySelector(".toolbar");
+          const scope = toolbar.querySelector('[name="scope"]');
+          const limit = toolbar.querySelector('[name="limit"]');
+          let definitions = [];
+
+          toolbar.querySelectorAll("select").forEach((element) => {
+            element.oninput = load;
+          });
+
+          const replaceDefinition = async (definition, env) =>
+            api(
+              teamPath(
+                `/launch-parameters/${encodeURIComponent(definition.environment_id)}`,
+              ),
+              {
+                method: "PUT",
+                body: JSON.stringify({
+                  scope: definition.scope,
+                  task_type_id: definition.task_type_id || null,
+                  name: definition.name,
+                  env,
+                  image: definition.image || null,
+                }),
+              },
+            );
+
+          async function load() {
+            const data = await api(
+              teamPath(
+                `/launch-parameters?${qs({ scope: scope.value, limit: limit.value })}`,
+              ),
+            );
+            if (generation !== state.generation) return;
+            definitions = data.items || [];
+            const root = document.querySelector("#definitions");
+            if (!definitions.length) {
+              root.innerHTML =
+                '<p class="inline-state">No launch parameters</p>';
+              return;
+            }
+
+            root.innerHTML = definitions
+              .map(
+                (definition) =>
+                  `<article class="definition"><div><h3>${esc(definition.name)} <span class="scope">${esc(definition.scope)}${definition.task_type_id ? ` · ${esc(definition.task_type_id)}` : ""}</span></h3><div class="kv">${Object.entries(
+                    definition.env || {},
+                  )
+                    .map(
+                      ([key, value]) =>
+                        `<span class="token">${esc(key)}=${esc(value)}${definition.scope === "global" ? "" : ` <button type="button" class="link" aria-label="Edit ${esc(key)}" data-edit-env="${esc(definition.environment_id)}" data-key="${esc(key)}">Edit</button> <button type="button" class="link" aria-label="Delete ${esc(key)}" data-delete-env="${esc(definition.environment_id)}" data-key="${esc(key)}">Delete</button>`}</span>`,
+                    )
+                    .join(
+                      "",
+                    )}${(definition.secrets || []).map((secret) => `<span class="token secret">${esc(secret.key || secret.name)} ••••••••${definition.scope === "global" ? "" : ` <button type="button" class="link" data-replace-secret="${esc(definition.environment_id)}" data-secret-id="${esc(secret.secret_id)}" data-key="${esc(secret.key || secret.name)}">Replace</button> <button type="button" class="link" data-secret-history="${esc(definition.environment_id)}" data-secret-id="${esc(secret.secret_id)}">Versions</button> <button type="button" class="link" data-delete-secret="${esc(definition.environment_id)}" data-secret-id="${esc(secret.secret_id)}" data-key="${esc(secret.key || secret.name)}">Delete</button>`}</span>`).join("")}</div><p class="muted">Revision ${definition.revision}</p></div><div class="actions"><button type="button" class="secondary small" data-history="${esc(definition.environment_id)}">Change history</button>${definition.scope === "global" ? "" : `<button type="button" class="secondary small" data-secret="${esc(definition.environment_id)}">Add secret</button><button type="button" class="danger small" data-delete="${esc(definition.environment_id)}">Delete parameters</button>`}</div></article>`,
+              )
+              .join("");
+
+            root.querySelectorAll("[data-secret]").forEach((button) => {
+              button.onclick = () => openSecretCreate(button.dataset.secret);
+            });
+
+            root.querySelectorAll("[data-edit-env]").forEach((button) => {
+              button.onclick = () => {
+                const definition = definitions.find(
+                  (value) => value.environment_id === button.dataset.editEnv,
+                );
+                const form = document.querySelector("#edit-env-form");
+                form.elements.environment_id.value = definition.environment_id;
+                form.elements.key.value = button.dataset.key;
+                form.elements.key_display.value = button.dataset.key;
+                form.elements.value.value = definition.env[button.dataset.key];
+                document.querySelector("#edit-env-dialog").showModal();
+              };
+            });
+
+            root.querySelectorAll("[data-delete-env]").forEach((button) => {
+              button.onclick = async () => {
+                if (!confirm(`Delete variable ${button.dataset.key}?`)) return;
+                const definition = definitions.find(
+                  (value) => value.environment_id === button.dataset.deleteEnv,
+                );
+                const env = { ...definition.env };
+                delete env[button.dataset.key];
+                await replaceDefinition(definition, env);
+                load();
+              };
+            });
+
+            root.querySelectorAll("[data-replace-secret]").forEach((button) => {
+              button.onclick = () => {
+                const form = document.querySelector("#replace-secret-form");
+                form.elements.environment_id.value =
+                  button.dataset.replaceSecret;
+                form.elements.secret_id.value = button.dataset.secretId;
+                form.elements.key.value = button.dataset.key;
+                form.elements.value.value = "";
+                document.querySelector("#replace-secret-dialog").showModal();
+              };
+            });
+
+            root.querySelectorAll("[data-delete-secret]").forEach((button) => {
+              button.onclick = async () => {
+                if (
+                  !confirm(
+                    `Delete secret ${button.dataset.key}? It will be absent from new runs.`,
+                  )
+                )
+                  return;
+                await api(
+                  teamPath(
+                    `/launch-parameters/${encodeURIComponent(button.dataset.deleteSecret)}/secrets/${encodeURIComponent(button.dataset.secretId)}`,
+                  ),
+                  { method: "DELETE" },
+                );
+                load();
+              };
+            });
+
+            root.querySelectorAll("[data-secret-history]").forEach((button) => {
+              button.onclick = async () =>
+                showHistory(
+                  `/launch-parameters/${encodeURIComponent(button.dataset.secretHistory)}/secrets/${encodeURIComponent(button.dataset.secretId)}/versions`,
+                  (version) =>
+                    `Version ${version.version} · ${fmt(version.created_at)}`,
+                );
+            });
+
+            root.querySelectorAll("[data-delete]").forEach((button) => {
+              button.onclick = async () => {
+                if (
+                  !confirm(
+                    "Delete launch parameters? Their history will remain available.",
+                  )
+                )
+                  return;
+                await api(
+                  teamPath(
+                    `/launch-parameters/${encodeURIComponent(button.dataset.delete)}`,
+                  ),
+                  { method: "DELETE" },
+                );
+                load();
+              };
+            });
+
+            root.querySelectorAll("[data-history]").forEach((button) => {
+              button.onclick = () =>
+                showHistory(
+                  `/launch-parameters/${encodeURIComponent(button.dataset.history)}/revisions`,
+                  (revision) =>
+                    `Revision ${revision.revision} · ${fmt(revision.created_at)}${revision.deleted ? " · deleted" : ""}`,
+                );
+            });
+          }
+
+          function openSecretCreate(id) {
+            const form = document.querySelector("#secret-form");
+            form.elements.environment_id.value = id;
+            form.elements.key.value = "";
+            form.elements.value.value = "";
+            document.querySelector("#secret-dialog").showModal();
+          }
+
+          async function showHistory(path, label) {
+            const dialog = document.querySelector("#history-dialog");
+            const limitField = dialog.querySelector('[name="history_limit"]');
+            const root = document.querySelector("#history-content");
+            const loadHistory = async () => {
+              const history = await api(
+                teamPath(`${path}?limit=${limitField.value}`),
+              );
+              root.innerHTML =
+                (history.items || [])
+                  .map((item) => `<div class="event">${esc(label(item))}</div>`)
+                  .join("") || '<p class="inline-state">No history</p>';
+            };
+            limitField.value = "10";
+            limitField.onchange = loadHistory;
+            await loadHistory();
+            dialog.showModal();
+          }
+
+          await load();
+          document.querySelector("#add-secret").onclick = () => {
+            const first = definitions.find(
+              (definition) => definition.scope !== "global",
+            );
+            if (!first) {
+              alert("Add launch parameters first");
+              return;
+            }
+            openSecretCreate(first.environment_id);
+          };
+
+          document.querySelector("#edit-env-form").onsubmit = async (event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const definition = definitions.find(
+              (value) =>
+                value.environment_id === form.elements.environment_id.value,
+            );
+            const submit = form.querySelector('[type="submit"]');
+            submit.disabled = true;
+            try {
+              await replaceDefinition(definition, {
+                ...definition.env,
+                [form.elements.key.value]: form.elements.value.value,
+              });
+              form.closest("dialog").close();
+              load();
+            } catch (error) {
+              form.querySelector(".validation").textContent = error.message;
+            } finally {
+              submit.disabled = false;
+            }
+          };
+
+          document.querySelector("#replace-secret-form").onsubmit = async (
+            event,
+          ) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const submit = form.querySelector('[type="submit"]');
+            submit.disabled = true;
+            try {
+              await api(
+                teamPath(
+                  `/launch-parameters/${encodeURIComponent(form.elements.environment_id.value)}/secrets/${encodeURIComponent(form.elements.secret_id.value)}`,
+                ),
+                {
+                  method: "PUT",
+                  body: JSON.stringify({ value: form.elements.value.value }),
+                },
+              );
+              form.elements.value.value = "";
+              form.closest("dialog").close();
+              load();
+            } catch (error) {
+              form.querySelector(".validation").textContent = error.message;
+              form.elements.value.value = "";
+            } finally {
+              submit.disabled = false;
+            }
+          };
+        }
+
+        async function auditView(generation) {
+          app.innerHTML = `${shell("Audit log", "Control")}<section class="panel"><div class="toolbar"><label class="field grow">Action, actor, or resource<input name="search" data-filter-key="search"></label><label class="field">Rows per page<select name="limit" data-filter-key="limit">${[10, 25, 50, 100].map((number) => `<option>${number}</option>`).join("")}</select></label><button type="button" class="secondary" data-reset>Reset</button></div><div id="audit-results"></div></section>`;
+          const toolbar = app.querySelector(".toolbar");
+          const search = toolbar.querySelector('[name="search"]');
+          const limit = toolbar.querySelector('[name="limit"]');
+          let timer;
+
+          toolbar.querySelectorAll("input,select").forEach((element) => {
+            element.oninput = () => {
+              clearTimeout(timer);
+              timer = setTimeout(load, 150);
+            };
+          });
+
+          toolbar.querySelector("[data-reset]").onclick = () => {
+            search.value = "";
+            load();
+          };
+
+          async function load() {
+            const data = await api(
+              teamPath(
+                `/audit?${qs({ search: search.value, limit: limit.value })}`,
+              ),
+            );
+            if (generation !== state.generation) return;
+            const root = document.querySelector("#audit-results");
+            if (!data.items?.length) {
+              root.innerHTML = '<p class="inline-state">No audit records</p>';
+              return;
+            }
+            root.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Outcome</th></tr></thead><tbody>${data.items.map((entry) => `<tr title="request_id: ${esc(entry.request_id)}"><td>${fmt(entry.occurred_at)}</td><td>${esc(entry.action)}</td><td>${esc(entry.actor_id)}</td><td>${esc(entry.resource_type)} · ${esc(entry.resource_id)}</td><td>${esc(entry.outcome)}</td></tr>`).join("")}</tbody></table><div class="cards">${data.items.map((entry) => `<article class="card"><h3>${esc(entry.action)}</h3><dl><div><dt>Time</dt><dd>${fmt(entry.occurred_at)}</dd></div><div><dt>Actor</dt><dd>${esc(entry.actor_id)}</dd></div><div><dt>Resource</dt><dd>${esc(entry.resource_id)}</dd></div><div><dt>Outcome</dt><dd>${esc(entry.outcome)}</dd></div></dl></article>`).join("")}</div></div>`;
+          }
+
+          await load();
+        }
+
+        function closeRealtime() {
+          if (state.socket) {
+            state.socket.onclose = null;
+            state.socket.close();
+            state.socket = null;
+          }
+          if (state.demoTimer) {
+            clearInterval(state.demoTimer);
+            state.demoTimer = null;
+          }
+        }
+
+        function scheduleRender() {
+          clearTimeout(state.demoRefresh);
+          state.demoRefresh = setTimeout(() => {
+            if (
+              [
+                "dashboard",
+                "history",
+                "task",
+                "executor",
+                "executors",
+              ].includes(state.view)
+            )
+              render();
+          }, 150);
+        }
+
+        function connect() {
+          closeRealtime();
+          if (state.demo) {
+            liveFrame.dataset.streamState = "demo";
+            liveFrame.textContent = "demo stream";
+            state.demoTimer = setInterval(() => {
+              const frame = advanceDemoSimulation(state.team.team_id);
+              if (!frame) return;
+              liveFrame.textContent = JSON.stringify(frame);
+              if (frame.occurred_at) state.streamAfter = frame.occurred_at;
+              if (frame.frame_id) state.streamFrameID = frame.frame_id;
+              if (
+                frame.frame_type === "task_log" &&
+                state.view === "task" &&
+                frame.task_id === state.task
+              ) {
+                const log = document.querySelector("[data-log]");
+                const data = frame.data;
+                if (
+                  log &&
+                  data &&
+                  !log.querySelector(`[data-log-offset="${data.log_offset}"]`)
+                ) {
+                  log.querySelector(".log-state")?.remove();
+                  log.insertAdjacentHTML("beforeend", logLines([data]));
+                  log.scrollTop = log.scrollHeight;
+                }
+              }
+              scheduleRender();
+            }, 2600);
+            return;
+          }
+
+          const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+          liveFrame.dataset.streamState = "connecting";
+          if (!state.streamAfter)
+            state.streamAfter = new Date(Date.now() - 5000).toISOString();
+          const streamQuery = qs({
+            after: state.streamAfter,
+            after_frame_id: state.streamFrameID,
+          });
+          const socket = new WebSocket(
+            `${protocol}//${location.host}${teamPath("/stream")}?${streamQuery}`,
+          );
+          state.socket = socket;
+          socket.onopen = () => {
+            if (socket === state.socket)
+              liveFrame.dataset.streamState = "connected";
+          };
+          socket.onmessage = (event) => {
+            if (socket !== state.socket) return;
+            liveFrame.textContent = event.data;
+            let frame;
+            try {
+              frame = JSON.parse(event.data);
+            } catch {
+              return;
+            }
+            if (frame.occurred_at) state.streamAfter = frame.occurred_at;
+            if (frame.frame_id) state.streamFrameID = frame.frame_id;
+            if (
+              frame.frame_type === "task_log" &&
+              state.view === "task" &&
+              frame.task_id === state.task
+            ) {
+              const log = document.querySelector("[data-log]");
+              const data =
+                typeof frame.data === "string"
+                  ? JSON.parse(frame.data)
+                  : frame.data;
+              if (
+                log &&
+                data &&
+                !log.querySelector(`[data-log-offset="${data.log_offset}"]`)
+              ) {
+                log.querySelector(".log-state")?.remove();
+                log.insertAdjacentHTML("beforeend", logLines([data]));
+                log.scrollTop = log.scrollHeight;
+              }
+            } else if (
+              [
+                "dashboard",
+                "history",
+                "task",
+                "executor",
+                "executors",
+              ].includes(state.view)
+            ) {
+              scheduleRender();
+            }
+          };
+          socket.onclose = () => {
+            if (socket === state.socket && state.team && !state.demo) {
+              liveFrame.dataset.streamState = "disconnected";
+              setTimeout(connect, 500);
+            }
+          };
+        }
+
+        document.querySelectorAll(".nav-links button").forEach((button) => {
+          button.onclick = () => navigate(button.dataset.view);
+        });
+
+        document.querySelectorAll("[data-close]").forEach((button) => {
+          button.onclick = () => button.closest("dialog").close();
+        });
+
+        const envForm = document.querySelector("#env-form");
+        const taskTypeField = envForm.querySelector(".task-type-field");
+        const taskTypeSelect = envForm.elements.task_type_id;
+
+        function setTaskTypeScope(scope) {
+          const usesTaskType = scope === "task_type";
+          taskTypeField.classList.toggle("hidden", !usesTaskType);
+          taskTypeSelect.disabled = !usesTaskType;
+          taskTypeSelect.required = usesTaskType;
+          if (!usesTaskType) taskTypeSelect.value = "";
+          envForm.querySelector(".validation").textContent = "";
+        }
+
+        async function refreshTaskTypeOptions() {
+          if (!state.team) return;
+          let payload = { items: [] };
+          try {
+            payload = await api(teamPath("/task-types?limit=100"));
+          } catch (error) {
+            console.warn("Task category catalog is unavailable", error);
+          }
+          const currentValue = taskTypeSelect.value;
+          taskTypeSelect.replaceChildren(
+            new Option("Select a task category", ""),
+            ...(payload.items || []).map(
+              (item) => new Option(item.label, item.task_type_id),
+            ),
+          );
+          if (
+            [...taskTypeSelect.options].some(
+              (option) => option.value === currentValue,
+            )
+          ) {
+            taskTypeSelect.value = currentValue;
+          }
+          setTaskTypeScope(envForm.elements.scope.value);
+        }
+
+        envForm.elements.scope.onchange = (event) =>
+          setTaskTypeScope(event.target.value);
+
+        document.querySelector("#env-form").onsubmit = async (event) => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const error = form.querySelector(".validation");
+          const submit = form.querySelector('[type="submit"]');
+          const data = Object.fromEntries(new FormData(form));
+          if (data.scope === "task_type" && !data.task_type_id) {
+            error.textContent = "Select a task category";
+            taskTypeSelect.focus();
+            return;
+          }
+          if (!form.reportValidity()) return;
+          submit.disabled = true;
+          try {
+            const current = await api(teamPath("/launch-parameters?limit=100"));
+            const existing = (current.items || []).find(
+              (definition) =>
+                definition.scope === data.scope &&
+                (definition.task_type_id || "") === (data.task_type_id || ""),
+            );
+            if (existing) {
+              await api(
+                teamPath(
+                  `/launch-parameters/${encodeURIComponent(existing.environment_id)}`,
+                ),
+                {
+                  method: "PUT",
+                  body: JSON.stringify({
+                    scope: existing.scope,
+                    task_type_id: existing.task_type_id || null,
+                    name: existing.name,
+                    env: { ...(existing.env || {}), [data.key]: data.value },
+                    image: existing.image || null,
+                  }),
+                },
+              );
+            } else {
+              await api(teamPath("/launch-parameters"), {
+                method: "POST",
+                body: JSON.stringify({
+                  scope: data.scope,
+                  task_type_id: data.task_type_id || null,
+                  name: `Parameters ${data.key}`,
+                  env: { [data.key]: data.value },
+                }),
+              });
+            }
+            form.reset();
+            setTaskTypeScope("team");
+            error.textContent = "";
+            form.closest("dialog").close();
+            if (state.view === "parameters") render();
+          } catch (errorValue) {
+            error.textContent = errorValue.message;
+          } finally {
+            submit.disabled = false;
+          }
+        };
+
+        document.querySelector("#secret-form").onsubmit = async (event) => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const error = form.querySelector(".validation");
+          const submit = form.querySelector('[type="submit"]');
+          if (!form.reportValidity()) return;
+          const data = Object.fromEntries(new FormData(form));
+          submit.disabled = true;
+          try {
+            await api(
+              teamPath(
+                `/launch-parameters/${encodeURIComponent(data.environment_id)}/secrets`,
+              ),
+              {
+                method: "POST",
+                body: JSON.stringify({ key: data.key, value: data.value }),
+              },
+            );
+            form.reset();
+            form.closest("dialog").close();
+            if (state.view === "parameters") render();
+          } catch (errorValue) {
+            error.textContent = errorValue.message;
+            form.elements.value.value = "";
+          } finally {
+            submit.disabled = false;
+          }
+        };
+
+        document.querySelector("#cancel-form").onsubmit = async (event) => {
+          event.preventDefault();
+          const submit = event.currentTarget.querySelector('[type="submit"]');
+          const taskID = state.task;
+          const taskCancelButton = document.querySelector("[data-cancel]");
+          submit.disabled = true;
+          if (taskCancelButton) {
+            taskCancelButton.disabled = true;
+            taskCancelButton.textContent = "Awaiting cancellation…";
+          }
+          try {
+            await api(
+              teamPath(`/tasks/${encodeURIComponent(taskID)}/controls/cancel`),
+              { method: "POST" },
+            );
+            state.cancelPendingTasks.add(taskID);
+            event.currentTarget.closest("dialog").close();
+            await render();
+          } finally {
+            submit.disabled = false;
+          }
+        };
+
+        function parseRoute() {
+          const params = new URLSearchParams(location.search);
+          const view = params.get("view");
+          const id = params.get("id");
+          const selectedTeamId = params.get("team");
+          const matchedTeam =
+            state.teams.find((team) => team.team_id === selectedTeamId) ||
+            state.teams[0] ||
+            state.team;
+          if (matchedTeam) state.team = matchedTeam;
+          state.task = null;
+          state.executor = null;
+          if (
+            [
+              "dashboard",
+              "history",
+              "executors",
+              "parameters",
+              "audit",
+            ].includes(view)
+          ) {
+            state.view = view;
+          } else if (view === "task" && id) {
+            state.view = "task";
+            state.task = id;
+          } else if (view === "executor" && id) {
+            state.view = "executor";
+            state.executor = id;
+          } else {
+            state.view = "dashboard";
+          }
+          if (state.view === "dashboard") {
+            state.period = ["week", "month"].includes(params.get("period"))
+              ? params.get("period")
+              : "week";
+            const routeWeek = params.get("week");
+            state.week =
+              validIsoWeekKey(routeWeek) && routeWeek <= currentIsoWeekKey()
+                ? routeWeek
+                : currentIsoWeekKey();
+            const routeMonth = params.get("month");
+            state.month =
+              /^\d{4}-\d{2}$/.test(routeMonth || "") &&
+              routeMonth <= currentMonthKey()
+                ? routeMonth
+                : currentMonthKey();
+          }
+          if (state.view === "history") {
+            state.historyFilter = {
+              search: params.get("search") || "",
+              status: params.get("status") || "",
+              period: params.get("period") || "",
+              date: params.get("date") || "",
+            };
+            const routeLimit = Number(params.get("limit") || "10");
+            state.limit = [10, 25, 50, 100].includes(routeLimit)
+              ? routeLimit
+              : 10;
+            state.cursor = params.get("cursor") || null;
+            state.cursors = [];
+          }
+        }
+
+        async function bootstrap() {
+          try {
+            const payload = await api("/ui/v1/teams");
+            state.teams = payload.items || [];
+            selector.replaceChildren(
+              ...(payload.items || []).map(
+                (team) => new Option(team.team_name, team.team_id),
+              ),
+            );
+            selector.disabled = !payload.items?.length;
+            if (!payload.items?.length) {
+              app.innerHTML = '<p class="inline-state">No available teams</p>';
+              return;
+            }
+
+            parseRoute();
+            selector.value = state.team.team_id;
+            selected.textContent = state.team.team_id;
+            updateUrl("replace");
+            await refreshTaskTypeOptions();
+            await render();
+            connect();
+          } catch (error) {
+            app.innerHTML = `<div class="inline-fault" role="alert">Failed to load teams: ${esc(error.message)}</div>`;
+          }
+        }
+
+        selector.onchange = async () => {
+          state.team = state.teams.find(
+            (team) => team.team_id === selector.value,
+          ) || {
+            team_id: selector.value,
+            team_name: selector.options[selector.selectedIndex].text,
+          };
+          selected.textContent = state.team.team_id;
+          state.task = null;
+          state.executor = null;
+          state.view = "dashboard";
+          state.week = currentIsoWeekKey();
+          state.month = currentMonthKey();
+          state.streamAfter = null;
+          state.streamFrameID = "";
+          updateUrl("push");
+          await refreshTaskTypeOptions();
+          await render();
+          connect();
+        };
+
+        window.onpopstate = async () => {
+          const previousTeamId = state.team?.team_id;
+          parseRoute();
+          const teamChanged = previousTeamId !== state.team?.team_id;
+          selector.value = state.team.team_id;
+          selected.textContent = state.team.team_id;
+          setNav();
+          if (teamChanged) await refreshTaskTypeOptions();
+          await render();
+          if (teamChanged) connect();
+        };
+
+        bootstrap();
+
+        function createDemoDB() {
+          const teams = [
+            createTeamData("team-alpha", "Platform team", 0),
+            createTeamData("team-beta", "Research team", 1),
+          ];
+          return {
+            teams,
+            nextIds: { env: 20, secret: 40, frame: 400 },
+          };
+        }
+
+        function createTeamData(teamId, teamName, offset) {
+          const now = new Date();
+          const startOfWeek = getStartOfWeek(now);
+          const makeDay = (dayOffset) =>
+            new Date(startOfWeek.getTime() + dayOffset * 86_400_000);
+          const tasks = [
+            createTask({
+              task_id: `${teamId}-T-1001`,
+              task_type_id: "build.release",
+              source_system_id: "ui",
+              source_id: "ops-console",
+              executor_id: `${teamId}-exec-1`,
+              current_state: "running",
+              ingested_at: new Date(
+                makeDay(0).getTime() + 9 * 3_600_000,
+              ).toISOString(),
+              claimed_at: new Date(
+                makeDay(0).getTime() + 9.2 * 3_600_000,
+              ).toISOString(),
+              completed_at: null,
+              environment: { REGION: "eu-central", DEPLOY_STRATEGY: "canary" },
+              logs: [
+                { stream: "stdout", content: "Preparing release artifacts" },
+                {
+                  stream: "reasoning",
+                  content: "Checking the release window and active blockers",
+                },
+              ],
+              events: ["task.created", "task.claimed", "task.started"],
+            }),
+            createTask({
+              task_id: `${teamId}-T-1002`,
+              task_type_id: "analysis.dataset",
+              source_system_id: "scheduler",
+              source_id: "nightly-batch",
+              executor_id: `${teamId}-exec-2`,
+              current_state: "finished",
+              ingested_at: new Date(
+                makeDay(1).getTime() + 11 * 3_600_000,
+              ).toISOString(),
+              claimed_at: new Date(
+                makeDay(1).getTime() + 11.1 * 3_600_000,
+              ).toISOString(),
+              completed_at: new Date(
+                makeDay(1).getTime() + 11.9 * 3_600_000,
+              ).toISOString(),
+              environment: { DATASET: "reviews-v4", WINDOW: "7d" },
+              logs: [
+                {
+                  stream: "stdout",
+                  content: "Loading the reviews-v4 snapshot",
+                },
+                {
+                  stream: "stdout",
+                  content: "Dataset materialization complete",
+                },
+              ],
+              events: [
+                "task.created",
+                "task.claimed",
+                "task.started",
+                "task.completed",
+              ],
+            }),
+            createTask({
+              task_id: `${teamId}-T-1003`,
+              task_type_id: "ops.cancel-test",
+              source_system_id: "ui",
+              source_id: "operator",
+              executor_id: `${teamId}-exec-3`,
+              current_state: "created",
+              ingested_at: new Date(
+                makeDay(2).getTime() + 16 * 3_600_000,
+              ).toISOString(),
+              claimed_at: null,
+              completed_at: null,
+              environment: { CHANNEL: "manual", PRIORITY: "high" },
+              logs: [
+                {
+                  stream: "stdout",
+                  content: "Task is waiting for an executor",
+                },
+              ],
+              events: ["task.created"],
+            }),
+            createTask({
+              task_id: `${teamId}-T-1004`,
+              task_type_id: "executor.sync",
+              source_system_id: "agent",
+              source_id: "probe",
+              executor_id: `${teamId}-exec-2`,
+              current_state: "failed",
+              ingested_at: new Date(
+                makeDay(3).getTime() + 8 * 3_600_000,
+              ).toISOString(),
+              claimed_at: new Date(
+                makeDay(3).getTime() + 8.1 * 3_600_000,
+              ).toISOString(),
+              completed_at: new Date(
+                makeDay(3).getTime() + 8.4 * 3_600_000,
+              ).toISOString(),
+              environment: { CHECK_SCOPE: "registry" },
+              logs: [
+                { stream: "stdout", content: "Checking executor heartbeat" },
+                {
+                  stream: "reasoning",
+                  content: "Frame drift exceeded the threshold",
+                },
+              ],
+              events: [
+                "task.created",
+                "task.claimed",
+                "task.started",
+                "task.failed",
+              ],
+            }),
+            createTask({
+              task_id: `${teamId}-T-1005`,
+              task_type_id: "audit.snapshot",
+              source_system_id: "scheduler",
+              source_id: "daily-audit",
+              executor_id: `${teamId}-exec-1`,
+              current_state: "pending",
+              ingested_at: new Date(
+                makeDay(4).getTime() + 13 * 3_600_000,
+              ).toISOString(),
+              claimed_at: null,
+              completed_at: null,
+              environment: { SNAPSHOT: "full", REGION: "ru-central" },
+              logs: [
+                {
+                  stream: "stdout",
+                  content: "Run is waiting for queue capacity",
+                },
+              ],
+              events: ["task.created", "task.queued"],
+            }),
+            createTask({
+              task_id: `${teamId}-T-0991`,
+              task_type_id: "report.monthly",
+              source_system_id: "scheduler",
+              source_id: "monthly-cycle",
+              executor_id: `${teamId}-exec-1`,
+              current_state: "finished",
+              ingested_at: new Date(
+                now.getTime() - (10 + offset) * 86_400_000,
+              ).toISOString(),
+              claimed_at: new Date(
+                now.getTime() - (10 + offset) * 86_400_000 + 12 * 60_000,
+              ).toISOString(),
+              completed_at: new Date(
+                now.getTime() - (10 + offset) * 86_400_000 + 58 * 60_000,
+              ).toISOString(),
+              environment: { TARGET: "executive" },
+              logs: [{ stream: "stdout", content: "Monthly report exported" }],
+              events: ["task.created", "task.completed"],
+            }),
+          ];
+
+          const environments = [
+            createEnvironment({
+              environment_id: `${teamId}-env-global`,
+              scope: "global",
+              task_type_id: null,
+              name: "Global defaults",
+              revision: 3,
+              env: { OD_REGION: "eu-central", LOG_LEVEL: "info" },
+              secrets: [
+                createSecret(`${teamId}-secret-1`, "GLOBAL_API_TOKEN", [
+                  "v1",
+                  "v2",
+                ]),
+              ],
+            }),
+            createEnvironment({
+              environment_id: `${teamId}-env-team`,
+              scope: "team",
+              task_type_id: null,
+              name: "Team rollout",
+              revision: 5,
+              env: {
+                RELEASE_CHANNEL: "stable",
+                FEATURE_GATE: "mission-control",
+              },
+              secrets: [
+                createSecret(`${teamId}-secret-2`, "OPENAI_API_KEY", [
+                  "active",
+                ]),
+              ],
+            }),
+            createEnvironment({
+              environment_id: `${teamId}-env-task`,
+              scope: "task_type",
+              task_type_id: "build.release",
+              name: "Task category",
+              revision: 2,
+              env: { CANARY_PERCENT: "15", ROLLBACK_GUARD: "enabled" },
+              secrets: [
+                createSecret(`${teamId}-secret-3`, "SLACK_WEBHOOK", [
+                  "v1",
+                  "v2",
+                  "v3",
+                ]),
+              ],
+            }),
+          ];
+
+          const executors = [
+            createExecutor(
+              `${teamId}-exec-1`,
+              "worker",
+              "team",
+              "stable",
+              "busy",
+              1,
+              2,
+            ),
+            createExecutor(
+              `${teamId}-exec-2`,
+              "gpu",
+              "team",
+              "analysis",
+              "idle",
+              0,
+              1,
+            ),
+            createExecutor(
+              `${teamId}-exec-3`,
+              "sandbox",
+              "team",
+              "adhoc",
+              "busy",
+              1,
+              1,
+            ),
+          ];
+
+          const audit = [
+            createAudit(
+              teamId,
+              "launch_parameters.updated",
+              "operator@flowai",
+              "launch_parameter",
+              `${teamId}-env-team`,
+              "ok",
+              nowIso(-180),
+            ),
+            createAudit(
+              teamId,
+              "task.cancel.requested",
+              "operator@flowai",
+              "task",
+              `${teamId}-T-1003`,
+              "queued",
+              nowIso(-120),
+            ),
+            createAudit(
+              teamId,
+              "executor.heartbeat",
+              "system",
+              "executor",
+              `${teamId}-exec-1`,
+              "ok",
+              nowIso(-30),
+            ),
+          ];
+
+          const taskTypes = [
+            { task_type_id: "build.release", label: "Build release" },
+            { task_type_id: "analysis.dataset", label: "Dataset analysis" },
+            { task_type_id: "ops.cancel-test", label: "Cancellation test" },
+            { task_type_id: "executor.sync", label: "Executor sync" },
+            { task_type_id: "audit.snapshot", label: "Audit snapshot" },
+            { task_type_id: "report.monthly", label: "Monthly report" },
+          ];
+
+          recomputeExecutorState(tasks, executors);
+          return {
+            team_id: teamId,
+            team_name: teamName,
+            taskTypes,
+            tasks,
+            environments,
+            executors,
+            audit,
+            lastFrame: 1,
+          };
+        }
+
+        function createTask(task) {
+          return {
+            ...task,
+            logs: task.logs.map((entry, index) => ({
+              log_offset: `${task.task_id}-${index + 1}`,
+              stream: entry.stream === "reasoning" ? "reasoning" : "stdout",
+              content: entry.content,
+              created_at: nowIso(-(15 - index)),
+            })),
+            events: task.events.map((eventType, index) => ({
+              event_type: eventType,
+              occurred_at: new Date(
+                new Date(task.ingested_at).getTime() + index * 180_000,
+              ).toISOString(),
+            })),
+          };
+        }
+
+        function createSecret(secretId, key, versions) {
+          return {
+            secret_id: secretId,
+            key,
+            name: key,
+            versions: versions.map((_, index) => ({
+              version: index + 1,
+              created_at: nowIso(-(index + 1) * 200),
+            })),
+          };
+        }
+
+        function createEnvironment(environment) {
+          const revisions = [
+            {
+              revision: environment.revision,
+              created_at: nowIso(-90),
+              deleted: false,
+            },
+          ];
+          return { ...environment, revisions };
+        }
+
+        function createExecutor(
+          id,
+          type,
+          scope,
+          tag,
+          status,
+          runningCount,
+          maxCapacity,
+        ) {
+          return {
+            executor_id: id,
+            executor_type: type,
+            scope,
+            authorized_tag: tag,
+            status,
+            running_count: runningCount,
+            max_capacity: maxCapacity,
+            available_capacity: Math.max(0, maxCapacity - runningCount),
+            events: [
+              { event_type: "executor.registered", occurred_at: nowIso(-400) },
+              {
+                event_type:
+                  status === "busy" ? "executor.assigned" : "executor.idle",
+                occurred_at: nowIso(-40),
+              },
+            ],
+          };
+        }
+
+        function createAudit(
+          teamId,
+          action,
+          actorId,
+          resourceType,
+          resourceId,
+          outcome,
+          occurredAt = nowIso(),
+        ) {
+          return {
+            request_id: `${teamId}-${Math.random().toString(36).slice(2, 10)}`,
+            action,
+            actor_id: actorId,
+            resource_type: resourceType,
+            resource_id: resourceId,
+            outcome,
+            occurred_at: occurredAt,
+          };
+        }
+
+        function getTeam(teamId) {
+          return state.demoDB.teams.find((team) => team.team_id === teamId);
+        }
+
+        function getStartOfWeek(date) {
+          const copy = new Date(date);
+          const day = copy.getDay();
+          const diff = day === 0 ? -6 : 1 - day;
+          copy.setHours(0, 0, 0, 0);
+          copy.setDate(copy.getDate() + diff);
+          return copy;
+        }
+
+        function sameDay(left, right) {
+          return (
+            left.getFullYear() === right.getFullYear() &&
+            left.getMonth() === right.getMonth() &&
+            left.getDate() === right.getDate()
+          );
+        }
+
+        function filterByPeriod(items, period) {
+          if (!period) return items;
+          const now = new Date();
+          if (period === "day") {
+            return items.filter((item) =>
+              sameDay(new Date(item.ingested_at), now),
+            );
+          }
+          if (period === "week") {
+            const start = getStartOfWeek(now);
+            const end = new Date(start.getTime() + 7 * 86_400_000);
+            return items.filter((item) => {
+              const date = new Date(item.ingested_at);
+              return date >= start && date < end;
+            });
+          }
+          if (period === "month") {
+            const start = new Date(now.getTime() - 29 * 86_400_000);
+            start.setHours(0, 0, 0, 0);
+            return items.filter((item) => new Date(item.ingested_at) >= start);
+          }
+          return items;
+        }
+
+        function buildDashboard(
+          team,
+          period,
+          requestedMonth = currentMonthKey(),
+          requestedWeek = currentIsoWeekKey(),
+        ) {
+          const tasks = team.tasks;
+          const counts = {};
+          Object.keys(labels).forEach((status) => {
+            counts[status] = tasks.filter(
+              (task) => task.current_state === status,
+            ).length;
+          });
+          if (period === "week") {
+            const today = new Date();
+            const weekKey = validIsoWeekKey(requestedWeek)
+              ? requestedWeek
+              : currentIsoWeekKey();
+            const start = isoWeekStart(weekKey);
+            const end = new Date(start);
+            end.setDate(end.getDate() + 7);
+            const weekTasks = tasks.filter((task) => {
+              const date = new Date(task.ingested_at);
+              return date >= start && date < end;
+            });
+            Object.keys(labels).forEach((status) => {
+              counts[status] = weekTasks.filter(
+                (task) => task.current_state === status,
+              ).length;
+            });
+            const buckets = weekLabels.map((label, index) => {
+              const date = new Date(start);
+              date.setDate(date.getDate() + index);
+              const bucketTasks = weekTasks.filter((task) =>
+                sameDay(new Date(task.ingested_at), date),
+              );
+              return {
+                label: `${label} ${date.toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit" })}`,
+                shortLabel: label,
+                key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`,
+                total: bucketTasks.length,
+                counts: summarizeCounts(bucketTasks),
+                isFuture: date > today,
+              };
+            });
+            return { counts, buckets };
+          }
+
+          const monthKey = /^\d{4}-\d{2}$/.test(requestedMonth)
+            ? requestedMonth
+            : currentMonthKey();
+          const [year, month] = monthKey.split("-").map(Number);
+          const daysInMonth = new Date(year, month, 0).getDate();
+          const monthTasks = tasks.filter((task) => {
+            const date = new Date(task.ingested_at);
+            return date.getFullYear() === year && date.getMonth() === month - 1;
+          });
+          Object.keys(labels).forEach((status) => {
+            counts[status] = monthTasks.filter(
+              (task) => task.current_state === status,
+            ).length;
+          });
+          const buckets = Array.from({ length: daysInMonth }, (_, index) => {
+            const date = new Date(year, month - 1, index + 1);
+            const bucketTasks = monthTasks.filter((task) =>
+              sameDay(new Date(task.ingested_at), date),
+            );
+            return {
+              label: date.toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "2-digit",
+              }),
+              shortLabel: date.toLocaleDateString("en-GB", { day: "2-digit" }),
+              key: `${year}-${String(month).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`,
+              total: bucketTasks.length,
+              counts: summarizeCounts(bucketTasks),
+              isFuture: false,
+            };
+          });
+          return { counts, buckets };
+        }
+
+        function summarizeCounts(tasks) {
+          return tasks.reduce((accumulator, task) => {
+            accumulator[task.current_state] =
+              (accumulator[task.current_state] || 0) + 1;
+            return accumulator;
+          }, {});
+        }
+
+        function recomputeExecutorState(tasks, executors) {
+          executors.forEach((executor) => {
+            const runningCount = tasks.filter(
+              (task) =>
+                task.executor_id === executor.executor_id &&
+                ["created", "running"].includes(task.current_state),
+            ).length;
+            executor.running_count = runningCount;
+            executor.available_capacity = Math.max(
+              0,
+              executor.max_capacity - runningCount,
+            );
+            executor.status = runningCount > 0 ? "busy" : "idle";
+          });
+        }
+
+        function appendAudit(
+          team,
+          action,
+          resourceType,
+          resourceId,
+          outcome = "ok",
+          actor = "demo.operator",
+        ) {
+          team.audit.unshift(
+            createAudit(
+              team.team_id,
+              action,
+              actor,
+              resourceType,
+              resourceId,
+              outcome,
+            ),
+          );
+        }
+
+        function nextDemoId(kind) {
+          state.demoDB.nextIds[kind] += 1;
+          return state.demoDB.nextIds[kind];
+        }
+
+        function serializeEnvironment(environment) {
+          return {
+            environment_id: environment.environment_id,
+            scope: environment.scope,
+            task_type_id: environment.task_type_id,
+            name: environment.name,
+            env: clone(environment.env),
+            image: environment.image || null,
+            revision: environment.revision,
+            secrets: environment.secrets.map((secret) => ({
+              secret_id: secret.secret_id,
+              key: secret.key,
+              name: secret.name,
+            })),
+          };
+        }
+
+        function sortByNewest(items, field) {
+          return [...items].sort(
+            (left, right) =>
+              new Date(right[field]).getTime() -
+              new Date(left[field]).getTime(),
+          );
+        }
+
+        function paginate(items, limit, cursor) {
+          const start = cursor ? Number(cursor) : 0;
+          const sliced = items.slice(start, start + limit);
+          const nextCursor =
+            start + limit < items.length ? String(start + limit) : null;
+          return { items: sliced, next_cursor: nextCursor };
+        }
+
+        function getTask(team, taskId) {
+          const task = team.tasks.find((item) => item.task_id === taskId);
+          if (!task) throw new Error("Task not found");
+          return task;
+        }
+
+        function getExecutor(team, executorId) {
+          const executor = team.executors.find(
+            (item) => item.executor_id === executorId,
+          );
+          if (!executor) throw new Error("Executor not found");
+          return executor;
+        }
+
+        function getEnvironment(team, environmentId) {
+          const environment = team.environments.find(
+            (item) => item.environment_id === environmentId,
+          );
+          if (!environment) throw new Error("Launch parameters not found");
+          return environment;
+        }
+
+        function stampRevision(environment, deleted = false) {
+          environment.revision += 1;
+          environment.revisions.unshift({
+            revision: environment.revision,
+            created_at: nowIso(),
+            deleted,
+          });
+        }
+
+        function advanceDemoSimulation(teamId) {
+          const team = getTeam(teamId);
+          if (!team) return null;
+          const candidates = team.tasks.filter((task) =>
+            ["created", "running", "pending"].includes(task.current_state),
+          );
+          if (!candidates.length) return null;
+          const task = candidates[0];
+          let logEntry;
+
+          if (task.current_state === "pending") {
+            task.current_state = "created";
+            task.events.unshift({
+              event_type: "task.readied",
+              occurred_at: nowIso(),
+            });
+            logEntry = {
+              log_offset: `${task.task_id}-${task.logs.length + 1}`,
+              stream: "stdout",
+              content:
+                "Queue capacity is available; the task is ready for assignment",
+              created_at: nowIso(),
+            };
+          } else if (task.current_state === "created") {
+            task.current_state = "running";
+            task.claimed_at = nowIso();
+            task.events.unshift({
+              event_type: "task.started",
+              occurred_at: nowIso(),
+            });
+            logEntry = {
+              log_offset: `${task.task_id}-${task.logs.length + 1}`,
+              stream: "reasoning",
+              content: "Executor claimed the task and started the run",
+              created_at: nowIso(),
+            };
+          } else {
+            const shouldFinish = task.logs.length > 3;
+            if (shouldFinish) {
+              task.current_state = "finished";
+              task.completed_at = nowIso();
+              task.events.unshift({
+                event_type: "task.completed",
+                occurred_at: nowIso(),
+              });
+              logEntry = {
+                log_offset: `${task.task_id}-${task.logs.length + 1}`,
+                stream: "stdout",
+                content: "Final artifacts saved and status updated",
+                created_at: nowIso(),
+              };
+            } else {
+              logEntry = {
+                log_offset: `${task.task_id}-${task.logs.length + 1}`,
+                stream: task.logs.length % 2 ? "stdout" : "reasoning",
+                content:
+                  task.logs.length % 2
+                    ? "Step state confirmed"
+                    : "Comparing progress with the SLA target",
+                created_at: nowIso(),
+              };
+            }
+          }
+
+          task.logs.push(logEntry);
+          recomputeExecutorState(team.tasks, team.executors);
+          appendAudit(team, "task.progressed", "task", task.task_id);
+          team.lastFrame += 1;
+          return {
+            frame_id: `frame-${team.lastFrame}`,
+            frame_type: "task_log",
+            task_id: task.task_id,
+            occurred_at: nowIso(),
+            data: logEntry,
+          };
+        }
+
+        async function demoApi(path, options = {}) {
+          const url = new URL(path, location.origin);
+          const method = (options.method || "GET").toUpperCase();
+          const parts = url.pathname.split("/").filter(Boolean);
+          if (method === "GET" && url.pathname === "/ui/v1/teams") {
+            return {
+              items: state.demoDB.teams.map((team) => ({
+                team_id: team.team_id,
+                team_name: team.team_name,
+              })),
+            };
+          }
+
+          const teamId = parts[3];
+          const team = getTeam(teamId);
+          if (!team) throw new Error("Team not found");
+
+          if (parts[4] === "dashboard" && method === "GET") {
+            return buildDashboard(
+              team,
+              url.searchParams.get("period") || "week",
+              url.searchParams.get("month") || currentMonthKey(),
+              url.searchParams.get("week") || currentIsoWeekKey(),
+            );
+          }
+
+          if (
+            parts[4] === "task-types" &&
+            method === "GET" &&
+            parts.length === 5
+          ) {
+            const limit = Number(url.searchParams.get("limit") || "100");
+            return { items: team.taskTypes.slice(0, limit).map(clone) };
+          }
+
+          if (parts[4] === "tasks" && method === "GET" && parts.length === 5) {
+            let items = sortByNewest(team.tasks, "ingested_at");
+            const search = (url.searchParams.get("search") || "")
+              .trim()
+              .toLowerCase();
+            const status = url.searchParams.get("status") || "";
+            const period = url.searchParams.get("period") || "";
+            const limit = Number(url.searchParams.get("limit") || "10");
+            const cursor = url.searchParams.get("cursor");
+            if (search) {
+              items = items.filter((task) =>
+                [
+                  task.task_id,
+                  task.task_type_id,
+                  task.executor_id,
+                  task.source_id,
+                ].some((value) =>
+                  String(value || "")
+                    .toLowerCase()
+                    .includes(search),
+                ),
+              );
+            }
+            if (status)
+              items = items.filter((task) => task.current_state === status);
+            items = filterByPeriod(items, period);
+            return paginate(items.map(clone), limit, cursor);
+          }
+
+          if (
+            parts[4] === "tasks" &&
+            parts[5] &&
+            method === "GET" &&
+            parts.length === 6
+          ) {
+            return clone(getTask(team, decodeURIComponent(parts[5])));
+          }
+
+          if (
+            parts[4] === "tasks" &&
+            parts[5] &&
+            parts[6] === "events" &&
+            method === "GET"
+          ) {
+            const task = getTask(team, decodeURIComponent(parts[5]));
+            const limit = Number(url.searchParams.get("limit") || "100");
+            return {
+              items: sortByNewest(task.events, "occurred_at")
+                .slice(0, limit)
+                .map(clone),
+            };
+          }
+
+          if (
+            parts[4] === "tasks" &&
+            parts[5] &&
+            parts[6] === "logs" &&
+            method === "GET"
+          ) {
+            const task = getTask(team, decodeURIComponent(parts[5]));
+            const limit = Number(url.searchParams.get("limit") || "100");
+            return { items: task.logs.slice(-limit).map(clone) };
+          }
+
+          if (
+            parts[4] === "tasks" &&
+            parts[5] &&
+            parts[6] === "cancel" &&
+            method === "POST"
+          ) {
+            const task = getTask(team, decodeURIComponent(parts[5]));
+            if (["finished", "failed"].includes(task.current_state))
+              throw new Error("Task is already terminal");
+            task.current_state = "failed";
+            task.completed_at = nowIso();
+            task.events.unshift({
+              event_type: "task.cancelled",
+              occurred_at: nowIso(),
+            });
+            task.logs.push({
+              log_offset: `${task.task_id}-${task.logs.length + 1}`,
+              stream: "stdout",
+              content: "Operator sent a cancellation request",
+              created_at: nowIso(),
+            });
+            recomputeExecutorState(team.tasks, team.executors);
+            appendAudit(team, "task.cancelled", "task", task.task_id);
+            return { ok: true };
+          }
+
+          if (
+            parts[4] === "executors" &&
+            method === "GET" &&
+            parts.length === 5
+          ) {
+            let items = team.executors.map(clone);
+            const search = (url.searchParams.get("search") || "")
+              .trim()
+              .toLowerCase();
+            const status = url.searchParams.get("status") || "";
+            const limit = Number(url.searchParams.get("limit") || "10");
+            if (search)
+              items = items.filter((executor) =>
+                [
+                  executor.executor_id,
+                  executor.executor_type,
+                  executor.authorized_tag,
+                ].some((value) => String(value).toLowerCase().includes(search)),
+              );
+            if (status)
+              items = items.filter((executor) => executor.status === status);
+            return { items: items.slice(0, limit) };
+          }
+
+          if (
+            parts[4] === "executors" &&
+            parts[5] &&
+            method === "GET" &&
+            parts.length === 6
+          ) {
+            return clone(getExecutor(team, decodeURIComponent(parts[5])));
+          }
+
+          if (
+            parts[4] === "executors" &&
+            parts[5] &&
+            parts[6] === "events" &&
+            method === "GET"
+          ) {
+            const executor = getExecutor(team, decodeURIComponent(parts[5]));
+            const limit = Number(url.searchParams.get("limit") || "100");
+            return {
+              items: sortByNewest(executor.events, "occurred_at")
+                .slice(0, limit)
+                .map(clone),
+            };
+          }
+
+          if (
+            parts[4] === "executors" &&
+            parts[5] &&
+            parts[6] === "tasks" &&
+            method === "GET"
+          ) {
+            const executorId = decodeURIComponent(parts[5]);
+            const status = url.searchParams.get("status") || "running";
+            const limit = Number(url.searchParams.get("limit") || "10");
+            const items = sortByNewest(
+              team.tasks.filter(
+                (task) =>
+                  task.executor_id === executorId &&
+                  task.current_state === status,
+              ),
+              "ingested_at",
+            );
+            return { items: items.slice(0, limit).map(clone) };
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            method === "GET" &&
+            parts.length === 5
+          ) {
+            let items = team.environments
+              .filter((environment) => !environment.deleted)
+              .map(serializeEnvironment);
+            const scope = url.searchParams.get("scope") || "";
+            const limit = Number(url.searchParams.get("limit") || "10");
+            if (scope) items = items.filter((item) => item.scope === scope);
+            return { items: items.slice(0, limit) };
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            method === "POST" &&
+            parts.length === 5
+          ) {
+            const body = parseBody(options);
+            const environment = createEnvironment({
+              environment_id: `${team.team_id}-env-${nextDemoId("env")}`,
+              scope: body.scope,
+              task_type_id: body.task_type_id || null,
+              name: body.name,
+              revision: 1,
+              env: body.env || {},
+              secrets: [],
+            });
+            team.environments.unshift(environment);
+            appendAudit(
+              team,
+              "launch_parameters.created",
+              "launch_parameter",
+              environment.environment_id,
+            );
+            return serializeEnvironment(environment);
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            parts[5] &&
+            method === "PUT" &&
+            parts.length === 6
+          ) {
+            const environment = getEnvironment(
+              team,
+              decodeURIComponent(parts[5]),
+            );
+            const body = parseBody(options);
+            environment.scope = body.scope;
+            environment.task_type_id = body.task_type_id || null;
+            environment.name = body.name;
+            environment.env = clone(body.env || {});
+            stampRevision(environment);
+            appendAudit(
+              team,
+              "launch_parameters.updated",
+              "launch_parameter",
+              environment.environment_id,
+            );
+            return serializeEnvironment(environment);
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            parts[5] &&
+            method === "DELETE" &&
+            parts.length === 6
+          ) {
+            const environment = getEnvironment(
+              team,
+              decodeURIComponent(parts[5]),
+            );
+            environment.deleted = true;
+            stampRevision(environment, true);
+            appendAudit(
+              team,
+              "launch_parameters.deleted",
+              "launch_parameter",
+              environment.environment_id,
+            );
+            return null;
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            parts[5] &&
+            parts[6] === "revisions" &&
+            method === "GET"
+          ) {
+            const environment = getEnvironment(
+              team,
+              decodeURIComponent(parts[5]),
+            );
+            const limit = Number(url.searchParams.get("limit") || "10");
+            return { items: environment.revisions.slice(0, limit).map(clone) };
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            parts[5] &&
+            parts[6] === "secrets" &&
+            method === "POST"
+          ) {
+            const environment = getEnvironment(
+              team,
+              decodeURIComponent(parts[5]),
+            );
+            const body = parseBody(options);
+            const secret = createSecret(
+              `${team.team_id}-secret-${nextDemoId("secret")}`,
+              body.key,
+              [body.value],
+            );
+            environment.secrets.push(secret);
+            stampRevision(environment);
+            appendAudit(team, "secret.created", "secret", secret.secret_id);
+            return { secret_id: secret.secret_id };
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            parts[5] &&
+            parts[6] === "secrets" &&
+            parts[7] &&
+            method === "PUT"
+          ) {
+            const environment = getEnvironment(
+              team,
+              decodeURIComponent(parts[5]),
+            );
+            const secret = environment.secrets.find(
+              (item) => item.secret_id === decodeURIComponent(parts[7]),
+            );
+            if (!secret) throw new Error("Secret not found");
+            secret.versions.unshift({
+              version: secret.versions[0].version + 1,
+              created_at: nowIso(),
+            });
+            stampRevision(environment);
+            appendAudit(team, "secret.rotated", "secret", secret.secret_id);
+            return { ok: true };
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            parts[5] &&
+            parts[6] === "secrets" &&
+            parts[7] &&
+            method === "DELETE"
+          ) {
+            const environment = getEnvironment(
+              team,
+              decodeURIComponent(parts[5]),
+            );
+            environment.secrets = environment.secrets.filter(
+              (item) => item.secret_id !== decodeURIComponent(parts[7]),
+            );
+            stampRevision(environment);
+            appendAudit(
+              team,
+              "secret.deleted",
+              "secret",
+              decodeURIComponent(parts[7]),
+            );
+            return null;
+          }
+
+          if (
+            parts[4] === "launch-parameters" &&
+            parts[5] &&
+            parts[6] === "secrets" &&
+            parts[7] &&
+            parts[8] === "versions" &&
+            method === "GET"
+          ) {
+            const environment = getEnvironment(
+              team,
+              decodeURIComponent(parts[5]),
+            );
+            const secret = environment.secrets.find(
+              (item) => item.secret_id === decodeURIComponent(parts[7]),
+            );
+            const limit = Number(url.searchParams.get("limit") || "10");
+            if (!secret) throw new Error("Secret not found");
+            return { items: secret.versions.slice(0, limit).map(clone) };
+          }
+
+          if (parts[4] === "audit" && method === "GET") {
+            let items = sortByNewest(team.audit, "occurred_at");
+            const search = (url.searchParams.get("search") || "")
+              .trim()
+              .toLowerCase();
+            const limit = Number(url.searchParams.get("limit") || "10");
+            if (search) {
+              items = items.filter((entry) =>
+                [
+                  entry.action,
+                  entry.actor_id,
+                  entry.resource_id,
+                  entry.resource_type,
+                ].some((value) => String(value).toLowerCase().includes(search)),
+              );
+            }
+            return { items: items.slice(0, limit).map(clone) };
+          }
+
+          throw new Error(
+            `Demo fallback does not support ${method} ${url.pathname}`,
+          );
+        }
+      })();
+    </script>
+  </body>
+</html>

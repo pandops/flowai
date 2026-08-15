@@ -2,7 +2,6 @@ import http from "node:http";
 
 const port = Number(process.env.FLOWAI_MOCK_LLM_PORT || "19090");
 let calls = 0;
-let toolCalls = 0;
 
 function toolResponse(body) {
   const tools = Array.isArray(body.tools) ? body.tools : [];
@@ -20,7 +19,7 @@ function toolResponse(body) {
   else return null;
   return {
     role: "assistant",
-    content: null,
+    content: "Проверяю рабочее дерево перед запуском инструмента.",
     tool_calls: [
       {
         id: "flowai-marker-tool-call",
@@ -33,10 +32,12 @@ function toolResponse(body) {
 
 function completion(body) {
   const tools = Array.isArray(body.tools) ? body.tools : [];
-  if (tools.length > 0) toolCalls += 1;
   const finish = tools.find(({ function: fn }) => fn?.name === "finish");
+  const hasToolResult = (body.messages ?? []).some(
+    (message) => message?.role === "tool" || message?.role === "function",
+  );
   const message =
-    toolCalls > 1 && finish
+    hasToolResult && finish
       ? {
           role: "assistant",
           content: null,
@@ -106,33 +107,42 @@ const server = http.createServer((request, response) => {
       })}\n`,
     );
     const result = completion(body);
-    if (body.stream) {
-      response.writeHead(200, {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      });
-      const choice = result.choices[0];
-      response.write(
-        `data: ${JSON.stringify({
-          id: result.id,
-          object: "chat.completion.chunk",
-          created: result.created,
-          model: result.model,
-          choices: [
-            {
-              index: 0,
-              delta: choice.message,
-              finish_reason: choice.finish_reason,
-            },
-          ],
-        })}\n\n`,
-      );
-      response.end("data: [DONE]\n\n");
-      return;
-    }
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(result));
+    const delayMs = JSON.stringify(body.messages ?? []).includes(
+      "FLOWAI_HOLD_CAPACITY",
+    )
+      ? 5_000
+      : 0;
+    const send = () => {
+      if (body.stream) {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        const choice = result.choices[0];
+        response.write(
+          `data: ${JSON.stringify({
+            id: result.id,
+            object: "chat.completion.chunk",
+            created: result.created,
+            model: result.model,
+            choices: [
+              {
+                index: 0,
+                delta: choice.message,
+                finish_reason: choice.finish_reason,
+              },
+            ],
+          })}\n\n`,
+        );
+        response.end("data: [DONE]\n\n");
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(result));
+    };
+    if (delayMs > 0) setTimeout(send, delayMs);
+    else send();
   });
 });
 

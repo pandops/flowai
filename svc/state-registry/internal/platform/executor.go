@@ -23,7 +23,7 @@ type ExecutorIdentity struct {
 // and restart PUT registration. Identity is derived from executor_id.
 type ExecutorRegistrationRequest struct {
 	Scope           string          `json:"scope"`
-	TeamID          *string         `json:"team_id,omitempty"`
+	TeamID          *string         `json:"team_id"`
 	ExecutorType    string          `json:"executor_type"`
 	Identity        string          `json:"-"` // deprecated in-process fixture field; never accepted on the wire
 	AuthorizedTag   string          `json:"authorized_tag"`

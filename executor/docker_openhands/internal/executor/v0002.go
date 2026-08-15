@@ -196,8 +196,10 @@ func (e *Executor) startTaskV0002(ctx context.Context, summary platform.V0002Tas
 	// task has no environment binding and the Executor uses an
 	// empty value set (no legacy /v1/env call).
 	envValues := map[string]string{}
-	if claim.EnvironmentID != nil && *claim.EnvironmentID != "" &&
-		claim.ScopeToken != nil && *claim.ScopeToken != "" {
+	if claim.LaunchParameters {
+		if claim.ScopeToken == nil || *claim.ScopeToken == "" {
+			return fmt.Errorf("claim %s: launch parameters require scope_token", taskID)
+		}
 		openCtx, openCancel := context.WithTimeout(ctx, 10*time.Second)
 		envValues, err = e.v2002OpenEnvironment(openCtx, claim, taskID)
 		openCancel()
@@ -286,6 +288,9 @@ func (e *Executor) startTaskV0002(ctx context.Context, summary platform.V0002Tas
 			commandID:     commandID,
 			resolvedImage: imageRef,
 			imageSource:   imageSource,
+			llmAPIKey:     envValues["OPENAI_API_KEY"],
+			llmBaseURL:    envValues["OPENAI_BASE_URL"],
+			llmModel:      envValues["OPENAI_MODEL"],
 		},
 		containerID:   ref.ID,
 		containerName: ref.Name,
@@ -314,9 +319,8 @@ func (e *Executor) startTaskV0002(ctx context.Context, summary platform.V0002Tas
 // unknown environment returns an empty value set and the
 // Executor continues without a legacy /v1/env fallback.
 func (e *Executor) v2002OpenEnvironment(ctx context.Context, claim *platform.V0002ClaimResponse, taskID string) (map[string]string, error) {
-	envID := *claim.EnvironmentID
 	token := *claim.ScopeToken
-	vals, err := e.v0002.OpenEnvironment(ctx, envID, taskID, token)
+	vals, err := e.v0002.OpenEnvironment(ctx, taskID, token)
 	if err != nil {
 		if stateregistryclient.IsNotFound(err) {
 			e.logger.Info("v0002 environment open: non-revealing 404", "task_id", taskID)
@@ -493,14 +497,21 @@ func (e *Executor) runTaskV0002(ctx context.Context, slot *taskSlot) {
 		return
 	}
 	e.openHandsOK.Store(true)
+	if slot.v0002Task.llmAPIKey == "" || slot.v0002Task.llmBaseURL == "" || slot.v0002Task.llmModel == "" {
+		e.failV0002Slot(ctx, slot, "submit", "task launch parameters require OPENAI_API_KEY, OPENAI_BASE_URL, and OPENAI_MODEL")
+		return
+	}
 
-	convCfg := e.conversationConfig(promptFromV0002Payload(slot.v0002Task.task.Payload))
+	convCfg := e.conversationConfig(promptFromV0002Payload(slot.v0002Task.task.Payload), slot.v0002Task.llmAPIKey, slot.v0002Task.llmBaseURL, slot.v0002Task.llmModel)
 	conv, err := client.StartConversation(ctx, convCfg)
 	if err != nil {
 		e.failV0002Slot(ctx, slot, "submit", err.Error())
 		return
 	}
 	slot.setOpenHandsID(conv.ID, addr)
+	controlsCtx, stopControls := context.WithCancel(ctx)
+	defer stopControls()
+	go e.watchTaskControls(controlsCtx, slot, client, conv.ID)
 
 	if err := e.streamOpenHandsEvents(ctx, slot, conv.ID); err != nil {
 		if slot.claimTerminal() {

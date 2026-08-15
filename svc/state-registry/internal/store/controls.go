@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -81,6 +82,16 @@ func (s *Store) CreateTaskControl(ctx context.Context, identity platform.Gateway
 		controlID, identity.TeamID, taskID, identity.OperatorID, req.Action, req.IdempotencyKey, req.Reason, auditID,
 	).Scan(&requestedAt); err != nil {
 		return platform.TaskControl{}, fmt.Errorf("append task control: %w", err)
+	}
+	controlPayload, err := json.Marshal(map[string]any{"action": req.Action, "source": "operator"})
+	if err != nil {
+		return platform.TaskControl{}, fmt.Errorf("marshal requested control event: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO task_control_events
+		(control_event_id, control_id, task_id, team_id, status, occurred_at, payload)
+		VALUES ($1, $2, $3, $4, 'pending', $5, $6::jsonb)`,
+		uuid.NewString(), controlID, taskID, identity.TeamID, requestedAt, controlPayload); err != nil {
+		return platform.TaskControl{}, fmt.Errorf("append requested control event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return platform.TaskControl{}, fmt.Errorf("commit task control: %w", err)

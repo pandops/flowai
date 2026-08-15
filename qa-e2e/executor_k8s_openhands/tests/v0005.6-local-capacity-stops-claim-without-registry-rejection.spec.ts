@@ -43,30 +43,24 @@ test("v0005.6 local capacity stops claim without registry rejection", async ({
     throw new Error(`expected ${want} K8s task Pods`);
   };
   const first = await suite.ingestTask(suite.teamA, {
-    prompt: "hold capacity one",
+    prompt: "FLOWAI_HOLD_CAPACITY hold capacity one",
   });
   await waitForPodCount(1);
   const second = await suite.ingestTask(suite.teamA, {
     prompt: "hold capacity two",
   });
-  await waitForPodCount(2);
-  const third = await suite.ingestTask(suite.teamA, {
-    prompt: "hold capacity three",
-  });
   await new Promise((resolve) => setTimeout(resolve, 2_000));
 
-  for (const task of [first, second]) {
-    const response = await suite.gatewayFetch(
-      suite.teamA,
-      `/v1/tasks/${task.task_id}`,
-    );
-    expect((await response.json()) as Record<string, unknown>).toMatchObject({
-      executor_id: suite.executorID,
-    });
-  }
+  const firstResponse = await suite.gatewayFetch(
+    suite.teamA,
+    `/v1/tasks/${first.task_id}`,
+  );
+  expect((await firstResponse.json()) as Record<string, unknown>).toMatchObject(
+    { executor_id: suite.executorID },
+  );
   const pendingResponse = await suite.gatewayFetch(
     suite.teamA,
-    `/v1/tasks/${third.task_id}`,
+    `/v1/tasks/${second.task_id}`,
   );
   const pending = (await pendingResponse.json()) as Record<string, unknown>;
   expect(pending.owner_command_id).toBeNull();
@@ -103,7 +97,7 @@ test("v0005.6 local capacity stops claim without registry rejection", async ({
         "X-FlowAI-Request-Id": crypto.randomUUID(),
       },
       body: JSON.stringify({
-        task_id: third.task_id,
+        task_id: second.task_id,
         command_id: `cmd-${crypto.randomUUID()}`,
       }),
     },

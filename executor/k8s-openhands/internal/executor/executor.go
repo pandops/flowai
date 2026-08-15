@@ -171,12 +171,6 @@ func (c *Config) Validate() error {
 	if c.OpenHandsWorkspace == "" {
 		return errors.New("OPENHANDS_WORKSPACE must be non-empty")
 	}
-	hasProfile := c.OpenHandsAgentProfile != ""
-	hasInline := c.OpenHandsLLMModel != "" && c.OpenHandsLLMAPIKey != "" && c.OpenHandsLLMUsageID != ""
-	if !hasProfile && !hasInline {
-		return errors.New("OpenHands V1 requires either OPENHANDS_AGENT_PROFILE_ID " +
-			"or (OPENHANDS_LLM_MODEL + OPENHANDS_LLM_API_KEY + OPENHANDS_LLM_USAGE_ID)")
-	}
 	if c.FinishedCleanupDelay < 0 {
 		return errors.New("EXECUTOR_FINISHED_CLEANUP_DELAY must be >= 0")
 	}
@@ -242,6 +236,8 @@ type Executor struct {
 	mu               sync.Mutex
 	pods             map[string]*podSlot
 	slotReservations int
+	logMu            sync.Mutex
+	publishedLog     map[string]struct{}
 
 	registry *stateregistryclient.Client
 	kube     k8sclient.Client
@@ -259,14 +255,15 @@ func New(cfg *Config, registry *stateregistryclient.Client, kube k8sclient.Clien
 		logger = func(string, ...any) {}
 	}
 	e := &Executor{
-		cfg:      cfg,
-		registry: registry,
-		kube:     kube,
-		cache:    store,
-		lock:     lock,
-		logger:   logger,
-		lastSeen: map[string]uint8{},
-		pods:     map[string]*podSlot{},
+		cfg:          cfg,
+		registry:     registry,
+		kube:         kube,
+		cache:        store,
+		lock:         lock,
+		logger:       logger,
+		lastSeen:     map[string]uint8{},
+		pods:         map[string]*podSlot{},
+		publishedLog: map[string]struct{}{},
 	}
 	e.state.Store(StateStarting)
 	return e
@@ -314,6 +311,9 @@ type podSlot struct {
 	imageSource    string
 	conversationID string
 	prompt         string
+	llmAPIKey      string
+	llmBaseURL     string
+	llmModel       string
 	lastObserved   time.Time
 
 	acceptedTerminalMu sync.Mutex

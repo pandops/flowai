@@ -1,0 +1,997 @@
+openapi: 3.1.0
+info:
+  title: FlowAI State Registry UI Operator API
+  version: 0.6.0
+  license: { name: Proprietary, identifier: LicenseRef-Proprietary }
+  description: >-
+    v0006 unauthenticated implementation-stage API used through the test-only
+    mocked proxy. team_id is explicit request data, not an authentication or
+    Keycloak membership proof.
+servers:
+  - url: /
+security: []
+paths:
+  /ui/v1/teams/{team_id}/dashboard:
+    get:
+      summary: Read selected-team dashboard statistics
+      operationId: getTeamDashboard
+      parameters:
+        - $ref: "#/components/parameters/TeamId"
+        - $ref: "#/components/parameters/DashboardPeriod"
+        - $ref: "#/components/parameters/Week"
+        - $ref: "#/components/parameters/Month"
+      responses:
+        "200":
+          {
+            description: Dashboard statistics,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Dashboard" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /ui/v1/teams/{team_id}/tasks:
+    get:
+      summary: List selected-team tasks
+      operationId: listTeamTasks
+      parameters:
+        - $ref: "#/components/parameters/TeamId"
+        - $ref: "#/components/parameters/Status"
+        - $ref: "#/components/parameters/Period"
+        - $ref: "#/components/parameters/Date"
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          {
+            description: Task page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/TaskPage" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /ui/v1/teams/{team_id}/tasks/{task_id}:
+    get:
+      summary: Read one selected-team task
+      operationId: getTeamTask
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/TaskId" },
+        ]
+      responses:
+        "200":
+          {
+            description: Task detail,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Task" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/tasks/{task_id}/events:
+    get:
+      summary: List one task's visible events
+      operationId: listTaskEvents
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/TaskId" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Ordered lifecycle and control feed page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EventPage" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/tasks/{task_id}/logs:
+    get:
+      summary: Replay one task's live log
+      operationId: listTaskLogs
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/TaskId" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Ordered log replay page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/LogPage" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/tasks/{task_id}/controls/cancel:
+    post:
+      summary: Request cancellation of one task
+      operationId: cancelTask
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/TaskId" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/CancelRequest" } },
+            },
+        }
+      responses:
+        "202":
+          {
+            description: Cancellation accepted,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Control" } },
+              },
+          }
+        "409":
+          {
+            description: Cancellation unavailable or already pending,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Error" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/executors:
+    get:
+      summary: List selected-team Executors
+      operationId: listTeamExecutors
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/Status" },
+          { $ref: "#/components/parameters/Search" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Executor page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/ExecutorPage" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /ui/v1/teams/{team_id}/executors/{executor_id}:
+    get:
+      summary: Read one selected-team Executor
+      operationId: getTeamExecutor
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/ExecutorId" },
+        ]
+      responses:
+        "200":
+          {
+            description: Executor detail,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Executor" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/executors/{executor_id}/events:
+    get:
+      summary: List one Executor's events
+      operationId: listExecutorEvents
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/ExecutorId" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Executor event page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EventPage" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/executors/{executor_id}/tasks:
+    get:
+      summary: List one Executor's tasks
+      operationId: listExecutorTasks
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/ExecutorId" },
+          { $ref: "#/components/parameters/Status" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Executor task page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/TaskPage" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/launch-parameters:
+    get:
+      summary: List selected-team launch parameters
+      operationId: listLaunchParameters
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/Scope" },
+          { $ref: "#/components/parameters/TaskTypeId" },
+          { $ref: "#/components/parameters/Search" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Launch-parameter page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/EnvironmentPage" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    post:
+      summary: Create selected-team launch parameters
+      operationId: createLaunchParameters
+      parameters: [{ $ref: "#/components/parameters/TeamId" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/EnvironmentWrite" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Created definition,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Environment" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /ui/v1/teams/{team_id}/launch-parameters/{environment_id}:
+    get:
+      summary: Read one launch-parameter definition
+      operationId: getLaunchParameters
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+        ]
+      responses:
+        "200":
+          {
+            description: Definition,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Environment" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      summary: Replace one launch-parameter definition
+      operationId: replaceLaunchParameters
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/EnvironmentWrite" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Replaced definition,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Environment" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete one launch-parameter definition
+      operationId: deleteLaunchParameters
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+        ]
+      responses:
+        "204": { description: Tombstone revision committed }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/launch-parameters/{environment_id}/revisions:
+    get:
+      summary: List launch-parameter revisions
+      operationId: listLaunchParameterRevisions
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Revision page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/RevisionPage" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/launch-parameters/{environment_id}/secrets:
+    post:
+      summary: Create a logical secret
+      operationId: createSecret
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/SecretWrite" } },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Created logical secret,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Secret" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/launch-parameters/{environment_id}/secrets/{secret_id}:
+    put:
+      summary: Replace a logical secret value
+      operationId: replaceSecret
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+          { $ref: "#/components/parameters/SecretId" },
+        ]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/SecretValue" } },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: New immutable version metadata,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/Secret" } },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Revoke a logical secret
+      operationId: revokeSecret
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+          { $ref: "#/components/parameters/SecretId" },
+        ]
+      responses:
+        "204": { description: Secret reference revoked }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/launch-parameters/{environment_id}/secrets/{secret_id}/versions:
+    get:
+      summary: List logical-secret versions
+      operationId: listSecretVersions
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/EnvironmentId" },
+          { $ref: "#/components/parameters/SecretId" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Secret version metadata page,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "#/components/schemas/SecretVersionPage" },
+                  },
+              },
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /ui/v1/teams/{team_id}/audit:
+    get:
+      summary: List selected-team audit entries
+      operationId: listTeamAudit
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/Search" },
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/Limit" },
+        ]
+      responses:
+        "200":
+          {
+            description: Audit page,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/AuditPage" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /ui/v1/teams/{team_id}/stream:
+    get:
+      summary: Open the selected-team WebSocket stream
+      operationId: openTeamStream
+      description: WebSocket upgrade. Frames carry committed task, control, log, Executor, dashboard, launch-parameter, and audit changes for the path team only. The reconnect pair resumes strictly after the last committed frame.
+      parameters:
+        [
+          { $ref: "#/components/parameters/TeamId" },
+          { $ref: "#/components/parameters/After" },
+          { $ref: "#/components/parameters/AfterFrameId" },
+        ]
+      responses:
+        "101": { description: WebSocket switching protocols }
+        "200":
+          {
+            description: Upgrade metadata when WebSocket negotiation is inspected as HTTP,
+          }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  parameters:
+    TeamId:
+      {
+        name: team_id,
+        in: path,
+        required: true,
+        schema: { type: string, minLength: 1 },
+      }
+    TaskId:
+      {
+        name: task_id,
+        in: path,
+        required: true,
+        schema: { type: string, minLength: 1 },
+      }
+    ExecutorId:
+      {
+        name: executor_id,
+        in: path,
+        required: true,
+        schema: { type: string, minLength: 1 },
+      }
+    EnvironmentId:
+      {
+        name: environment_id,
+        in: path,
+        required: true,
+        schema: { type: string, minLength: 1 },
+      }
+    SecretId:
+      {
+        name: secret_id,
+        in: path,
+        required: true,
+        schema: { type: string, minLength: 1 },
+      }
+    Cursor: { name: cursor, in: query, schema: { type: string } }
+    After:
+      { name: after, in: query, schema: { type: string, format: date-time } }
+    AfterFrameId:
+      {
+        name: after_frame_id,
+        in: query,
+        schema: { type: string, maxLength: 200 },
+      }
+    Limit:
+      {
+        name: limit,
+        in: query,
+        schema: { type: integer, enum: [10, 25, 50, 100], default: 10 },
+      }
+    Search: { name: search, in: query, schema: { type: string } }
+    DashboardPeriod:
+      {
+        name: period,
+        in: query,
+        required: true,
+        schema: { type: string, enum: [week, month] },
+      }
+    Period:
+      {
+        name: period,
+        in: query,
+        required: true,
+        schema: { type: string, enum: [day, week, month] },
+      }
+    Week:
+      {
+        name: week,
+        in: query,
+        schema: { type: string, pattern: '^\d{4}-W\d{2}$' },
+      }
+    Month:
+      {
+        name: month,
+        in: query,
+        schema: { type: string, pattern: '^\d{4}-\d{2}$' },
+      }
+    Date: { name: date, in: query, schema: { type: string, format: date } }
+    Status: { name: status, in: query, schema: { type: string } }
+    Scope:
+      {
+        name: scope,
+        in: query,
+        schema: { type: string, enum: [global, team, task_type] },
+      }
+    TaskTypeId: { name: task_type_id, in: query, schema: { type: string } }
+  responses:
+    BadRequest:
+      {
+        description: Validation failed,
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/Error" } },
+          },
+      }
+    NotFound:
+      {
+        description: Unknown or unavailable in selected team,
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/Error" } },
+          },
+      }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        {
+          code: { type: string },
+          message: { type: string },
+          field: { type: [string, "null"] },
+        }
+    Page:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        {
+          items: { type: array, items: {} },
+          next_cursor: { type: [string, "null"] },
+        }
+    Dashboard:
+      type: object
+      required: [period, calendar_key, counts, buckets]
+      properties:
+        period: { type: string, enum: [week, month] }
+        calendar_key: { type: string }
+        counts:
+          {
+            type: object,
+            required: [pending, created, running, finished, failed],
+            properties:
+              {
+                pending: { type: integer },
+                created: { type: integer },
+                running: { type: integer },
+                finished: { type: integer },
+                failed: { type: integer },
+              },
+          }
+        buckets:
+          {
+            type: array,
+            minItems: 7,
+            maxItems: 31,
+            items:
+              {
+                type: object,
+                required: [at, key, label, shortLabel, total, counts, isFuture],
+                properties:
+                  {
+                    at: { type: string, format: date-time },
+                    key: { type: string, format: date },
+                    label: { type: string },
+                    shortLabel: { type: string },
+                    total: { type: integer, minimum: 0 },
+                    counts: { type: object },
+                    isFuture: { type: boolean },
+                  },
+              },
+          }
+    Task:
+      type: object
+      required:
+        [
+          task_id,
+          task_type_id,
+          source_system_id,
+          source_id,
+          current_state,
+          environment,
+          secret_keys,
+          ingested_at,
+        ]
+      properties:
+        {
+          task_id: { type: string },
+          task_type_id: { type: string },
+          source_system_id: { type: string },
+          source_id: { type: string },
+          current_state:
+            {
+              type: string,
+              enum: [pending, created, running, finished, failed],
+            },
+          executor_id: { type: [string, "null"] },
+          environment: { type: object, additionalProperties: { type: string } },
+          secret_keys: { type: array, items: { type: string } },
+          ingested_at: { type: string, format: date-time },
+          claimed_at: { type: [string, "null"], format: date-time },
+          completed_at: { type: [string, "null"], format: date-time },
+        }
+    TaskPage:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/Page" },
+            {
+              type: object,
+              properties:
+                {
+                  items:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Task" },
+                    },
+                },
+            },
+          ],
+      }
+    Executor:
+      type: object
+      required:
+        [
+          executor_id,
+          executor_type,
+          scope,
+          authorized_tag,
+          status,
+          max_capacity,
+          running_count,
+          available_capacity,
+          runtime_metadata,
+          updated_at,
+        ]
+      properties:
+        {
+          executor_id: { type: string },
+          executor_type: { type: string },
+          scope: { type: string, enum: [team, system] },
+          authorized_tag: { type: string },
+          status: { type: string, enum: [idle, busy] },
+          max_capacity: { type: integer },
+          running_count: { type: integer },
+          available_capacity: { type: integer },
+          runtime_metadata: { type: object },
+          updated_at: { type: string, format: date-time },
+        }
+    ExecutorPage:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/Page" },
+            {
+              type: object,
+              properties:
+                {
+                  items:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Executor" },
+                    },
+                },
+            },
+          ],
+      }
+    Event:
+      {
+        type: object,
+        required: [event_id, event_type, status, occurred_at, payload],
+        properties:
+          {
+            event_id: { type: string },
+            event_type: { type: string },
+            status: { type: string },
+            executor_id: { type: [string, "null"] },
+            occurred_at: { type: string, format: date-time },
+            payload: { type: object },
+          },
+      }
+    EventPage:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/Page" },
+            {
+              type: object,
+              properties:
+                {
+                  items:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Event" },
+                    },
+                },
+            },
+          ],
+      }
+    Log:
+      {
+        type: object,
+        required:
+          [
+            log_chunk_id,
+            task_id,
+            executor_id,
+            log_offset,
+            stream,
+            content,
+            occurred_at,
+          ],
+        properties:
+          {
+            log_chunk_id: { type: string },
+            task_id: { type: string },
+            executor_id: { type: string },
+            log_offset: { type: integer },
+            stream: { type: string, enum: [work, reasoning] },
+            content: { type: string },
+            occurred_at: { type: string, format: date-time },
+          },
+      }
+    LogPage:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/Page" },
+            {
+              type: object,
+              properties:
+                {
+                  items:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Log" },
+                    },
+                },
+            },
+          ],
+      }
+    Control:
+      {
+        type: object,
+        required: [control_id, status],
+        properties:
+          {
+            control_id: { type: string },
+            status:
+              {
+                type: string,
+                enum: [pending, acknowledged, completed, failed],
+              },
+          },
+      }
+    CancelRequest:
+      {
+        type: object,
+        required: [request_id],
+        properties: { request_id: { type: string, minLength: 1 } },
+      }
+    EnvironmentWrite:
+      type: object
+      required: [scope, name, env]
+      properties:
+        {
+          scope: { type: string, enum: [team, task_type] },
+          task_type_id: { type: [string, "null"] },
+          name: { type: string, minLength: 1 },
+          env:
+            {
+              type: object,
+              propertyNames: { pattern: "^[A-Z_][A-Z0-9_]*$" },
+              additionalProperties: { type: string },
+            },
+          image: { type: [string, "null"] },
+        }
+    Environment:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/EnvironmentWrite" },
+            {
+              type: object,
+              required: [environment_id, team_id, revision],
+              properties:
+                {
+                  environment_id: { type: string },
+                  team_id: { type: string },
+                  revision: { type: integer },
+                  secrets:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Secret" },
+                    },
+                },
+            },
+          ],
+      }
+    EnvironmentPage:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/Page" },
+            {
+              type: object,
+              properties:
+                {
+                  items:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Environment" },
+                    },
+                },
+            },
+          ],
+      }
+    RevisionPage: { $ref: "#/components/schemas/Page" }
+    SecretWrite:
+      {
+        type: object,
+        required: [key, value],
+        properties:
+          {
+            key: { type: string, pattern: "^[A-Z_][A-Z0-9_]*$" },
+            value: { type: string, minLength: 1 },
+          },
+      }
+    SecretValue:
+      {
+        type: object,
+        required: [value],
+        properties: { value: { type: string, minLength: 1 } },
+      }
+    Secret:
+      {
+        type: object,
+        required: [secret_id, key, current_version, revoked],
+        properties:
+          {
+            secret_id: { type: string },
+            key: { type: string },
+            current_version: { type: integer },
+            revoked: { type: boolean },
+          },
+      }
+    SecretVersionPage: { $ref: "#/components/schemas/Page" }
+    Audit:
+      {
+        type: object,
+        required:
+          [
+            audit_id,
+            actor_id,
+            actor_type,
+            action,
+            resource_type,
+            resource_id,
+            request_id,
+            outcome,
+            occurred_at,
+          ],
+        properties:
+          {
+            audit_id: { type: string },
+            actor_id: { type: string },
+            actor_type: { type: string },
+            action: { type: string },
+            resource_type: { type: string },
+            resource_id: { type: string },
+            request_id: { type: string },
+            outcome: { type: string },
+            occurred_at: { type: string, format: date-time },
+          },
+      }
+    AuditPage:
+      {
+        allOf:
+          [
+            { $ref: "#/components/schemas/Page" },
+            {
+              type: object,
+              properties:
+                {
+                  items:
+                    {
+                      type: array,
+                      items: { $ref: "#/components/schemas/Audit" },
+                    },
+                },
+            },
+          ],
+      }

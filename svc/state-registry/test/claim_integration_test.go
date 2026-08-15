@@ -460,11 +460,8 @@ func TestClaimSameCommandRetryReturnsIdenticalScopeToken(t *testing.T) {
 		"type-token-retry", "openhands", time.Now().UTC(), nil)
 	mustExec(t, h.db, `
 		INSERT INTO environment_definitions
-		 (environment_id, team_id, name, values)
-		 VALUES ('env-token-retry', 'team-a', 'token retry', '{}'::jsonb);
-		UPDATE tasks
-		   SET environment_id = 'env-token-retry'
-		 WHERE task_id = 'task-token-retry'`)
+		 (environment_id, team_id, scope_kind, name, values)
+		 VALUES ('env-token-retry', 'team-a', 'team', 'token retry', '{"TOKEN_TEST":"yes"}'::jsonb)`)
 
 	request := platform.ClaimRequest{TaskID: "task-token-retry", CommandID: "C-token-retry"}
 	first, err := h.repo.ClaimTask(context.Background(), request,
@@ -496,11 +493,8 @@ func TestClaimResponseFailureRollsBackAssignment(t *testing.T) {
 		"type-response-failure", "openhands", time.Now().UTC(), nil)
 	mustExec(t, h.db, `
 		INSERT INTO environment_definitions
-		 (environment_id, team_id, name, values)
-		 VALUES ('env-response-failure', 'team-a', 'response failure', '{}'::jsonb);
-		UPDATE tasks
-		   SET environment_id = 'env-response-failure'
-		 WHERE task_id = 'task-response-failure'`)
+		 (environment_id, team_id, scope_kind, name, values)
+		 VALUES ('env-response-failure', 'team-a', 'team', 'response failure', '{"TOKEN_TEST":"yes"}'::jsonb)`)
 
 	_, err := h.repo.ClaimTask(context.Background(),
 		platform.ClaimRequest{TaskID: "task-response-failure", CommandID: "C-response-failure"},

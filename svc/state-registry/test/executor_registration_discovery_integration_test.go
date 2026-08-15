@@ -126,20 +126,18 @@ type execPutBody struct {
 	Scope           string         `json:"scope"`
 	TeamID          *string        `json:"team_id"`
 	ExecutorType    string         `json:"executor_type"`
-	Identity        string         `json:"identity"`
 	AuthorizedTag   string         `json:"authorized_tag"`
 	MaxCapacity     int            `json:"max_capacity"`
 	RunningCount    int            `json:"running_count"`
 	RuntimeMetadata map[string]any `json:"runtime_metadata"`
 }
 
-func teamBody(executorID, team, tag string) []byte {
+func teamBody(_ string, team, tag string) []byte {
 	t := team
 	raw, _ := json.Marshal(execPutBody{
 		Scope:           "team",
 		TeamID:          &t,
 		ExecutorType:    "executor_docker_openhands",
-		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,
@@ -148,12 +146,11 @@ func teamBody(executorID, team, tag string) []byte {
 	return raw
 }
 
-func systemBody(executorID, tag string) []byte {
+func systemBody(_ string, tag string) []byte {
 	raw, _ := json.Marshal(execPutBody{
 		Scope:           "system",
 		TeamID:          nil,
 		ExecutorType:    "executor_docker_openhands",
-		Identity:        executorID,
 		AuthorizedTag:   tag,
 		MaxCapacity:     4,
 		RunningCount:    0,

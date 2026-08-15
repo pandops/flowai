@@ -355,10 +355,13 @@ export async function registerExecutor(
   }
   const api = await executor.api(baseUrl);
   try {
-    const canonicalBody = { ...body, identity: executorId };
+    // `identity` remains in old fixture builders for assertion readability,
+    // but the wire contract derives it from executor_id and rejects it as an
+    // unknown request field.
+    const { identity: _legacyIdentity, ...wireBody } = body;
     const resp = await api.put(
       `/v1/executors/${encodeURIComponent(executorId)}`,
-      { data: canonicalBody },
+      { data: wireBody },
     );
     if (resp.status() !== 200) {
       throw new Error(

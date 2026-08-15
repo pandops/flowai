@@ -1,4 +1,4 @@
-//go:build integration
+//go:build integration && legacy_environment_api
 
 // Section 9 — cursor pagination for environments / secrets /
 // secret versions, same-team secret revoke, and transactional

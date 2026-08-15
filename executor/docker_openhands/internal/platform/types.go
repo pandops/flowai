@@ -156,13 +156,14 @@ type V0002ClaimRequest struct {
 // the compact three-part scope_token together with the canonical
 // task projection; both are required for the EnvironmentID open path.
 type V0002ClaimResponse struct {
-	Claim         string               `json:"claim"`
-	Task          V0002TaskListEntry   `json:"task"`
-	ResolvedImage *V0002ImageReference `json:"resolved_image"`
-	ImageSource   *string              `json:"image_source"`
-	ClaimedAt     *string              `json:"claimed_at"`
-	EnvironmentID *string              `json:"environment_id"`
-	ScopeToken    *string              `json:"scope_token"`
+	Claim            string               `json:"claim"`
+	Task             V0002TaskListEntry   `json:"task"`
+	ResolvedImage    *V0002ImageReference `json:"resolved_image"`
+	ImageSource      *string              `json:"image_source"`
+	ClaimedAt        *string              `json:"claimed_at"`
+	EnvironmentID    *string              `json:"environment_id"`
+	LaunchParameters bool                 `json:"launch_parameters"`
+	ScopeToken       *string              `json:"scope_token"`
 }
 
 // V0002TaskEventEnvelope is the closed request body for
@@ -201,18 +202,30 @@ type V0002EventAcceptance struct {
 	AcceptedAt string `json:"accepted_at"`
 }
 
+const (
+	TaskLogStreamWork      = "work"
+	TaskLogStreamReasoning = "reasoning"
+)
+
+// TaskLogAppendRequest is one explicitly published OpenHands output chunk.
+// Reasoning means agent-published assistant text, never hidden model state.
+type TaskLogAppendRequest struct {
+	LogChunkID string    `json:"log_chunk_id"`
+	Stream     string    `json:"stream"`
+	Content    string    `json:"content"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
 // V0002OpenEnvironmentResponse is the documented 200 envelope
 // returned by GET /v1/environments/{environment_id}/open. The
 // values map is non-secret env-style entries plus the decrypted
 // plaintext of every secret under that environment (a no-secret
 // environment returns 200 with an empty map).
 type V0002OpenEnvironmentResponse struct {
-	TeamID        string            `json:"team_id"`
-	ProjectID     *string           `json:"project_id"`
-	TaskID        string            `json:"task_id"`
-	EnvironmentID string            `json:"environment_id"`
-	ExecutorID    string            `json:"executor_id"`
-	Values        map[string]string `json:"values"`
+	TeamID     string            `json:"team_id"`
+	TaskID     string            `json:"task_id"`
+	ExecutorID string            `json:"executor_id"`
+	Values     map[string]string `json:"values"`
 }
 
 // V0002TaskControl is one immutable canonical control record.
@@ -226,6 +239,13 @@ type V0002TaskControl struct {
 	Status         string    `json:"status"`
 	AuditID        string    `json:"audit_id"`
 	RequestedAt    time.Time `json:"requested_at"`
+}
+
+type TaskControlEventAppendRequest struct {
+	ControlEventID string          `json:"control_event_id"`
+	Status         string          `json:"status"`
+	OccurredAt     time.Time       `json:"occurred_at"`
+	Payload        json.RawMessage `json:"payload"`
 }
 
 // V0002TaskControlPage is the response for

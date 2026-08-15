@@ -19,11 +19,13 @@ type ClaimRequest struct {
 // retains that field so the wire shape can be checked at the
 // boundary even when added fields are introduced.
 type ClaimResponse struct {
-	Claim         string          `json:"claim"`
-	Task          TaskListEntry   `json:"task"`
-	ResolvedImage *ImageReference `json:"resolved_image"`
-	ImageSource   *string         `json:"image_source"`
-	ClaimedAt     *string         `json:"claimed_at"`
-	EnvironmentID *string         `json:"environment_id"`
-	ScopeToken    *string         `json:"scope_token"`
+	Claim            string          `json:"claim"`
+	Task             TaskListEntry   `json:"task"`
+	ResolvedImage    *ImageReference `json:"resolved_image"`
+	ImageSource      *string         `json:"image_source"`
+	ClaimedAt        *string         `json:"claimed_at"`
+	LaunchParameters bool            `json:"launch_parameters"`
+	ScopeToken       *string         `json:"scope_token"`
+	// Deprecated: task launch parameters are a merged snapshot, not one definition.
+	EnvironmentID *string `json:"-"`
 }

@@ -233,11 +233,11 @@ func (e *Executor) startTaskV0002(ctx context.Context, summary platform.V0002Tas
 	}
 
 	podEnv := openHandsPodEnv(e.cfg.OpenHandsAPIKey)
-	if claim.EnvironmentID != nil {
+	if claim.LaunchParameters {
 		if claim.ScopeToken == nil || *claim.ScopeToken == "" {
-			return fmt.Errorf("claim %s: environment requires scope_token", taskID)
+			return fmt.Errorf("claim %s: launch parameters require scope_token", taskID)
 		}
-		values, err := e.registry.OpenEnvironment(ctx, *claim.EnvironmentID, taskID, *claim.ScopeToken)
+		values, err := e.registry.OpenEnvironment(ctx, taskID, *claim.ScopeToken)
 		if err != nil {
 			return fmt.Errorf("open environment for task %s: %w", taskID, err)
 		}
@@ -346,6 +346,9 @@ func (e *Executor) startTaskV0002(ctx context.Context, summary platform.V0002Tas
 		imageSource:   imageSource,
 		lastObserved:  time.Now().UTC(),
 		prompt:        promptFromPayload(claim.Task.Payload),
+		llmAPIKey:     podEnv["OPENAI_API_KEY"],
+		llmBaseURL:    podEnv["OPENAI_BASE_URL"],
+		llmModel:      podEnv["OPENAI_MODEL"],
 		cancel:        nil,
 		doneCh:        make(chan struct{}),
 		exitCh:        make(chan struct{}),

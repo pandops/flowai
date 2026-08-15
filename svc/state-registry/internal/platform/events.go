@@ -94,3 +94,13 @@ type TerminalSnapshot struct {
 	OccurredAt time.Time
 	EventID    string
 }
+
+type UIStreamFrame struct {
+	FrameID    string          `json:"frame_id"`
+	TeamID     string          `json:"team_id"`
+	FrameType  string          `json:"frame_type"`
+	TaskID     *string         `json:"task_id"`
+	ControlID  *string         `json:"control_id"`
+	OccurredAt string          `json:"occurred_at"`
+	Data       json.RawMessage `json:"data"`
+}

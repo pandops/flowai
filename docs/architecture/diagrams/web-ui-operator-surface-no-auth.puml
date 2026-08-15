@@ -1,0 +1,19 @@
+' diagram-type: sequence
+@startuml
+title v0006 Web UI — selected team surface
+actor Operator
+participant "Web UI" as UI
+participant "Mocked proxy\n(test only)" as Proxy
+database "State Registry" as Registry
+Operator -> UI: open application
+UI -> Proxy: GET /ui/v1/teams
+Proxy --> UI: supplied team_id/name list
+UI -> UI: select exactly one team
+UI -> Proxy: GET /ui/v1/teams/{selected}/dashboard
+Proxy -> Registry: forward selected-team read
+Registry --> Proxy: canonical response
+Proxy --> UI: unchanged response
+Operator -> UI: select another team
+UI -> UI: invalidate old requests/state
+UI -> Proxy: close old stream; open /teams/{new}/stream
+@enduml

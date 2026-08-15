@@ -48,6 +48,7 @@ func allowLoopbackOrigin(r *http.Request) bool {
 type eventsStreamHandlers struct {
 	logger *slog.Logger
 	repo   store.StreamRepository
+	uiRepo store.UIStreamRepository
 }
 
 // RegisterEventsStream mounts GET /v1/events/stream under the
@@ -65,7 +66,75 @@ func RegisterEventsStream(r chi.Router, logger *slog.Logger, repositories ...sto
 		repo = repositories[0]
 	}
 	h := &eventsStreamHandlers{logger: logger, repo: repo}
+	if candidate, ok := any(repo).(store.UIStreamRepository); ok {
+		h.uiRepo = candidate
+	}
 	r.With(h.requireTrustedGateway).Get(eventsStreamPath, h.stream)
+	r.Get("/ui/v1/teams/{team_id}/stream", h.uiStream)
+}
+
+func (h *eventsStreamHandlers) uiStream(w http.ResponseWriter, r *http.Request) {
+	teamID := strings.TrimSpace(chi.URLParam(r, "team_id"))
+	if teamID == "" || !validListingIdentifier(teamID) || h.uiRepo == nil {
+		uiError(w, http.StatusNotFound, "not_found", "resource not found")
+		return
+	}
+	conn, err := eventsStreamUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	taskID := strings.TrimSpace(r.URL.Query().Get("task_id"))
+	if taskID != "" && !validListingIdentifier(taskID) {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	after := time.Now().UTC()
+	if rawAfter := strings.TrimSpace(r.URL.Query().Get("after")); rawAfter != "" {
+		parsed, parseErr := time.Parse(time.RFC3339Nano, rawAfter)
+		if parseErr != nil {
+			return
+		}
+		after = parsed.UTC()
+	}
+	afterFrameID := strings.TrimSpace(r.URL.Query().Get("after_frame_id"))
+	if len(afterFrameID) > 200 {
+		return
+	}
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-done:
+			return
+		case <-ticker.C:
+			frames, err := h.uiRepo.ListUIStreamFrames(r.Context(), teamID, taskID, after, afterFrameID)
+			if err != nil {
+				h.logger.Error("UI stream read failed", "request_id", requestID(r), "error", err)
+				return
+			}
+			for _, frame := range frames {
+				if err := conn.WriteJSON(frame); err != nil {
+					return
+				}
+				occurredAt, err := time.Parse(time.RFC3339Nano, frame.OccurredAt)
+				if err != nil {
+					return
+				}
+				after, afterFrameID = occurredAt, frame.FrameID
+			}
+		}
+	}
 }
 
 func (h *eventsStreamHandlers) requireTrustedGateway(next http.Handler) http.Handler {

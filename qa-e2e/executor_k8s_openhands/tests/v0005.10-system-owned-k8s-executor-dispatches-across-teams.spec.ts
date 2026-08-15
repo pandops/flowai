@@ -28,7 +28,7 @@ test("v0005.10 system-owned k8s executor dispatches across teams", async ({
     scope: "system",
     authorized_tag: "k8s-cluster-a",
   });
-  expect(record).not.toHaveProperty("team_id");
+  expect(record.team_id).toBeUndefined();
 
   const first = await suite.ingestTask(suite.teamB, {
     prompt: "system team B",

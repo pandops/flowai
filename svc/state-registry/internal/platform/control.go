@@ -1,6 +1,9 @@
 package platform
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type GatewayIdentity struct {
 	TeamID     string
@@ -27,8 +30,38 @@ type TaskControl struct {
 	RequestedAt    time.Time `json:"requested_at"`
 }
 
+type Control struct {
+	ControlID string `json:"control_id"`
+	Status    string `json:"status"`
+}
+
 type ControlPage struct {
 	Items []TaskControl `json:"items"`
+}
+
+const TaskControlEventTypeRequested = "task.control.requested"
+
+type TaskControlEventAppendRequest struct {
+	ControlEventID string          `json:"control_event_id"`
+	Status         string          `json:"status"`
+	OccurredAt     time.Time       `json:"occurred_at"`
+	Payload        json.RawMessage `json:"payload"`
+}
+
+type TaskControlEvent struct {
+	ControlEventID string          `json:"control_event_id"`
+	ControlID      string          `json:"control_id"`
+	TaskID         string          `json:"task_id"`
+	TeamID         string          `json:"team_id"`
+	ExecutorID     *string         `json:"executor_id"`
+	EventType      string          `json:"event_type"`
+	Status         string          `json:"status"`
+	OccurredAt     time.Time       `json:"occurred_at"`
+	Payload        json.RawMessage `json:"payload"`
+}
+
+type TaskControlEventPage struct {
+	Items []TaskControlEvent `json:"items"`
 }
 
 type AuditEntry struct {

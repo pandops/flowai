@@ -51,6 +51,9 @@ const (
 // constants match the OpenAPI `ImageSource` enum verbatim.
 const (
 	ImageSourceTaskOverride        = "task_override"
+	ImageSourceTaskTypeParameters  = "task_type_launch_parameters"
+	ImageSourceTeamParameters      = "team_launch_parameters"
+	ImageSourceGlobalParameters    = "global_launch_parameters"
 	ImageSourceTaskTypeDefault     = "task_type_default"
 	ImageSourceSourceSystemDefault = "source_system_default"
 	ImageSourceTeamDefault         = "team_default"

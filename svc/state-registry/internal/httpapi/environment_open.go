@@ -19,7 +19,7 @@ type environmentOpenHandlers struct {
 
 func RegisterEnvironmentOpen(r chi.Router, logger *slog.Logger, repo store.OpenEnvironmentRepository, ops *DecryptOps) {
 	h := &environmentOpenHandlers{logger: logger, repo: repo, ops: ops}
-	r.With(h.requireExecutorIdentity).Get("/v1/environments/{environment_id}/open", h.open)
+	r.With(h.requireExecutorIdentity).Get("/v1/tasks/{task_id}/launch-parameters/open", h.open)
 }
 
 func (h *environmentOpenHandlers) requireExecutorIdentity(next http.Handler) http.Handler {
@@ -27,10 +27,9 @@ func (h *environmentOpenHandlers) requireExecutorIdentity(next http.Handler) htt
 }
 
 func (h *environmentOpenHandlers) open(w http.ResponseWriter, r *http.Request) {
-	environmentID := strings.TrimSpace(chi.URLParam(r, "environment_id"))
-	taskID := strings.TrimSpace(r.URL.Query().Get("task_id"))
+	taskID := strings.TrimSpace(chi.URLParam(r, "task_id"))
 	token := strings.TrimSpace(r.Header.Get("X-FlowAI-Scope-Token"))
-	if environmentID == "" || taskID == "" || token == "" || !validListingIdentifier(environmentID) || !validListingIdentifier(taskID) {
+	if taskID == "" || token == "" || !validListingIdentifier(taskID) {
 		h.notFound(w, r)
 		return
 	}
@@ -41,7 +40,6 @@ func (h *environmentOpenHandlers) open(w http.ResponseWriter, r *http.Request) {
 	// non-revealing 404 envelope still surfaces the operator's
 	// request_id without leaking any token or payload material.
 	req := store.OpenEnvironmentRequest{
-		EnvironmentID: environmentID,
 		TaskID:        taskID,
 		Token:         token,
 		Identity:      taskEventExecutorIdentity(r),
@@ -61,6 +59,6 @@ func (h *environmentOpenHandlers) open(w http.ResponseWriter, r *http.Request) {
 
 func (h *environmentOpenHandlers) notFound(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusNotFound, errorResponse{
-		Code: "environment_unknown_or_unavailable", Message: "environment is unknown or unavailable", RequestID: requestID(r),
+		Code: "launch_parameters_unknown_or_unavailable", Message: "launch parameters are unknown or unavailable", RequestID: requestID(r),
 	})
 }

@@ -21,7 +21,7 @@ executor:
   scope: team
   teamID: team-a
   authorizedTag: k8s-cluster-a
-  maxPods: 2
+  maxPods: 1
   cacheDir: /var/lib/flowai/executor-k8s/cache
 
 openhands:

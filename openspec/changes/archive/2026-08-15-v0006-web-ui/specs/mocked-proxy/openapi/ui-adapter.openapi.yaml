@@ -1,0 +1,53 @@
+openapi: 3.1.0
+info:
+  title: FlowAI v0006 Mocked UI Adapter
+  version: 0.6.0
+  license: {name: Proprietary, identifier: LicenseRef-Proprietary}
+  description: Test-only adapter additions; all selected-team paths otherwise follow the State Registry UI Operator API unchanged.
+servers:
+  - url: /
+security: []
+paths:
+  /ui/v1/teams:
+    get:
+      summary: List externally prepared teams for the test operator
+      operationId: listPreparedTeams
+      responses:
+        '200':
+          description: Exact fixture-provided team list; no membership or Keycloak discovery is performed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TeamOption'
+        '400':
+          description: Malformed test request
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '500':
+          description: Invalid mocked-proxy fixture configuration
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+components:
+  schemas:
+    TeamOption:
+      type: object
+      required: [team_id, team_name]
+      additionalProperties: false
+      properties:
+        team_id: {type: string, minLength: 1}
+        team_name: {type: string, minLength: 1}
+    Error:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: {type: string}
+        message: {type: string}

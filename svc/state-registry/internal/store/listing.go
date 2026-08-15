@@ -203,7 +203,7 @@ func (s *Store) ListTasks(ctx context.Context, filter platform.AdminTaskFilter, 
 	query := fmt.Sprintf(`
 		SELECT t.task_id, t.team_id, t.source_system_id, t.source_id, t.task_type_id,
 		       t.required_tag, t.payload, t.current_state, t.owner_command_id, t.executor_id,
-		       t.project_id, t.environment_id,
+		       t.project_id,
 		       t.image, t.resolved_image, t.image_source,
 		       t.ingested_at, t.claimed_at
 		FROM tasks t

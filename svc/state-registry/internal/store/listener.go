@@ -127,19 +127,19 @@ func (s *Store) IngestTask(
 		INSERT INTO tasks (
 			task_id, team_id, source_system_id, source_id,
 			task_type_id, required_tag, payload, project_id,
-			environment_id, image, ingested_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb,
+			image, ingested_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb,
 		          date_trunc('second', transaction_timestamp()))
 		ON CONFLICT (team_id, source_system_id, source_id) DO NOTHING
 		RETURNING
 			task_id, team_id, source_system_id, source_id,
 			task_type_id, required_tag, payload, current_state,
-			owner_command_id, executor_id, project_id, environment_id,
+			owner_command_id, executor_id, project_id,
 			image, resolved_image, image_source, ingested_at, claimed_at`,
 		taskID,
 		ident.TeamID, ident.SourceSystemID, req.SourceID,
 		req.TaskTypeID, executionTag, payload,
-		req.ProjectID, req.EnvironmentID, image,
+		req.ProjectID, image,
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		// Step 4: dedupe. The conflict path yields no rows; re-select
@@ -150,7 +150,7 @@ func (s *Store) IngestTask(
 			SELECT
 				task_id, team_id, source_system_id, source_id,
 				task_type_id, required_tag, payload, current_state,
-				owner_command_id, executor_id, project_id, environment_id,
+				owner_command_id, executor_id, project_id,
 				image, resolved_image, image_source, ingested_at, claimed_at
 			FROM tasks
 			WHERE team_id = $1 AND source_system_id = $2 AND source_id = $3`,
@@ -186,7 +186,6 @@ func scanTaskRow(row interface {
 		owner       sql.NullString
 		exec        sql.NullString
 		projectID   sql.NullString
-		environment sql.NullString
 		image       []byte
 		resolvedImg []byte
 		imageSrc    sql.NullString
@@ -196,7 +195,7 @@ func scanTaskRow(row interface {
 	if err := row.Scan(
 		&entry.TaskID, &entry.TeamID, &entry.SourceSystemID, &entry.SourceID,
 		&entry.TaskTypeID, &entry.RequiredTag, &payload, &entry.CurrentState,
-		&owner, &exec, &projectID, &environment,
+		&owner, &exec, &projectID,
 		&image, &resolvedImg, &imageSrc, &ingestedAt, &claimedAt,
 	); err != nil {
 		return platform.TaskListEntry{}, time.Time{}, err
@@ -213,10 +212,6 @@ func scanTaskRow(row interface {
 	if projectID.Valid {
 		s := projectID.String
 		entry.ProjectID = &s
-	}
-	if environment.Valid {
-		s := environment.String
-		entry.EnvironmentID = &s
 	}
 	if err := decodeNullableImage(image, &entry.Image); err != nil {
 		return platform.TaskListEntry{}, time.Time{}, fmt.Errorf("decode task image: %w", err)

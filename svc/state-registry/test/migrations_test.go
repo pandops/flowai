@@ -36,6 +36,11 @@ var domainTables = []string{
 	"task_control_requests",
 	"source_systems",
 	"task_types",
+	"environment_revisions",
+	"task_control_events",
+	"task_log_chunks",
+	"task_launch_parameter_snapshots",
+	"task_launch_parameter_secret_refs",
 }
 
 // ---------------------------------------------------------------------------
@@ -54,8 +59,8 @@ func TestMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read goose current version: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("goose current version = %d, want 1 (00001_initial_schema.sql applied)", version)
+	if version != 2 {
+		t.Fatalf("goose current version = %d, want 2 (v0006 schema applied)", version)
 	}
 
 	for _, table := range domainTables {
@@ -65,7 +70,7 @@ func TestMigrations(t *testing.T) {
 	}
 }
 
-// TestTeamOwnedSchema asserts the twelve canonical domain tables are present.
+// TestTeamOwnedSchema asserts the canonical domain tables are present.
 func TestTeamOwnedSchema(t *testing.T) {
 	db := freshDB(t)
 	applyMigrations(t, db)
@@ -139,7 +144,7 @@ func TestNormalizedRelationships(t *testing.T) {
 		{"task_events", "executors"},
 		{"executor_events", "executors"},
 		{"environment_definitions", "teams"},
-		{"environment_definitions", "tasks"},
+		{"environment_definitions", "task_types"},
 		{"secrets", "teams"},
 		{"secrets", "environment_definitions"},
 		{"secret_versions", "secrets"},
@@ -237,30 +242,21 @@ func TestPersistenceConstraints(t *testing.T) {
 // commit to a physical column name (task_id vs parent_task_id);
 // GREEN may choose either as long as a column references tasks and
 // the same-team rejection is encoded at the constraint level. The test
-// first asserts the precondition (environment_definitions table
-// exists and has SOME column referencing tasks); the failure
-// message explains the expected logical relationship in plain
-// English so the GREEN author knows what to add.
-func TestTaskOwnedEnvironmentForeignKey(t *testing.T) {
+// Task-type launch parameters must use the composite team/task-type
+// relationship; task-owned definitions were removed by v0006.
+func TestTaskTypeEnvironmentForeignKey(t *testing.T) {
 	db := freshDB(t)
 	applyMigrations(t, db)
 	preflight(t, db)
 
 	if !tableExists(t, db, "environment_definitions") {
-		t.Fatalf("task-owned environment: environment_definitions table missing (Section 2 requires every environment row to reference a parent task in the same team)")
+		t.Fatalf("task-type environment: environment_definitions table missing")
 	}
-	if !tableExists(t, db, "tasks") {
-		t.Fatalf("task-owned environment: tasks table missing (cannot assert environment_definitions parent-task same-team constraint)")
+	if !tableExists(t, db, "task_types") {
+		t.Fatalf("task-type environment: task_types table missing")
 	}
-
-	// Assert some column on environment_definitions
-	// references tasks. We do not pin the physical name; we only
-	// require that the catalog reports a foreign-key constraint
-	// between environment_definitions and tasks. If the column or
-	// FK is absent, the failure message names the missing
-	// relationship.
-	if !fkFromToExists(t, db, "environment_definitions", "tasks") {
-		t.Errorf("task-owned environment: environment_definitions has no foreign-key reference to tasks (Section 2 requires every environment_definitions row to be tied to a parent task in the same team)")
+	if !fkFromToExists(t, db, "environment_definitions", "task_types") {
+		t.Errorf("task-type environment: missing composite ownership reference to task_types")
 	}
 }
 
@@ -363,8 +359,8 @@ func TestRequiredTeamDefaultImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read goose current version after re-up: %v", err)
 	}
-	if version != 1 {
-		t.Fatalf("goose version after re-up = %d, want 1", version)
+	if version != 2 {
+		t.Fatalf("goose version after re-up = %d, want 2", version)
 	}
 
 	if !tableExists(t, db, "teams") {
