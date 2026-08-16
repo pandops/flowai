@@ -42,7 +42,7 @@ import {
   registerExecutor,
   snapshotResponse,
 } from "./_setup";
-import { uniqueExecutorId } from "../../fixtures/executor_binary";
+import { uniqueExecutorId } from "../../fixtures/executor_container";
 
 let worker: RegistryWorker;
 
@@ -736,7 +736,8 @@ test("v0002.26 deterministic ordering (occurred_at ASC, event_id ASC); retries d
     const body = await events.json();
     const items = Array.isArray(body.items) ? body.items : [];
     const tieRows = items.filter(
-      (e: { occurred_at: string }) => e.occurred_at === tieOccurredAt,
+      (e: { occurred_at: string }) =>
+        Date.parse(e.occurred_at) === Date.parse(tieOccurredAt),
     );
     expect(
       tieRows.length,

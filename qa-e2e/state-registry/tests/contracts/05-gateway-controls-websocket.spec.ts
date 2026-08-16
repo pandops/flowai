@@ -37,7 +37,7 @@ import {
   snapshotResponse,
   imageReference,
 } from "./_setup";
-import { uniqueExecutorId } from "../../fixtures/executor_binary";
+import { uniqueExecutorId } from "../../fixtures/executor_container";
 import { openApiOnlySocketWithHeaders } from "../../fixtures/websocket";
 
 let worker: RegistryWorker;

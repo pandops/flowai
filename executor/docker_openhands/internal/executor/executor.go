@@ -74,6 +74,7 @@ type Config struct {
 	ExecutorAPIBind      string        `yaml:"executor_api_bind"`
 	MaxContainers        int           `yaml:"executor_max_containers"`
 	DockerSocketPath     string        `yaml:"docker_socket_path"`
+	DockerPublishedHost  string        `yaml:"docker_published_host"`
 	OpenHandsImage       string        `yaml:"openhands_image"`
 	OpenHandsPortStart   int           `yaml:"openhands_host_port_start"`
 	OpenHandsPortEnd     int           `yaml:"openhands_host_port_end"`
@@ -123,7 +124,8 @@ func LoadConfig(yamlPath string) (*Config, error) {
 	cfg := &Config{
 		ExecutorAPIBind:      "127.0.0.1:8020",
 		MaxContainers:        2,
-		DockerSocketPath:     "/var/run/docker.sock",
+		DockerSocketPath:     "",
+		DockerPublishedHost:  "127.0.0.1",
 		OpenHandsImage:       "ghcr.io/openhands/agent-server:latest-python",
 		OpenHandsPortStart:   18000,
 		OpenHandsPortEnd:     18099,
@@ -177,6 +179,7 @@ func overrideEnv(cfg *Config) {
 	cfg.ExecutorAPIBind = envOr("EXECUTOR_API_BIND", cfg.ExecutorAPIBind)
 	cfg.MaxContainers = envInt("EXECUTOR_MAX_CONTAINERS", cfg.MaxContainers)
 	cfg.DockerSocketPath = envOr("DOCKER_SOCKET_PATH", cfg.DockerSocketPath)
+	cfg.DockerPublishedHost = envOr("DOCKER_PUBLISHED_HOST", cfg.DockerPublishedHost)
 	cfg.OpenHandsImage = envOr("OPENHANDS_IMAGE", cfg.OpenHandsImage)
 	cfg.OpenHandsPortStart = envInt("OPENHANDS_HOST_PORT_START", cfg.OpenHandsPortStart)
 	cfg.OpenHandsPortEnd = envInt("OPENHANDS_HOST_PORT_END", cfg.OpenHandsPortEnd)
@@ -212,6 +215,9 @@ func overrideEnv(cfg *Config) {
 
 // Validate enforces invariants. Returns nil if all checks pass.
 func (c *Config) Validate() error {
+	if strings.TrimSpace(c.DockerSocketPath) == "" {
+		return errors.New("DOCKER_SOCKET_PATH must be configured explicitly")
+	}
 	if c.MaxContainers < 1 {
 		return errors.New("EXECUTOR_MAX_CONTAINERS must be >= 1")
 	}

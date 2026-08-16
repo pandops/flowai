@@ -26,3 +26,17 @@ npx playwright show-trace ../reports/video/state-registry/<test>/trace.zip
 ```
 
 Implementation-active E2E case definitions live in `qa-e2e/test-cases/`.
+
+## Run all E2E suites
+
+Run every E2E suite with:
+
+```sh
+npm --prefix qa-e2e test
+```
+
+The root runner creates exactly one k3d cluster, passes its name and
+kubeconfig to both K8s-capable Playwright suites, and deletes the cluster after
+all suites finish or after any failure. Each suite still creates and deletes
+its own namespaces and Pods. Running either package directly remains
+self-contained and creates its own temporary cluster.

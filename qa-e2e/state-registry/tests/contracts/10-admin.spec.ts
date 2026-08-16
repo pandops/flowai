@@ -34,7 +34,7 @@ import {
   imageReference,
   type ImageReference,
 } from "./_setup";
-import { uniqueExecutorId } from "../../fixtures/executor_binary";
+import { uniqueExecutorId } from "../../fixtures/executor_container";
 
 let worker: RegistryWorker;
 

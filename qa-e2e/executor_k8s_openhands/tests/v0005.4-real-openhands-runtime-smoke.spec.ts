@@ -4,6 +4,7 @@ test("v0005.4 real OpenHands runtime writes the deterministic workspace marker",
   suite,
 }) => {
   test.setTimeout(300_000);
+  const llmEnvironmentID = await suite.configureLLM(suite.teamA);
   const task = await suite.ingestTask(
     suite.teamA,
     { prompt: "Write the FlowAI marker and finish." },
@@ -58,4 +59,5 @@ test("v0005.4 real OpenHands runtime writes the deterministic workspace marker",
     "/workspace/project/flowai-real-runtime.marker",
   );
   expect(marker).toBe("flowai-real-runtime-ok");
+  await suite.clearLLM(suite.teamA, llmEnvironmentID);
 });
