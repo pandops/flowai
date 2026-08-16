@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.25.7-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY executor/docker_openhands ./executor/docker_openhands
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/executor_docker_openhands ./executor/docker_openhands/cmd/executor_docker_openhands
+
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /app
+COPY --from=build /out/executor_docker_openhands /executor_docker_openhands
+COPY executor/docker_openhands/configs/executor_docker_openhands.yaml /app/executor/docker_openhands/configs/executor_docker_openhands.yaml
+USER 65532:65532
+EXPOSE 8020
+ENTRYPOINT ["/executor_docker_openhands"]

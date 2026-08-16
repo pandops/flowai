@@ -79,9 +79,9 @@ import {
   type ImageReference,
 } from "./_setup";
 import {
-  startExecutorBinary,
+  startExecutorContainer,
   type ExecutorHandles,
-} from "../../fixtures/executor_binary";
+} from "../../fixtures/executor_container";
 
 const DOCKER_SOCKET =
   process.env["FLOWAI_DOCKER_SOCKET"] ?? "/run/user/1000/podman/podman.sock";
@@ -298,6 +298,7 @@ async function startRecordingDockerProxy(
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(socketPath, () => {
+      fs.chmodSync(socketPath, 0o660);
       server.off("error", reject);
       resolve();
     });
@@ -578,8 +579,9 @@ async function startExecutor(opts: {
   registryUrl: string;
   dockerSocket?: string;
 }): Promise<{ handles: ExecutorHandles; redactedLogs(): string }> {
-  const handles = await startExecutorBinary({
-    registryUrl: worker.baseUrl,
+  const handles = await startExecutorContainer({
+    registryUrl: worker.containerBaseUrl,
+    networkName: worker.networkName,
     scope: opts.scope,
     teamId: opts.teamId,
     authorizedTag: opts.authorizedTag,

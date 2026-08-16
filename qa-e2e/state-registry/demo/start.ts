@@ -4,7 +4,7 @@ import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { startExecutorBinary } from "../fixtures/executor_binary";
+import { startExecutorContainer } from "../fixtures/executor_container";
 import { systemAdministrator } from "../fixtures/identities";
 import { startRegistryWorker } from "../fixtures/registry_worker";
 import { startMockedProxy } from "../../web-ui/fixtures/mocked_proxy";
@@ -82,8 +82,9 @@ async function main(): Promise<void> {
       `cannot create demo launch parameters: ${createDefinition.status} ${await createDefinition.text()}`,
     );
 
-  const executor = await startExecutorBinary({
-    registryUrl: registry.baseUrl,
+  const executor = await startExecutorContainer({
+    registryUrl: registry.containerBaseUrl,
+    networkName: registry.networkName,
     scope: "team",
     teamId: team.admin.team_id,
     authorizedTag: "openhands",

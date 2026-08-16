@@ -25,10 +25,13 @@ export type K3dExecutorSuite = {
   registryBaseURL: string;
   executorID: string;
   realAgentImage: { repository: string; digest: string };
+  mockLLMBaseURL: string;
   teamA: BootstrapResult;
   teamB: BootstrapResult;
   kubectl: (...args: string[]) => Promise<string>;
   registryFetch: (pathname: string, init?: RequestInit) => Promise<Response>;
+  configureLLM: (team: BootstrapResult) => Promise<string>;
+  clearLLM: (team: BootstrapResult, environmentID: string) => Promise<void>;
   ingestTask: (
     team: BootstrapResult,
     payload?: Record<string, unknown>,
@@ -325,7 +328,8 @@ async function collectDiagnostics(
 export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
   suite: [
     async ({}, use) => {
-      const clusterName = freshClusterName();
+      const sharedCluster = process.env.FLOWAI_E2E_K3D_CLUSTER;
+      const clusterName = sharedCluster ?? freshClusterName();
       const artifactsDir = await fs.mkdtemp(
         path.join(os.tmpdir(), `${clusterName}-artifacts-`),
       );
@@ -335,9 +339,9 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
       const nodeDataRoot = process.env.FLOWAI_K3D_DATA_ROOT
         ? path.resolve(process.env.FLOWAI_K3D_DATA_ROOT)
         : path.resolve(__dirname, "..", "..", "..");
-      const nodeDataDir = await fs.mkdtemp(
-        path.join(nodeDataRoot, ".k3d-data-"),
-      );
+      const nodeDataDir = sharedCluster
+        ? ""
+        : await fs.mkdtemp(path.join(nodeDataRoot, ".k3d-data-"));
       let registry: RegistryWorker | undefined;
       let registryProxy: net.Server | undefined;
       let mockLLM: ChildProcess | undefined;
@@ -392,7 +396,7 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
             "--tag",
             EXECUTOR_IMAGE,
             "--file",
-            "executor/k8s-openhands/Dockerfile",
+            "executor/k8s-openhands/Containerfile",
             ".",
           ],
           { timeoutMs: 600_000 },
@@ -428,26 +432,30 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           { timeoutMs: 600_000 },
         );
 
-        await run(
-          "k3d",
-          [
-            "cluster",
-            "create",
-            clusterName,
-            "--wait",
-            "--timeout",
-            "180s",
-            "--volume",
-            `${nodeDataDir}:/var/lib/rancher/k3s@server:0`,
-            "--k3s-arg",
-            "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:0",
-            "--k3s-arg",
-            "--kube-proxy-arg=conntrack-max-per-core=0@server:0",
-          ],
-          { timeoutMs: 300_000 },
-        );
-        created = true;
-        kubeconfig = await run("k3d", ["kubeconfig", "write", clusterName]);
+        if (!sharedCluster) {
+          await run(
+            "k3d",
+            [
+              "cluster",
+              "create",
+              clusterName,
+              "--wait",
+              "--timeout",
+              "180s",
+              "--volume",
+              `${nodeDataDir}:/var/lib/rancher/k3s@server:0`,
+              "--k3s-arg",
+              "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:0",
+              "--k3s-arg",
+              "--kube-proxy-arg=conntrack-max-per-core=0@server:0",
+            ],
+            { timeoutMs: 300_000 },
+          );
+          created = true;
+        }
+        kubeconfig =
+          process.env.FLOWAI_E2E_KUBECONFIG ??
+          (await run("k3d", ["kubeconfig", "write", clusterName]));
         const node = `k3d-${clusterName}-server-0`;
         const nodeHosts = await run("docker", [
           "exec",
@@ -497,14 +505,6 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           "status",
           "-n",
           NAMESPACE,
-          "deployment/flowai-local-path-provisioner",
-          "--timeout=180s",
-        );
-        await kubectl(
-          "rollout",
-          "status",
-          "-n",
-          NAMESPACE,
           "deployment/executor-k8s-openhands",
           "--timeout=180s",
         );
@@ -534,6 +534,62 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           init: RequestInit = {},
         ): Promise<Response> =>
           await fetch(`${registry!.baseUrl}${pathname}`, init);
+
+        const configureLLM = async (team: BootstrapResult): Promise<string> => {
+          const created = await registryFetch(
+            `/ui/v1/teams/${team.admin.team_id}/launch-parameters`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: `k3d-llm-${crypto.randomUUID()}`,
+                scope: "team",
+                task_type_id: null,
+                env: {
+                  OPENAI_MODEL: "openai/flowai-mock",
+                  OPENAI_BASE_URL: `http://${hostGateway}:${mockLLMPort}/v1`,
+                },
+                image: null,
+              }),
+            },
+          );
+          if (created.status !== 201)
+            throw new Error(
+              `LLM parameters returned ${created.status}: ${await created.text()}`,
+            );
+          const definition = (await created.json()) as {
+            environment_id: string;
+          };
+          const secret = await registryFetch(
+            `/ui/v1/teams/${team.admin.team_id}/launch-parameters/${definition.environment_id}/secrets`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                key: "OPENAI_API_KEY",
+                value: "flowai-placeholder-key",
+              }),
+            },
+          );
+          if (secret.status !== 201)
+            throw new Error(
+              `LLM secret returned ${secret.status}: ${await secret.text()}`,
+            );
+          return definition.environment_id;
+        };
+        const clearLLM = async (
+          team: BootstrapResult,
+          environmentID: string,
+        ): Promise<void> => {
+          const response = await registryFetch(
+            `/ui/v1/teams/${team.admin.team_id}/launch-parameters/${environmentID}`,
+            { method: "DELETE" },
+          );
+          if (response.status !== 204)
+            throw new Error(
+              `LLM parameter cleanup returned ${response.status}: ${await response.text()}`,
+            );
+        };
 
         const ingestTask = async (
           team: BootstrapResult,
@@ -648,10 +704,13 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           registryBaseURL: registry.baseUrl,
           executorID: ready.executor_id,
           realAgentImage,
+          mockLLMBaseURL: `http://${hostGateway}:${mockLLMPort}/v1`,
           teamA,
           teamB,
           kubectl,
           registryFetch,
+          configureLLM,
+          clearLLM,
           ingestTask,
           gatewayFetch,
           installSystemExecutor,
@@ -673,6 +732,20 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
             () => undefined,
           );
         }
+        if (sharedCluster && kubeconfig !== "") {
+          await run(
+            "kubectl",
+            [
+              "delete",
+              "namespace",
+              NAMESPACE,
+              "flowai-executor-k8s-system",
+              "--ignore-not-found=true",
+              "--wait=true",
+            ],
+            { env: { KUBECONFIG: kubeconfig }, timeoutMs: 180_000 },
+          ).catch(() => undefined);
+        }
         await registry?.teardown().catch(() => undefined);
         mockLLM?.kill("SIGTERM");
         await new Promise<void>((resolve) => {
@@ -682,7 +755,7 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           }
           registryProxy.close(() => resolve());
         });
-        await removeNodeDataDir(nodeDataDir);
+        if (nodeDataDir !== "") await removeNodeDataDir(nodeDataDir);
       }
     },
     { scope: "worker", timeout: 1_200_000 },

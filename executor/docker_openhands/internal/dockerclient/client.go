@@ -172,13 +172,14 @@ func IsNotFound(err error) bool {
 // SDK. The underlying *dockerclient.Client is intentionally kept unexported
 // so SDK types never escape the package boundary.
 type SDKClient struct {
-	cli *dockerclient.Client
+	cli           *dockerclient.Client
+	publishedHost string
 }
 
 // NewSDKClient returns a Client backed by the official Docker Engine SDK.
 // sockPath is the path to the Docker daemon UNIX socket
 // (e.g. /var/run/docker.sock). When empty, the SDK default applies.
-func NewSDKClient(sockPath string) (*SDKClient, error) {
+func NewSDKClient(sockPath string, publishedHosts ...string) (*SDKClient, error) {
 	if sockPath == "" {
 		sockPath = "/var/run/docker.sock"
 	}
@@ -190,7 +191,11 @@ func NewSDKClient(sockPath string) (*SDKClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	return &SDKClient{cli: cli}, nil
+	publishedHost := "127.0.0.1"
+	if len(publishedHosts) > 0 && strings.TrimSpace(publishedHosts[0]) != "" {
+		publishedHost = strings.TrimSpace(publishedHosts[0])
+	}
+	return &SDKClient{cli: cli, publishedHost: publishedHost}, nil
 }
 
 // Ping verifies the daemon is reachable.
@@ -288,7 +293,11 @@ func (c *SDKClient) StartContainer(ctx context.Context, spec ContainerSpec) (*Co
 		AutoRemove: false,
 	}
 	if len(spec.Ports) > 0 {
-		portBindings, exposedPorts := buildPortBindings(spec.Ports)
+		bindHost := "127.0.0.1"
+		if c.publishedHost != "127.0.0.1" && c.publishedHost != "localhost" {
+			bindHost = "0.0.0.0"
+		}
+		portBindings, exposedPorts := buildPortBindingsForHost(spec.Ports, bindHost)
 		cfg.ExposedPorts = exposedPorts
 		hostCfg.PortBindings = portBindings
 	}
@@ -402,7 +411,7 @@ func (c *SDKClient) SubscribeEvents(ctx context.Context, filter EventFilter) (<-
 
 // ContainerURL implements Client.
 func (c *SDKClient) ContainerURL(hostPort int) string {
-	return fmt.Sprintf("http://127.0.0.1:%d", hostPort)
+	return fmt.Sprintf("http://%s:%d", c.publishedHost, hostPort)
 }
 
 // Close releases any resources held by the underlying SDK client.
@@ -416,6 +425,10 @@ func (c *SDKClient) Close() error {
 // buildPortBindings converts the simple PortMapping list into the SDK's
 // nat.PortMap and ExposedPorts set.
 func buildPortBindings(ports []PortMapping) (nat.PortMap, nat.PortSet) {
+	return buildPortBindingsForHost(ports, "127.0.0.1")
+}
+
+func buildPortBindingsForHost(ports []PortMapping, host string) (nat.PortMap, nat.PortSet) {
 	bindings := nat.PortMap{}
 	exposed := nat.PortSet{}
 	for _, p := range ports {
@@ -428,7 +441,7 @@ func buildPortBindings(ports []PortMapping) (nat.PortMap, nat.PortSet) {
 			continue
 		}
 		bindings[key] = []nat.PortBinding{
-			{HostIP: "127.0.0.1", HostPort: fmt.Sprintf("%d", p.HostPort)},
+			{HostIP: host, HostPort: fmt.Sprintf("%d", p.HostPort)},
 		}
 		exposed[key] = struct{}{}
 	}

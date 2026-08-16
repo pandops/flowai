@@ -20,14 +20,14 @@ test("v0006.24 → v0006.25 → v0006.23 created team, K8s Executor and complete
   );
   try {
     await page.goto(proxy.baseUrl);
-    await expect(page.getByRole("combobox", { name: "Команда" })).toHaveValue(
+    await expect(page.getByRole("combobox", { name: "Team" })).toHaveValue(
       suite.teamA.admin.team_id,
     );
     await expect(
-      page.getByRole("combobox", { name: "Команда" }).locator("option:checked"),
+      page.getByRole("combobox", { name: "Team" }).locator("option:checked"),
     ).toHaveText(suite.teamA.admin.team_name);
 
-    await page.getByRole("button", { name: "Исполнители" }).click();
+    await page.getByRole("button", { name: "Executors" }).click();
     const executorLink = page.getByRole("button", { name: suite.executorID });
     await expect(executorLink).toBeVisible();
     await executorLink.click();
@@ -37,15 +37,16 @@ test("v0006.24 → v0006.25 → v0006.23 created team, K8s Executor and complete
       page.getByText("k8s-cluster-a", { exact: true }),
     ).toBeVisible();
 
+    const llmEnvironmentID = await suite.configureLLM(suite.teamA);
     const task = await suite.ingestTask(suite.teamA, {
       prompt: "Complete the Mission Control lifecycle test.",
     });
-    await page.getByRole("button", { name: "История" }).click();
+    await page.getByRole("button", { name: "History" }).click();
     const taskLink = page.getByRole("button", { name: task.task_id });
     await expect(taskLink).toBeVisible({ timeout: 30_000 });
     await taskLink.click();
     await expect(
-      page.getByRole("heading", { name: "Карточка задачи" }),
+      page.getByRole("heading", { name: "Task details" }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: suite.executorID }),
@@ -62,7 +63,7 @@ test("v0006.24 → v0006.25 → v0006.23 created team, K8s Executor and complete
       ]);
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "Карточка задачи" }),
+      page.getByRole("heading", { name: "Task details" }),
     ).toBeVisible();
     await expect(page.locator(".timeline li strong")).toHaveText([
       "task.lifecycle.created",
@@ -71,9 +72,10 @@ test("v0006.24 → v0006.25 → v0006.23 created team, K8s Executor and complete
     ]);
     await page.getByRole("button", { name: suite.executorID }).click();
     await expect(
-      page.getByRole("heading", { name: "Карточка исполнителя" }),
+      page.getByRole("heading", { name: "Executor details" }),
     ).toBeVisible();
     await expect(page.getByText("executor_k8s_openhands")).toBeVisible();
+    await suite.clearLLM(suite.teamA, llmEnvironmentID);
   } finally {
     await proxy.close();
   }

@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.25.7-bookworm AS build
+ARG FLOWAI_GO_TAGS=""
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY svc/state-registry ./svc/state-registry
+RUN CGO_ENABLED=0 go build -tags="${FLOWAI_GO_TAGS}" -trimpath -ldflags='-s -w' -o /out/state-registry ./svc/state-registry/cmd/state-registry
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/state-registry /state-registry
+USER 65532:65532
+EXPOSE 18443
+ENTRYPOINT ["/state-registry"]

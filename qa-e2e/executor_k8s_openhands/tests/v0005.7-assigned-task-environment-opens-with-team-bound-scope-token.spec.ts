@@ -22,9 +22,13 @@ test("v0005.7 assigned task environment opens with team-bound scope token", asyn
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: `v0005-7-${Date.now()}`,
-        scope: "team",
-        task_type_id: null,
-        env: { FLOWAI_V0005_REGION: "cluster-local" },
+        scope: "task_type",
+        task_type_id: suite.teamA.taskType.task_type_id,
+        env: {
+          FLOWAI_V0005_REGION: "cluster-local",
+          OPENAI_MODEL: "openai/flowai-mock",
+          OPENAI_BASE_URL: suite.mockLLMBaseURL,
+        },
         image: null,
       }),
     },
@@ -33,6 +37,18 @@ test("v0005.7 assigned task environment opens with team-bound scope token", asyn
   const environment = (await createEnvironment.json()) as {
     environment_id: string;
   };
+  const secret = await suite.registryFetch(
+    `/ui/v1/teams/${suite.teamA.admin.team_id}/launch-parameters/${environment.environment_id}/secrets`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        key: "OPENAI_API_KEY",
+        value: "flowai-placeholder-key",
+      }),
+    },
+  );
+  expect(secret.status).toBe(201);
   const task = await suite.ingestTask(
     suite.teamA,
     { prompt: "hold environment v0005.7" },
@@ -112,4 +128,5 @@ test("v0005.7 assigned task environment opens with team-bound scope token", asyn
       { timeout: 60_000 },
     )
     .toMatch(/^(finished|failed)$/);
+  await suite.clearLLM(suite.teamA, environment.environment_id);
 });

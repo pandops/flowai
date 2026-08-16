@@ -9,6 +9,7 @@ import { test, expect } from "../fixtures/k3d-suite";
 test("v0005.8 pending controls are read only for assigned task", async ({
   suite,
 }) => {
+  test.setTimeout(120_000);
   await suite.kubectl(
     "delete",
     "pod",
@@ -32,6 +33,7 @@ test("v0005.8 pending controls are read only for assigned task", async ({
       { timeout: 30_000 },
     )
     .toBe(1);
+  const llmEnvironmentID = await suite.configureLLM(suite.teamA);
   const task = await suite.ingestTask(suite.teamA, {
     prompt: "hold controls v0005.8",
   });
@@ -121,4 +123,5 @@ test("v0005.8 pending controls are read only for assigned task", async ({
     },
   );
   expect(unassignedRead.status).toBe(403);
+  await suite.clearLLM(suite.teamA, llmEnvironmentID);
 });

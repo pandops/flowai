@@ -1,6 +1,7 @@
 executor_api_bind: "127.0.0.1:8020"
 executor_max_containers: 2
-docker_socket_path: /var/run/docker.sock
+docker_socket_path: ""
+docker_published_host: "127.0.0.1"
 openhands_image: ghcr.io/openhands/agent-server:latest-python
 openhands_host_port_start: 18000
 openhands_host_port_end: 18099

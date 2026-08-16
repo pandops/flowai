@@ -11,8 +11,8 @@ hostAliases:
       - host.containers.internal
 
 storageClass:
-  create: true
-  name: flowai-local-path
+  create: false
+  name: local-path
   provisioner: flowai.io/local-path
   image: rancher/local-path-provisioner:v0.0.32
   helperImage: busybox:1.36.1

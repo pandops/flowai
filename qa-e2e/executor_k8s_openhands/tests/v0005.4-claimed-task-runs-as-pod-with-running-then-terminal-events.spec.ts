@@ -16,6 +16,8 @@ import { test, expect } from "../fixtures/k3d-suite";
 test("v0005.4 claimed task runs as pod with running then terminal events", async ({
   suite,
 }) => {
+  test.setTimeout(120_000);
+  const llmEnvironmentID = await suite.configureLLM(suite.teamA);
   const ingest = await suite.registryFetch("/v1/tasks", {
     method: "POST",
     headers: {
@@ -54,15 +56,19 @@ test("v0005.4 claimed task runs as pod with running then terminal events", async
         items?: Array<Record<string, unknown>>;
       };
       events = body.items ?? [];
-      if (events.some((event) => event.event_type === "finished")) break;
+      if (
+        events.some((event) =>
+          ["finished", "failed"].includes(String(event.event_type)),
+        )
+      )
+        break;
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  expect(events.map((event) => event.event_type)).toEqual([
-    "created",
-    "running",
-    "finished",
-  ]);
+  expect(
+    events.map((event) => event.event_type),
+    JSON.stringify(events),
+  ).toEqual(["created", "running", "finished"]);
   const pod = JSON.parse(
     await suite.kubectl(
       "get",
@@ -91,4 +97,5 @@ test("v0005.4 claimed task runs as pod with running then terminal events", async
   expect(pod.items[0].spec.containers[0].image).toBe(
     "localhost/flowai/mock-openhands:v0005-e2e",
   );
+  await suite.clearLLM(suite.teamA, llmEnvironmentID);
 });

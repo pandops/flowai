@@ -18,6 +18,7 @@ import (
 // keep them during staged configuration cleanup.
 func setRequiredStateRegistryEnv(t *testing.T) {
 	t.Helper()
+	t.Setenv("DOCKER_SOCKET_PATH", "/run/flowai/runtime.sock")
 	t.Setenv("EXECUTOR_STATE_REGISTRY_URL", "http://state-registry.example.com")
 	t.Setenv("EXECUTOR_SCOPE", "team")
 	t.Setenv("EXECUTOR_TEAM_ID", "team-a")
@@ -150,6 +151,7 @@ func TestLoadConfigPreservesExplicitOpenHandsAPIKey(t *testing.T) {
 // fields.
 func validStateRegistryConfig() *Config {
 	return &Config{
+		DockerSocketPath:     "/run/flowai/runtime.sock",
 		ExecutorID:           "exec-1",
 		MaxContainers:        1,
 		OpenHandsPortStart:   19000,

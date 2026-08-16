@@ -37,7 +37,7 @@ import {
   gatewayFor,
 } from "../../fixtures/identities";
 import { bootstrapTeam, ingestPendingTask, registerExecutor } from "./_setup";
-import { uniqueExecutorId } from "../../fixtures/executor_binary";
+import { uniqueExecutorId } from "../../fixtures/executor_container";
 
 let worker: RegistryWorker;
 
@@ -439,7 +439,7 @@ test("v0002.54 system-owned Executor registers with scope=system, team_id=null; 
       runtime_metadata: {},
     });
     expect(reg.scope).toBe("system");
-    expect(reg.team_id).toBeNull();
+    expect(reg.team_id).toBeUndefined();
   });
   await test.step("negative control: scope=system with non-null team_id is rejected with 400 without persistence", async () => {
     const api = await exec.api(worker.baseUrl);
@@ -723,8 +723,8 @@ test("v0002.59 re-registration with a different scope is rejected without mutati
       expect(body.scope, "scope is immutable from registration").toBe("system");
       expect(
         body.team_id,
-        "team_id remains null after rejected re-registration",
-      ).toBeNull();
+        "team_id remains omitted after rejected re-registration",
+      ).toBeUndefined();
     } finally {
       await api.dispose();
     }

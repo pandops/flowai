@@ -50,7 +50,7 @@ import {
   type ImageReference,
 } from "./_setup";
 import { snapshotDecryptOps } from "../../fixtures/decrypt_observer";
-import { uniqueExecutorId } from "../../fixtures/executor_binary";
+import { uniqueExecutorId } from "../../fixtures/executor_container";
 
 let worker: RegistryWorker;
 

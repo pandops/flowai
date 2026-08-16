@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { test, expect } from "@playwright/test";
-import { startExecutorBinary } from "../../fixtures/executor_binary";
+import { startExecutorContainer } from "../../fixtures/executor_container";
 import {
   gatewayFor,
   listenerFor,
@@ -57,9 +57,10 @@ test("v0005.4 / v0006.23-.28/.31-.33 Docker OpenHands Mission Control runtime", 
     cwd: repoRoot,
     env: { ...process.env, FLOWAI_MOCK_LLM_PORT: String(mockPort) },
   });
-  let executor: Awaited<ReturnType<typeof startExecutorBinary>> | undefined;
+  let executor: Awaited<ReturnType<typeof startExecutorContainer>> | undefined;
   let proxy: MockedProxy | undefined;
   let containerID = "";
+  let cacheVolumeName = "";
   try {
     const mockDeadline = Date.now() + 10_000;
     while (Date.now() < mockDeadline) {
@@ -140,7 +141,7 @@ test("v0005.4 / v0006.23-.28/.31-.33 Docker OpenHands Mission Control runtime", 
     await addVariable("OPENAI_MODEL", "openai/flowai-mock");
     await addVariable(
       "OPENAI_BASE_URL",
-      `http://host.docker.internal:${mockPort}/v1`,
+      `http://host.containers.internal:${mockPort}/v1`,
     );
     await addVariable(envKey, envValue);
     await addSecret("OPENAI_API_KEY", "flowai-placeholder-key");
@@ -167,7 +168,8 @@ test("v0005.4 / v0006.23-.28/.31-.33 Docker OpenHands Mission Control runtime", 
       },
     );
     const executorOptions = {
-      registryUrl: registry.baseUrl,
+      registryUrl: registry.containerBaseUrl,
+      networkName: registry.networkName,
       scope: "team",
       teamId: team.admin.team_id,
       authorizedTag: "openhands",
@@ -179,12 +181,13 @@ test("v0005.4 / v0006.23-.28/.31-.33 Docker OpenHands Mission Control runtime", 
       openHandsAgentProfileId: "",
       openHandsLLMModel: "openai/flowai-mock",
       openHandsLLMAPIKey: "flowai-placeholder-key",
-      openHandsLLMBaseURL: `http://host.docker.internal:${mockPort}/v1`,
+      openHandsLLMBaseURL: `http://host.containers.internal:${mockPort}/v1`,
       openHandsLLMUsageID: "flowai-executor",
       finishedCleanupDelay: "15s",
       cacheDir,
     } as const;
-    executor = await startExecutorBinary(executorOptions);
+    executor = await startExecutorContainer(executorOptions);
+    cacheVolumeName = executor.cacheVolumeName ?? "";
 
     await expect
       .poll(
@@ -203,7 +206,28 @@ test("v0005.4 / v0006.23-.28/.31-.33 Docker OpenHands Mission Control runtime", 
       .locator(".log-line.reasoning")
       .filter({ hasText: "Проверяю рабочее дерево" });
     await expect(liveReasoning).toHaveCount(0);
-    await expect(liveReasoning).toHaveCount(1, { timeout: 20_000 });
+    try {
+      await expect(liveReasoning).toHaveCount(1, { timeout: 20_000 });
+    } catch (error) {
+      const child = await docker([
+        "ps",
+        "--filter",
+        `label=flowai.task_id=${task.task_id}`,
+        "--format",
+        "{{.ID}}",
+      ]);
+      const childID = child.stdout.trim().split("\n")[0] ?? "";
+      const childLogs = childID
+        ? (
+            await docker(["logs", childID]).catch(({ message }) => ({
+              stdout: String(message),
+            }))
+          ).stdout
+        : "child container not running";
+      throw new Error(
+        `${String(error)}\nexecutor logs:\n${executor.redactedLogs()}\nchild logs:\n${childLogs}`,
+      );
+    }
     const queuedTask = await ingestPendingTask(
       listenerFor({
         teamId: team.admin.team_id,
@@ -437,7 +461,7 @@ test("v0005.4 / v0006.23-.28/.31-.33 Docker OpenHands Mission Control runtime", 
     const firstExecutorID = executor.executorId;
     await executor.teardown();
     await new Promise((resolve) => setTimeout(resolve, 750));
-    executor = await startExecutorBinary(executorOptions);
+    executor = await startExecutorContainer(executorOptions);
     expect(executor.executorId).toBe(firstExecutorID);
   } finally {
     await proxy?.close().catch(() => undefined);
@@ -447,6 +471,11 @@ test("v0005.4 / v0006.23-.28/.31-.33 Docker OpenHands Mission Control runtime", 
     }
     mock.kill("SIGTERM");
     await registry.teardown().catch(() => undefined);
+    if (cacheVolumeName) {
+      await docker(["volume", "rm", "--force", cacheVolumeName]).catch(
+        () => undefined,
+      );
+    }
     rmSync(cacheDir, { recursive: true, force: true });
   }
 });

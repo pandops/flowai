@@ -59,7 +59,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	docker, err := dockerclient.NewSDKClient(cfg.DockerSocketPath)
+	docker, err := dockerclient.NewSDKClient(cfg.DockerSocketPath, cfg.DockerPublishedHost)
 	if err != nil {
 		logger.Error("docker client init failed", "err", err.Error())
 		os.Exit(1)
