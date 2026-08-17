@@ -17,4 +17,5 @@ if ! golangci-lint version | grep -q 'version 2\.11\.4 '; then
   exit 1
 fi
 
+bash .hooks/secret-scan.sh
 make precommit
