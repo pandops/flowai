@@ -90,9 +90,9 @@ export function dockerPullString(image: ImageReference): string {
 export interface AdminTeam {
   team_id: string;
   team_name: string;
-  default_image: ImageReference;
-  created_at: string;
-  updated_at: string;
+  default_image: string;
+  ingested_at: string;
+  archived_at: string | null;
 }
 
 export interface AdminSourceSystem {
@@ -115,7 +115,7 @@ export interface AdminTaskType {
 
 export interface AdminTeamCreateBody {
   team_name: string;
-  default_image: ImageReference;
+  default_image: string;
 }
 
 export interface AdminSourceSystemCreateBody {
@@ -267,7 +267,7 @@ export async function bootstrapTeam(
   baseUrl: string,
   opts: {
     teamName?: string;
-    defaultImage?: ImageReference;
+    defaultImage?: ImageReference | string;
     executionTag?: string;
   } = {},
 ): Promise<{
@@ -286,7 +286,10 @@ export async function bootstrapTeam(
     const executionTag = opts.executionTag ?? "openhands";
     const team = await createAdminTeam(adminApi, {
       team_name: teamName,
-      default_image: defaultImage,
+      default_image:
+        typeof defaultImage === "string"
+          ? defaultImage
+          : dockerPullString(defaultImage),
     });
     const sourceSystem = await createAdminSourceSystem(adminApi, {
       team_id: team.team_id,

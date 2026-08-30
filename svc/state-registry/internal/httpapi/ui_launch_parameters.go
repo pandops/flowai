@@ -197,7 +197,15 @@ func uiEnvironmentPath(w http.ResponseWriter, r *http.Request) (string, string, 
 }
 
 func uiIdentity(r *http.Request, teamID string) platform.GatewayIdentity {
-	return platform.GatewayIdentity{TeamID: teamID, OperatorID: "web-ui", RequestID: requestID(r)}
+	contextIdentity := gatewayContext(r)
+	identity := platform.GatewayIdentity{TeamID: teamID, OperatorID: contextIdentity.OperatorID, RequestID: contextIdentity.RequestID}
+	if identity.OperatorID == "" {
+		identity.OperatorID = "web-ui"
+	}
+	if identity.RequestID == "" {
+		identity.RequestID = requestID(r)
+	}
+	return identity
 }
 
 func uiLimit(w http.ResponseWriter, r *http.Request) (int, bool) {

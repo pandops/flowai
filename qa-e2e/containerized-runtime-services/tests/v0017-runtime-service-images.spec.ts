@@ -192,6 +192,8 @@ test("v0017.1 / k8s executor uses a fresh owned-image pod", async () => {
           "--k3s-arg",
           "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:0",
           "--k3s-arg",
+          "--kubelet-arg=eviction-hard=nodefs.available<100Mi,imagefs.available<100Mi,nodefs.inodesFree<1%,imagefs.inodesFree<1%@server:0",
+          "--k3s-arg",
           "--kube-proxy-arg=conntrack-max-per-core=0@server:0",
         ],
         240_000,

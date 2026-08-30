@@ -26,6 +26,7 @@ var (
 	// collapsed into a single non-revealing sentinel so the HTTP
 	// boundary cannot leak the existence of foreign task types.
 	ErrListenerTaskTypeUnknown = errors.New("task type unknown to listener team")
+	ErrTeamArchived            = errors.New("team archived")
 )
 
 // ListenerRepository is the narrow contract the listener HTTP boundary
@@ -80,6 +81,19 @@ func (s *Store) IngestTask(
 		return platform.TaskListEntry{}, false, fmt.Errorf("begin ingest task: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var archivedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, `SELECT archived_at FROM teams WHERE team_id = $1 FOR UPDATE`, ident.TeamID).Scan(&archivedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return platform.TaskListEntry{}, false, ErrListenerSourceMismatch
+	}
+	if err != nil {
+		return platform.TaskListEntry{}, false, fmt.Errorf("lock listener team: %w", err)
+	}
+	s.waitBarrier(ctx, "task_ingest_after_team_lock")
+	if archivedAt.Valid {
+		return platform.TaskListEntry{}, false, ErrTeamArchived
+	}
 
 	// Step 1: source-system binding. The composite (team_id,
 	// source_system_id) plus the listener identity are checked in one

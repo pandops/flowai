@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/flowai/platform/svc/state-registry/internal/adminauth"
 	"github.com/flowai/platform/svc/state-registry/internal/platform"
 	"github.com/flowai/platform/svc/state-registry/internal/store"
 )
@@ -26,15 +28,23 @@ const (
 )
 
 var (
-	identifierPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
-	imageRepoPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*(:[A-Za-z0-9._-]+)?$`)
-	imageDigestPattern = regexp.MustCompile(`^sha256:[A-Fa-f0-9]{64}$`)
+	identifierPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
+	imageRepoPattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*(:[A-Za-z0-9._-]+)?$`)
+	imageDigestPattern        = regexp.MustCompile(`^sha256:[A-Fa-f0-9]{64}$`)
+	ociDigestReferencePattern = regexp.MustCompile(`^[^\s@]+@[A-Za-z][A-Za-z0-9]*(?:[+._-][A-Za-z][A-Za-z0-9]*)*:[A-Za-z0-9=_-]+$`)
 )
 
 type adminHandlers struct {
 	logger *slog.Logger
 	repo   store.AdminRepository
+	teams  store.TeamLifecycleRepository
+	auth   AdminAuthenticator
 }
+
+type AdminAuthenticator interface {
+	Authenticate(context.Context, string) (string, error)
+}
+type adminSubjectContextKey struct{}
 
 type errorResponse struct {
 	Code      string `json:"code"`
@@ -49,18 +59,109 @@ type errorResponse struct {
 // network policy owns the /admin/* caller boundary. Requiring their
 // documented shape still prevents listener, Executor, and Gateway
 // request envelopes from reaching administrator repositories.
-func RegisterAdmin(r chi.Router, logger *slog.Logger, repo store.AdminRepository) {
-	h := &adminHandlers{logger: logger, repo: repo}
+func RegisterAdmin(r chi.Router, logger *slog.Logger, repo store.AdminRepository, authenticators ...AdminAuthenticator) {
+	teamRepo, _ := repo.(store.TeamLifecycleRepository)
+	var authenticator AdminAuthenticator
+	if len(authenticators) > 0 {
+		authenticator = authenticators[0]
+	}
+	h := &adminHandlers{logger: logger, repo: repo, teams: teamRepo, auth: authenticator}
 	r.Route("/admin", func(admin chi.Router) {
 		admin.Use(h.requireAdminHeaders)
 		admin.Post("/teams", h.createTeam)
+		if h.teams != nil {
+			admin.Get("/teams/{team_id}", h.getTeam)
+			admin.Patch("/teams/{team_id}", h.updateTeam)
+			admin.Post("/teams/{team_id}/archive", h.archiveTeam)
+		}
 		admin.Post("/source-systems", h.createSourceSystem)
 		admin.Post("/task-types", h.createTaskType)
 	})
+	if h.teams != nil {
+		r.Get("/internal/v1/teams/{team_id}", h.getTeam)
+	}
+}
+
+func (h *adminHandlers) getTeam(w http.ResponseWriter, r *http.Request) {
+	teamID := chi.URLParam(r, "team_id")
+	if !validIdentifier(teamID) {
+		h.writeError(w, r, http.StatusNotFound, "canonical_team_not_found", "canonical team was not found")
+		return
+	}
+	team, err := h.teams.GetTeam(r.Context(), teamID)
+	if errors.Is(err, store.ErrTeamNotFound) {
+		h.writeError(w, r, http.StatusNotFound, "canonical_team_not_found", "canonical team was not found")
+		return
+	}
+	if err != nil {
+		h.writeRepositoryError(w, r, "team", err)
+		return
+	}
+	JSON(w, http.StatusOK, team)
+}
+
+func (h *adminHandlers) updateTeam(w http.ResponseWriter, r *http.Request) {
+	teamID := chi.URLParam(r, "team_id")
+	if !validIdentifier(teamID) {
+		h.writeError(w, r, http.StatusNotFound, "canonical_team_not_found", "canonical team was not found")
+		return
+	}
+	var req platform.UpdateTeamRequest
+	if err := decodeAdminJSON(w, r, &req); err != nil || (req.TeamName == nil && req.DefaultImage == nil) || (req.TeamName != nil && !validText(*req.TeamName, 200)) || (req.DefaultImage != nil && !validOCIImage(*req.DefaultImage)) {
+		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "at least one valid mutable team field is required")
+		return
+	}
+	team, err := h.teams.UpdateTeam(r.Context(), teamID, req, adminIdentity(r))
+	switch {
+	case errors.Is(err, store.ErrTeamNotFound):
+		h.writeError(w, r, http.StatusNotFound, "canonical_team_not_found", "canonical team was not found")
+	case errors.Is(err, store.ErrTeamNameConflict):
+		h.writeError(w, r, http.StatusConflict, "team_conflict", "team_name is already registered")
+	case err != nil:
+		h.writeRepositoryError(w, r, "team", err)
+	default:
+		JSON(w, http.StatusOK, team)
+	}
+}
+
+func (h *adminHandlers) archiveTeam(w http.ResponseWriter, r *http.Request) {
+	teamID := chi.URLParam(r, "team_id")
+	if !validIdentifier(teamID) {
+		h.writeError(w, r, http.StatusNotFound, "canonical_team_not_found", "canonical team was not found")
+		return
+	}
+	team, created, err := h.teams.ArchiveTeam(r.Context(), teamID, adminIdentity(r))
+	if errors.Is(err, store.ErrTeamNotFound) {
+		h.writeError(w, r, http.StatusNotFound, "canonical_team_not_found", "canonical team was not found")
+		return
+	}
+	if err != nil {
+		h.writeRepositoryError(w, r, "team", err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	JSON(w, status, team)
 }
 
 func (h *adminHandlers) requireAdminHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.auth != nil {
+			subject, err := h.auth.Authenticate(r.Context(), r.Header.Get("Authorization"))
+			switch {
+			case errors.Is(err, adminauth.ErrUnavailable):
+				h.writeError(w, r, http.StatusBadGateway, "admin_identity_provider_unavailable", "administrator identity provider is unavailable")
+			case errors.Is(err, adminauth.ErrRole):
+				h.writeError(w, r, http.StatusForbidden, "insufficient_admin_role", "system administrator role is required")
+			case err != nil:
+				h.writeError(w, r, http.StatusUnauthorized, "invalid_admin_token", "administrator token is invalid")
+			default:
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminSubjectContextKey{}, subject)))
+			}
+			return
+		}
 		role := strings.TrimSpace(r.Header.Get(adminRoleHeader))
 		if role == "" {
 			h.writeError(w, r, http.StatusUnauthorized, "unauthenticated", "system administrator context is required")
@@ -84,7 +185,7 @@ func (h *adminHandlers) createTeam(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "request body is invalid")
 		return
 	}
-	if !validText(req.TeamName, 200) || !validImage(req.DefaultImage) {
+	if !validText(req.TeamName, 200) || !validOCIImage(req.DefaultImage) {
 		h.writeError(w, r, http.StatusBadRequest, "invalid_request", "team_name and default_image are required and must be valid")
 		return
 	}
@@ -92,7 +193,7 @@ func (h *adminHandlers) createTeam(w http.ResponseWriter, r *http.Request) {
 	team, err := h.repo.CreateTeam(r.Context(), req, adminIdentity(r))
 	if err != nil {
 		if errors.Is(err, store.ErrTeamNameConflict) {
-			h.writeError(w, r, http.StatusBadRequest, "team_name_already_exists", "team_name is already registered")
+			h.writeError(w, r, http.StatusConflict, "team_conflict", "team_name is already registered")
 			return
 		}
 		h.writeRepositoryError(w, r, "team", err)
@@ -172,8 +273,12 @@ func decodeAdminJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 }
 
 func adminIdentity(r *http.Request) platform.AdminIdentity {
+	subject, _ := r.Context().Value(adminSubjectContextKey{}).(string)
+	if subject == "" {
+		subject = r.Header.Get(adminSubjectHeader)
+	}
 	return platform.AdminIdentity{
-		Subject:   r.Header.Get(adminSubjectHeader),
+		Subject:   subject,
 		RequestID: requestID(r),
 	}
 }
@@ -217,6 +322,10 @@ func validTag(value string) bool {
 func validImage(image platform.ImageReference) bool {
 	return utf8.RuneCountInString(image.Repository) <= 512 &&
 		imageRepoPattern.MatchString(image.Repository) && imageDigestPattern.MatchString(image.Digest)
+}
+
+func validOCIImage(image string) bool {
+	return ociDigestReferencePattern.MatchString(image)
 }
 
 func validOptionalImage(image *platform.ImageReference) bool {

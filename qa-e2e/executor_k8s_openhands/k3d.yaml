@@ -14,6 +14,9 @@ options:
       - arg: --kubelet-arg=feature-gates=KubeletInUserNamespace=true
         nodeFilters:
           - server:0
+      - arg: --kubelet-arg=eviction-hard=nodefs.available<100Mi,imagefs.available<100Mi,nodefs.inodesFree<1%,imagefs.inodesFree<1%
+        nodeFilters:
+          - server:0
       - arg: --kube-proxy-arg=conntrack-max-per-core=0
         nodeFilters:
           - server:0

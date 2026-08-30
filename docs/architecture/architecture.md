@@ -15,8 +15,13 @@ Planned architecture lives in active numbered OpenSpec changes:
 - `openspec/changes/v0002-state-registry/`
 - `openspec/changes/v0005-executor-k8s/`
 - `openspec/changes/v0006-web-ui/`
-- `openspec/changes/v0007-auth/`
 - `openspec/changes/v0008-use-openbao-transit/`
+
+Provider-neutral authentication and the API Gateway contract from `v0007-auth`
+are implemented, accepted, and synced into `openspec/specs/auth/` and
+`openspec/specs/api-gateway/`. The accepted change is preserved at
+`openspec/changes/archive/2026-08-30-v0007-auth/`; its implemented diagrams are
+published in `docs/architecture/diagrams/`.
 
 After a change is implemented, verified, accepted, and synced into
 `openspec/specs/`, copy or redraw the relevant implemented `.puml` diagrams into

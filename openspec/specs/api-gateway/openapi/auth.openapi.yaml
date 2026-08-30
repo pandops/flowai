@@ -1,0 +1,392 @@
+openapi: 3.1.0
+info:
+  title: FlowAI API Gateway Auth API
+  version: 0.1.0
+  license:
+    name: Proprietary
+servers:
+  - url: /
+paths:
+  /auth/v1/login:
+    get:
+      summary: Start OIDC login
+      operationId: startOIDCLogin
+      security: []
+      responses:
+        "302":
+          description: Redirect to the configured OIDC authorization endpoint with PKCE, state, and nonce.
+        "502":
+          $ref: "#/components/responses/OIDCUnavailable"
+  /auth/v1/callback:
+    get:
+      summary: Complete OIDC login
+      description: Exactly one of `code` or `error` is required together with matching `state`; `error_description` is untrusted and is never reflected.
+      operationId: completeOIDCLogin
+      security: []
+      parameters:
+        - name: callback
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required: [code, state]
+                properties:
+                  code: { type: string, minLength: 1 }
+                  state: { type: string, minLength: 1 }
+              - type: object
+                additionalProperties: false
+                required: [error, state]
+                properties:
+                  error: { type: string, minLength: 1 }
+                  error_description: { type: string }
+                  state: { type: string, minLength: 1 }
+      responses:
+        "302":
+          description: Session created; sets a Secure, HttpOnly, SameSite=Lax cookie and redirects to Web UI.
+          headers:
+            Set-Cookie: { schema: { type: string } }
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/InvalidOIDCIdentity"
+        "502":
+          $ref: "#/components/responses/OIDCUnavailable"
+  /auth/v1/teams:
+    get:
+      summary: List accessible canonical teams
+      operationId: listAccessibleTeams
+      security: [{ browserSession: [] }]
+      responses:
+        "200":
+          description: Deterministically ordered mapped teams for the current OIDC session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [teams]
+                properties:
+                  teams:
+                    type: array
+                    items: { $ref: "#/components/schemas/Team" }
+        "401":
+          $ref: "#/components/responses/InvalidSession"
+        "503":
+          $ref: "#/components/responses/StateRegistryUnavailable"
+  /auth/v1/token:
+    post:
+      summary: Issue a one-team working token
+      operationId: issueWorkingToken
+      security: [{ browserSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_id]
+              properties:
+                team_id: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: A newly issued one-team working bearer.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [access_token, token_type, expires_in]
+                properties:
+                  access_token: { type: string, minLength: 1 }
+                  token_type: { type: string, const: Bearer }
+                  expires_in: { type: integer, minimum: 1 }
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/InvalidSession"
+        "403":
+          $ref: "#/components/responses/TeamNotAccessible"
+        "502":
+          $ref: "#/components/responses/OIDCUnavailable"
+        "503":
+          $ref: "#/components/responses/StateRegistryUnavailable"
+  /auth/v1/session:
+    delete:
+      summary: End the browser OIDC session
+      operationId: logoutOIDCSession
+      security: [{ browserSession: [] }]
+      responses:
+        "204":
+          {
+            description: Server-side session deleted and browser cookie expired.,
+          }
+        "401":
+          $ref: "#/components/responses/InvalidSession"
+  /admin/v1/oidc-team-mappings:
+    post:
+      summary: Register an OIDC-to-canonical-team mapping
+      operationId: registerOIDCTeamMapping
+      security: [{ adminBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MappingInput"
+      responses:
+        "200":
+          description: Identical mapping already exists; the existing representation is returned.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mapping" }
+        "201":
+          description: Mapping created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Mapping" }
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/InvalidAdminToken"
+        "403":
+          $ref: "#/components/responses/InsufficientAdminRole"
+        "404":
+          $ref: "#/components/responses/CanonicalTeamNotFound"
+        "409":
+          $ref: "#/components/responses/MappingConflict"
+        "502":
+          $ref: "#/components/responses/AdminIdentityProviderUnavailable"
+        "503":
+          $ref: "#/components/responses/StateRegistryUnavailable"
+components:
+  securitySchemes:
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: flowai_session
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Team:
+      type: object
+      additionalProperties: false
+      required: [team_id, archived_at]
+      properties:
+        team_id: { type: string, minLength: 1 }
+        team_name: { type: string, minLength: 1 }
+        archived_at:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+    MappingInput:
+      type: object
+      additionalProperties: false
+      required: [issuer, oidc_team_id, team_id]
+      properties:
+        issuer: { type: string, format: uri }
+        oidc_team_id: { type: string, minLength: 1 }
+        team_id: { type: string, minLength: 1 }
+    Mapping:
+      type: object
+      additionalProperties: false
+      required: [issuer, oidc_team_id, team_id, archived_at]
+      properties:
+        issuer: { type: string, format: uri }
+        oidc_team_id: { type: string, minLength: 1 }
+        team_id: { type: string, minLength: 1 }
+        team_name: { type: string, minLength: 1 }
+        archived_at:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_oidc_identity
+            - invalid_session
+            - invalid_working_token
+            - invalid_admin_token
+            - insufficient_admin_role
+            - team_not_accessible
+            - canonical_team_not_found
+            - mapping_conflict
+            - oidc_provider_unavailable
+            - admin_identity_provider_unavailable
+            - state_registry_unavailable
+        message: { type: string, minLength: 1 }
+        request_id: { type: string, minLength: 1 }
+    InvalidRequestError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: invalid_request } } },
+        ]
+    InvalidOIDCIdentityError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: invalid_oidc_identity } } },
+        ]
+    InvalidSessionError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: invalid_session } } },
+        ]
+    InvalidAdminTokenError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: invalid_admin_token } } },
+        ]
+    InsufficientAdminRoleError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: insufficient_admin_role } } },
+        ]
+    TeamNotAccessibleError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: team_not_accessible } } },
+        ]
+    MappingConflictError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: mapping_conflict } } },
+        ]
+    CanonicalTeamNotFoundError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: canonical_team_not_found } } },
+        ]
+    OIDCUnavailableError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: oidc_provider_unavailable } } },
+        ]
+    AdminIdentityProviderUnavailableError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          {
+            properties:
+              { code: { const: admin_identity_provider_unavailable } },
+          },
+        ]
+    StateRegistryUnavailableError:
+      allOf:
+        [
+          { $ref: "#/components/schemas/Error" },
+          { properties: { code: { const: state_registry_unavailable } } },
+        ]
+  responses:
+    InvalidRequest:
+      description: Invalid request; code is `invalid_request`.
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/InvalidRequestError" } },
+        }
+    InvalidOIDCIdentity:
+      description: OIDC authorization response or identity is invalid; code is `invalid_oidc_identity`.
+      content:
+        {
+          application/json:
+            {
+              schema: { $ref: "#/components/schemas/InvalidOIDCIdentityError" },
+            },
+        }
+    InvalidSession:
+      description: Browser session is absent or invalid; code is `invalid_session`.
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/InvalidSessionError" } },
+        }
+    InvalidAdminToken:
+      description: Admin JWT is absent or invalid; code is `invalid_admin_token`.
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/InvalidAdminTokenError" } },
+        }
+    InsufficientAdminRole:
+      description: Authenticated identity lacks system-administrator authority; code is `insufficient_admin_role`.
+      content:
+        {
+          application/json:
+            {
+              schema:
+                { $ref: "#/components/schemas/InsufficientAdminRoleError" },
+            },
+        }
+    TeamNotAccessible:
+      description: Selected team is not in the fresh-enough resolved team set; code is `team_not_accessible`.
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/TeamNotAccessibleError" } },
+        }
+    MappingConflict:
+      description: External or canonical team ownership conflicts with an existing mapping; code is `mapping_conflict`.
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/MappingConflictError" } },
+        }
+    CanonicalTeamNotFound:
+      description: Canonical team does not exist in State Registry; code is `canonical_team_not_found`.
+      content:
+        {
+          application/json:
+            {
+              schema:
+                { $ref: "#/components/schemas/CanonicalTeamNotFoundError" },
+            },
+        }
+    OIDCUnavailable:
+      description: A required operator OIDC endpoint is unavailable or timed out; code is `oidc_provider_unavailable`.
+      content:
+        {
+          application/json:
+            { schema: { $ref: "#/components/schemas/OIDCUnavailableError" } },
+        }
+    AdminIdentityProviderUnavailable:
+      description: Admin JWT JWKS endpoint is unavailable or timed out; code is `admin_identity_provider_unavailable`.
+      content:
+        {
+          application/json:
+            {
+              schema:
+                {
+                  $ref: "#/components/schemas/AdminIdentityProviderUnavailableError",
+                },
+            },
+        }
+    StateRegistryUnavailable:
+      description: State Registry team lookup is unavailable or timed out; code is `state_registry_unavailable`.
+      content:
+        {
+          application/json:
+            {
+              schema:
+                { $ref: "#/components/schemas/StateRegistryUnavailableError" },
+            },
+        }

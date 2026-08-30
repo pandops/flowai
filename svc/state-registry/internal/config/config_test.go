@@ -93,6 +93,32 @@ func TestLoadAcceptsValidConfig(t *testing.T) {
 	}
 }
 
+func TestV0007TestControlConfigurationBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name, timeout string
+		valid         bool
+	}{{"wrong type", "abc", false}, {"below", "999", false}, {"minimum", "1000", true}, {"maximum", "60000", true}, {"above", "60001", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("STATE_REGISTRY_AES_KEY_HEX", randomHexKey(t))
+			t.Setenv("STATE_REGISTRY_SCOPE_TOKEN_KEY_HEX", randomHexKey(t))
+			t.Setenv("STATE_REGISTRY_POSTGRES_URL", "postgresql://u:p@host/db")
+			t.Setenv("STATE_REGISTRY_POSTGRES_TLS_CA", baseProductionPostgresTLSDir(t))
+			t.Setenv("STATE_REGISTRY_POSTGRES_TLS_MODE", "verify-full")
+			t.Setenv("STATE_REGISTRY_TEST_CONTROL_ENABLED", "true")
+			t.Setenv("STATE_REGISTRY_TEST_CONTROL_BIND_ADDRESS", "127.0.0.1:19001")
+			t.Setenv("STATE_REGISTRY_TEST_CONTROL_TOKEN", "test-secret")
+			t.Setenv("STATE_REGISTRY_TEST_CONTROL_BARRIER_TIMEOUT_MS", tc.timeout)
+			cfg, err := Load()
+			if tc.valid && err != nil {
+				t.Fatalf("valid boundary rejected: %v", err)
+			}
+			if !tc.valid && err == nil {
+				t.Fatalf("invalid timeout accepted: %+v", cfg)
+			}
+		})
+	}
+}
+
 func TestBindAddress(t *testing.T) {
 	cfg := Config{BindHost: "127.0.0.1", BindPort: 20001}
 	if cfg.BindAddress() != "127.0.0.1:20001" {

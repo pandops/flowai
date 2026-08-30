@@ -319,6 +319,14 @@ func (s *Store) ClaimTask(ctx context.Context, req platform.ClaimRequest, execut
 	if registeredTag != requiredTag {
 		return platform.ClaimResponse{}, ErrTaskNotFound
 	}
+	// Team metadata updates, archival, ingestion, and a claim that may consume
+	// the team default serialize on the canonical ownership row. Archival does
+	// not make an existing pending task ineligible.
+	var teamLock int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM teams WHERE team_id=$1 FOR UPDATE`, taskTeam).Scan(&teamLock); err != nil {
+		return platform.ClaimResponse{}, fmt.Errorf("lock claim team: %w", err)
+	}
+	s.waitBarrier(ctx, "task_claim_after_team_lock")
 
 	// Idempotent retry: same (task_id, command_id) returns the
 	// original 200 with no event re-append. The branch is gated
@@ -532,13 +540,24 @@ func resolveClaimImageLocked(ctx context.Context, tx *sql.Tx, teamID, sourceSyst
 	if len(ssDefault) > 0 {
 		return json.RawMessage(ssDefault), platform.ImageSourceSourceSystemDefault, nil
 	}
-	var teamDefault []byte
+	var teamDefault string
 	if err := tx.QueryRowContext(ctx,
 		`SELECT default_image::text FROM teams WHERE team_id = $1`, teamID,
 	).Scan(&teamDefault); err != nil {
 		return nil, "", err
 	}
-	return json.RawMessage(teamDefault), platform.ImageSourceTeamDefault, nil
+	if strings.HasPrefix(teamDefault, "{") {
+		return json.RawMessage(teamDefault), platform.ImageSourceTeamDefault, nil
+	}
+	separator := strings.LastIndex(teamDefault, "@")
+	if separator <= 0 || separator == len(teamDefault)-1 {
+		return nil, "", errors.New("team default image is invalid")
+	}
+	encoded, err := json.Marshal(platform.ImageReference{Repository: teamDefault[:separator], Digest: teamDefault[separator+1:]})
+	if err != nil {
+		return nil, "", fmt.Errorf("marshal team default image: %w", err)
+	}
+	return encoded, platform.ImageSourceTeamDefault, nil
 }
 
 func sameClaimTeam(existing sql.NullString, requested *string) bool {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const MaxValidPort = 65535
@@ -30,16 +31,29 @@ const MaxValidPort = 65535
 // Test mode is the only path that allows plaintext Postgres for the
 // existing earlier-slice Playwright harness.
 type Config struct {
-	ServiceName         string
-	BindHost            string
-	BindPort            int
-	PostgresURL         string
-	AESKey              []byte
-	ScopeTokenKeyID     string
-	ScopeTokenKey       []byte
-	ScopeTokenAlgorithm string
-	ScopeTokenPrevious  string
-	TestMode            bool
+	ServiceName          string
+	BindHost             string
+	BindPort             int
+	PostgresURL          string
+	MigrationPostgresURL string
+	AESKey               []byte
+	ScopeTokenKeyID      string
+	ScopeTokenKey        []byte
+	ScopeTokenAlgorithm  string
+	ScopeTokenPrevious   string
+	TestMode             bool
+	AdminIssuer          string
+	AdminAudience        string
+	AdminJWKSURL         string
+	AdminRolePointer     string
+	AdminAlgorithms      []string
+	AdminJWKSTimeout     time.Duration
+	AdminTokenMaxAge     time.Duration
+	AdminClockSkew       time.Duration
+	TestControlEnabled   bool
+	TestControlAddress   string
+	TestControlToken     string
+	BarrierTimeout       time.Duration
 	// LegacyTLS fields are accepted for compatibility. They are
 	// never read and never affect the listener. New deployments
 	// must omit them; existing deployments may set them harmlessly.
@@ -85,10 +99,14 @@ const EnvPrefix = "STATE_REGISTRY_"
 // to the client process.
 func Load() (Config, error) {
 	cfg := Config{
-		ServiceName: "state-registry",
-		BindHost:    getEnv(EnvPrefix+"BIND_HOST", "127.0.0.1"),
-		BindPort:    getEnvInt(EnvPrefix+"BIND_PORT", 18443),
-		PostgresURL: getEnv(EnvPrefix+"POSTGRES_URL", ""),
+		ServiceName:          "state-registry",
+		BindHost:             getEnv(EnvPrefix+"BIND_HOST", "127.0.0.1"),
+		BindPort:             getEnvInt(EnvPrefix+"BIND_PORT", 18443),
+		PostgresURL:          getEnv(EnvPrefix+"POSTGRES_URL", ""),
+		MigrationPostgresURL: getEnv(EnvPrefix+"MIGRATION_POSTGRES_URL", ""),
+	}
+	if cfg.MigrationPostgresURL == "" {
+		cfg.MigrationPostgresURL = cfg.PostgresURL
 	}
 	// Test-mode opt-in is gated by the state_registry_test_harness
 	// build tag. The un-tagged build of readTestModeFromEnv rejects
@@ -99,6 +117,45 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	cfg.TestMode = testMode
+	if raw := strings.TrimSpace(os.Getenv(EnvPrefix + "TEST_CONTROL_ENABLED")); raw != "" {
+		if raw != "true" && raw != "false" {
+			return cfg, errors.New("STATE_REGISTRY_TEST_CONTROL_ENABLED must be true or false")
+		}
+		cfg.TestControlEnabled = raw == "true"
+	}
+	if cfg.TestControlEnabled {
+		cfg.TestControlAddress = strings.TrimSpace(os.Getenv(EnvPrefix + "TEST_CONTROL_BIND_ADDRESS"))
+		cfg.TestControlToken = os.Getenv(EnvPrefix + "TEST_CONTROL_TOKEN")
+		rawTimeout := os.Getenv(EnvPrefix + "TEST_CONTROL_BARRIER_TIMEOUT_MS")
+		timeoutMS, parseErr := strconv.Atoi(rawTimeout)
+		if cfg.TestControlAddress == "" || strings.TrimSpace(cfg.TestControlToken) == "" || rawTimeout == "" || parseErr != nil || timeoutMS < 1000 || timeoutMS > 60000 {
+			return cfg, errors.New("enabled test control requires bind address, non-empty token, and integer barrier timeout 1000..60000 ms")
+		}
+		cfg.BarrierTimeout = time.Duration(timeoutMS) * time.Millisecond
+	}
+	cfg.AdminIssuer = strings.TrimSpace(os.Getenv(EnvPrefix + "ADMIN_ISSUER"))
+	cfg.AdminAudience = strings.TrimSpace(os.Getenv(EnvPrefix + "ADMIN_AUDIENCE"))
+	cfg.AdminJWKSURL = strings.TrimSpace(os.Getenv(EnvPrefix + "ADMIN_JWKS_URL"))
+	cfg.AdminRolePointer = strings.TrimSpace(os.Getenv(EnvPrefix + "ADMIN_ROLE_CLAIM_POINTER"))
+	cfg.AdminAlgorithms = splitCSV(getEnv(EnvPrefix+"ADMIN_ALGORITHMS", "RS256"))
+	if cfg.AdminJWKSTimeout, err = positiveDuration(EnvPrefix+"ADMIN_JWKS_TIMEOUT", 5*time.Second); err != nil {
+		return cfg, err
+	}
+	if cfg.AdminTokenMaxAge, err = positiveDuration(EnvPrefix+"ADMIN_TOKEN_MAX_AGE", 5*time.Minute); err != nil {
+		return cfg, err
+	}
+	if cfg.AdminClockSkew, err = nonNegativeDuration(EnvPrefix+"ADMIN_CLOCK_SKEW", 30*time.Second); err != nil {
+		return cfg, err
+	}
+	adminComplete := cfg.AdminIssuer != "" && cfg.AdminAudience != "" && cfg.AdminJWKSURL != "" && strings.HasPrefix(cfg.AdminRolePointer, "/") && len(cfg.AdminAlgorithms) > 0
+	if (cfg.AdminIssuer != "" || cfg.AdminAudience != "" || cfg.AdminJWKSURL != "" || cfg.AdminRolePointer != "") && !adminComplete {
+		return cfg, errors.New("STATE_REGISTRY admin trust configuration must be complete")
+	}
+	for _, algorithm := range cfg.AdminAlgorithms {
+		if algorithm != "RS256" && algorithm != "RS384" && algorithm != "RS512" {
+			return cfg, errors.New("STATE_REGISTRY_ADMIN_ALGORITHMS must contain only RS256, RS384, or RS512")
+		}
+	}
 
 	if cfg.BindPort < 0 || cfg.BindPort > MaxValidPort {
 		return cfg, fmt.Errorf("STATE_REGISTRY_BIND_PORT=%d is invalid; expected 0 (OS-assigned) or 1..%d", cfg.BindPort, MaxValidPort)
@@ -144,6 +201,38 @@ func Load() (Config, error) {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+func splitCSV(raw string) []string {
+	var values []string
+	for _, value := range strings.Split(raw, ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+func positiveDuration(key string, fallback time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", key)
+	}
+	return value, nil
+}
+func nonNegativeDuration(key string, fallback time.Duration) (time.Duration, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative duration", key)
+	}
+	return value, nil
 }
 
 // BindAddress returns the host:port string used by the HTTP server.

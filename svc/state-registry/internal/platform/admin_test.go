@@ -17,7 +17,7 @@ func TestAdminModelsUseOpenAPIFieldNames(t *testing.T) {
 		in   any
 		keys []string
 	}{
-		{name: "team request", in: CreateTeamRequest{TeamName: "alpha", DefaultImage: image}, keys: []string{"team_name", "default_image"}},
+		{name: "team request", in: CreateTeamRequest{TeamName: "alpha", DefaultImage: image.Repository + "@" + image.Digest}, keys: []string{"team_name", "default_image"}},
 		{name: "source request", in: CreateSourceSystemRequest{TeamID: "team-a", ListenerIdentity: "listener-a"}, keys: []string{"team_id", "listener_identity"}},
 		{name: "task type request", in: CreateTaskTypeRequest{TeamID: "team-a", ExecutionTag: "openhands"}, keys: []string{"team_id", "execution_tag"}},
 	}

@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	dockerImage    = "postgres:16"
+	dockerImage    = "docker.io/library/postgres:16"
 	containerLabel = "flowai.state-registry.test"
 	readyTimeout   = 60 * time.Second
 	dialTimeout    = 2 * time.Second

@@ -1,0 +1,94 @@
+openapi: 3.1.0
+info:
+  title: FlowAI State Registry E2E Test Control API
+  version: 0.1.0
+  license: {name: Proprietary}
+servers:
+  - url: http://state-registry-test-control.invalid
+security: [{testControlBearer: []}]
+paths:
+  /test-control/v1/barriers:
+    post:
+      operationId: armTransactionBarrier
+      summary: Arm one allowlisted one-shot transaction barrier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties: {name: {$ref: "#/components/schemas/BarrierName"}}
+      responses:
+        "201": {description: Barrier armed., content: {application/json: {schema: {$ref: "#/components/schemas/Barrier"}}}}
+        "400": {$ref: "#/components/responses/InvalidControlRequest"}
+        "401": {$ref: "#/components/responses/InvalidControlToken"}
+        "409": {$ref: "#/components/responses/BarrierConflict"}
+  /test-control/v1/barriers/{barrier_id}:
+    get:
+      operationId: getTransactionBarrier
+      summary: Read state, optionally waiting for a transition
+      parameters:
+        - $ref: "#/components/parameters/BarrierID"
+        - {name: wait_ms, in: query, required: false, schema: {type: integer, minimum: 0, maximum: 30000, default: 0}}
+      responses:
+        "200": {description: Current barrier state., content: {application/json: {schema: {$ref: "#/components/schemas/Barrier"}}}}
+        "400": {$ref: "#/components/responses/InvalidControlRequest"}
+        "401": {$ref: "#/components/responses/InvalidControlToken"}
+        "404": {$ref: "#/components/responses/BarrierNotFound"}
+    delete:
+      operationId: cancelTransactionBarrier
+      summary: Cancel and consume an armed or reached barrier
+      parameters: [{$ref: "#/components/parameters/BarrierID"}]
+      responses:
+        "204": {description: Active barrier cancelled or terminal observation deleted; every later operation for this identifier returns barrier_not_found.}
+        "401": {$ref: "#/components/responses/InvalidControlToken"}
+        "404": {$ref: "#/components/responses/BarrierNotFound"}
+  /test-control/v1/barriers/{barrier_id}/release:
+    post:
+      operationId: releaseTransactionBarrier
+      summary: Release one reached barrier
+      parameters: [{$ref: "#/components/parameters/BarrierID"}]
+      responses:
+        "200": {description: Barrier released and consumed., content: {application/json: {schema: {$ref: "#/components/schemas/Barrier"}}}}
+        "401": {$ref: "#/components/responses/InvalidControlToken"}
+        "404": {$ref: "#/components/responses/BarrierNotFound"}
+        "409": {$ref: "#/components/responses/BarrierNotReached"}
+components:
+  securitySchemes:
+    testControlBearer: {type: http, scheme: bearer, bearerFormat: opaque}
+  parameters:
+    BarrierID: {name: barrier_id, in: path, required: true, schema: {type: string, format: uuid}}
+  schemas:
+    BarrierName:
+      type: string
+      enum: [team_archive_after_lock, task_ingest_after_team_lock, task_claim_after_team_lock, team_default_image_update_after_lock, team_name_write_after_constraint_before_commit]
+    BarrierState: {type: string, enum: [armed, reached, released, timed_out, cancelled]}
+    Barrier:
+      type: object
+      additionalProperties: false
+      required: [barrier_id, name, state, expires_at]
+      properties:
+        barrier_id: {type: string, format: uuid}
+        name: {$ref: "#/components/schemas/BarrierName"}
+        state: {$ref: "#/components/schemas/BarrierState"}
+        expires_at: {type: string, format: date-time}
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: {type: string, enum: [invalid_control_request, invalid_control_token, barrier_conflict, barrier_not_found, barrier_not_reached]}
+        message: {type: string, minLength: 1}
+    InvalidControlRequestError: {allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: invalid_control_request}}}]}
+    InvalidControlTokenError: {allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: invalid_control_token}}}]}
+    BarrierConflictError: {allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: barrier_conflict}}}]}
+    BarrierNotFoundError: {allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: barrier_not_found}}}]}
+    BarrierNotReachedError: {allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: barrier_not_reached}}}]}
+  responses:
+    InvalidControlRequest: {description: "Invalid body, name, identifier, or wait bound.", content: {application/json: {schema: {$ref: "#/components/schemas/InvalidControlRequestError"}}}}
+    InvalidControlToken: {description: Missing or incorrect bearer., content: {application/json: {schema: {$ref: "#/components/schemas/InvalidControlTokenError"}}}}
+    BarrierConflict: {description: Active barrier with this name already exists., content: {application/json: {schema: {$ref: "#/components/schemas/BarrierConflictError"}}}}
+    BarrierNotFound: {description: "Unknown, deleted, or prior-process barrier identifier.", content: {application/json: {schema: {$ref: "#/components/schemas/BarrierNotFoundError"}}}}
+    BarrierNotReached: {description: Release requires reached state., content: {application/json: {schema: {$ref: "#/components/schemas/BarrierNotReachedError"}}}}

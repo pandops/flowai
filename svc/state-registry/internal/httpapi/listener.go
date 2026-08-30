@@ -138,6 +138,8 @@ func (h *listenerHandlers) ingestTask(w http.ResponseWriter, r *http.Request) {
 	entry, created, err := h.repo.IngestTask(r.Context(), req, ident)
 	if err != nil {
 		switch {
+		case errors.Is(err, store.ErrTeamArchived):
+			h.writeError(w, r, http.StatusConflict, "team_archived", "team is archived")
 		case errors.Is(err, store.ErrListenerSourceMismatch),
 			errors.Is(err, store.ErrListenerTaskTypeUnknown):
 			h.writeError(w, r, http.StatusForbidden, "not_authorized", "listener binding or task type is invalid")

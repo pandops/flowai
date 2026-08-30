@@ -1161,6 +1161,7 @@
         const state = {
           team: null,
           teams: [],
+          workingToken: null,
           view: "dashboard",
           period: "week",
           week: currentIsoWeekKey(),
@@ -1324,6 +1325,9 @@
               ...options,
               headers: {
                 "content-type": "application/json",
+                ...(state.workingToken
+                  ? { authorization: `Bearer ${state.workingToken}` }
+                  : {}),
                 ...(options.headers || {}),
               },
             });
@@ -2165,6 +2169,7 @@
           });
           const socket = new WebSocket(
             `${protocol}//${location.host}${teamPath("/stream")}?${streamQuery}`,
+            [browserBearerProtocol(state.workingToken)],
           );
           state.socket = socket;
           socket.onopen = () => {
@@ -2446,20 +2451,33 @@
 
         async function bootstrap() {
           try {
-            const payload = await api("/ui/v1/teams");
-            state.teams = payload.items || [];
+            const response = await fetch("/auth/v1/teams", {
+              credentials: "include",
+              headers: { accept: "application/json" },
+            });
+            if (response.status === 401) {
+              app.innerHTML = '<p class="inline-state">Authentication required. <a href="/auth/v1/login">Sign in</a></p>';
+              return;
+            }
+            if (!response.ok) throw new Error(`Error ${response.status}`);
+            const payload = await response.json();
+            state.teams = payload.teams || [];
             selector.replaceChildren(
-              ...(payload.items || []).map(
-                (team) => new Option(team.team_name, team.team_id),
+              ...(payload.teams || []).map(
+                (team) => new Option(
+                  `${team.team_name}${team.archived_at ? " (archived)" : ""}`,
+                  team.team_id,
+                ),
               ),
             );
-            selector.disabled = !payload.items?.length;
-            if (!payload.items?.length) {
+            selector.disabled = !payload.teams?.length;
+            if (!payload.teams?.length) {
               app.innerHTML = '<p class="inline-state">No available teams</p>';
               return;
             }
 
             parseRoute();
+            await issueWorkingToken(state.team.team_id);
             selector.value = state.team.team_id;
             selected.textContent = state.team.team_id;
             updateUrl("replace");
@@ -2472,12 +2490,12 @@
         }
 
         selector.onchange = async () => {
-          state.team = state.teams.find(
+          const nextTeam = state.teams.find(
             (team) => team.team_id === selector.value,
-          ) || {
-            team_id: selector.value,
-            team_name: selector.options[selector.selectedIndex].text,
-          };
+          );
+          if (!nextTeam) return;
+          state.team = nextTeam;
+          await issueWorkingToken(state.team.team_id);
           selected.textContent = state.team.team_id;
           state.task = null;
           state.executor = null;
@@ -2491,6 +2509,28 @@
           await render();
           connect();
         };
+
+        async function issueWorkingToken(teamID) {
+          state.socket?.close();
+          state.workingToken = null;
+          const response = await fetch("/auth/v1/token", {
+            method: "POST",
+            credentials: "include",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ team_id: teamID }),
+          });
+          if (!response.ok) throw new Error(`Unable to select team (${response.status})`);
+          const payload = await response.json();
+          state.workingToken = payload.access_token;
+        }
+
+        function browserBearerProtocol(token) {
+          const encoded = btoa(token)
+            .replaceAll("+", "-")
+            .replaceAll("/", "_")
+            .replace(/=+$/, "");
+          return `flowai.bearer.${encoded}`;
+        }
 
         window.onpopstate = async () => {
           const previousTeamId = state.team?.team_id;

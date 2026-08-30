@@ -1,0 +1,212 @@
+openapi: 3.1.0
+info:
+  title: FlowAI State Registry Team Administration API Delta
+  version: 0.1.0
+  license:
+    name: Proprietary
+servers:
+  - url: /
+paths:
+  /v1/tasks:
+    post:
+      summary: Persist or deduplicate a source-input task
+      operationId: ingestTaskArchiveDelta
+      description: Existing ingestion contract; this delta adds rejection when the canonical team is archived.
+      security: [{listenerBearer: []}]
+      responses:
+        "201": {description: New canonical task persisted before acknowledgement.}
+        "200": {description: Existing canonical task returned for an accepted dedupe retry only while the team is active.}
+        "409": {$ref: "#/components/responses/TeamArchived"}
+  /admin/teams:
+    post:
+      summary: Create a canonical team
+      operationId: createTeam
+      security: [{adminBearer: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [team_name, default_image]
+              properties:
+                team_name: {type: string, minLength: 1}
+                default_image:
+                  $ref: "#/components/schemas/OCIImageDigestReference"
+      responses:
+        "201":
+          description: Canonical team created.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Team"}
+        "400": {$ref: "#/components/responses/InvalidRequest"}
+        "401": {$ref: "#/components/responses/InvalidAdminToken"}
+        "403": {$ref: "#/components/responses/InsufficientAdminRole"}
+        "409": {$ref: "#/components/responses/TeamConflict"}
+        "502": {$ref: "#/components/responses/AdminIdentityProviderUnavailable"}
+  /admin/teams/{team_id}:
+    get:
+      summary: Read one canonical team as system administrator
+      operationId: getTeamAsAdmin
+      security: [{adminBearer: []}]
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Current active or archived canonical team.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Team"}
+        "401": {$ref: "#/components/responses/InvalidAdminToken"}
+        "403": {$ref: "#/components/responses/InsufficientAdminRole"}
+        "404": {$ref: "#/components/responses/CanonicalTeamNotFound"}
+        "502": {$ref: "#/components/responses/AdminIdentityProviderUnavailable"}
+    patch:
+      summary: Update mutable team metadata
+      operationId: updateTeam
+      security: [{adminBearer: []}]
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                team_name: {type: string, minLength: 1}
+                default_image:
+                  $ref: "#/components/schemas/OCIImageDigestReference"
+      responses:
+        "200":
+          description: Updated canonical team.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Team"}
+        "400": {$ref: "#/components/responses/InvalidRequest"}
+        "401": {$ref: "#/components/responses/InvalidAdminToken"}
+        "403": {$ref: "#/components/responses/InsufficientAdminRole"}
+        "404": {$ref: "#/components/responses/CanonicalTeamNotFound"}
+        "409": {$ref: "#/components/responses/TeamConflict"}
+        "502": {$ref: "#/components/responses/AdminIdentityProviderUnavailable"}
+  /admin/teams/{team_id}/archive:
+    post:
+      summary: Archive a canonical team without deleting it
+      operationId: archiveTeam
+      security: [{adminBearer: []}]
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Team was archived earlier; the same representation is returned.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Team"}
+        "201":
+          description: Team archived.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Team"}
+        "401": {$ref: "#/components/responses/InvalidAdminToken"}
+        "403": {$ref: "#/components/responses/InsufficientAdminRole"}
+        "404": {$ref: "#/components/responses/CanonicalTeamNotFound"}
+        "502": {$ref: "#/components/responses/AdminIdentityProviderUnavailable"}
+  /internal/v1/teams/{team_id}:
+    get:
+      summary: Read one canonical team from API Gateway backend
+      operationId: getTeamForGateway
+      description: Credential-free backend route admitted only by deployment network policy, preserving v0009 transport; distinct from the admin-bearer route.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/TeamID"
+      responses:
+        "200":
+          description: Current active or archived canonical team.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Team"}
+        "404": {$ref: "#/components/responses/CanonicalTeamNotFound"}
+components:
+  securitySchemes:
+    listenerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    TeamID:
+      name: team_id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1}
+  schemas:
+    OCIImageDigestReference:
+      type: string
+      minLength: 1
+      pattern: '^[^\s@]+@[A-Za-z][A-Za-z0-9]*(?:[+._-][A-Za-z][A-Za-z0-9]*)*:[A-Za-z0-9=_-]+$'
+      description: Provider-neutral OCI image reference containing a repository, digest algorithm, and encoded digest; tag-only references are invalid.
+    Team:
+      type: object
+      additionalProperties: false
+      required: [team_id, team_name, default_image, ingested_at, archived_at]
+      properties:
+        team_id: {type: string, minLength: 1}
+        team_name: {type: string, minLength: 1}
+        default_image: {$ref: "#/components/schemas/OCIImageDigestReference"}
+        ingested_at: {type: string, format: date-time}
+        archived_at:
+          oneOf:
+            - {type: string, format: date-time}
+            - {type: "null"}
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+          enum: [invalid_request, invalid_admin_token, insufficient_admin_role, canonical_team_not_found, team_conflict, team_archived, admin_identity_provider_unavailable]
+        message: {type: string, minLength: 1}
+        request_id: {type: string, minLength: 1}
+    InvalidRequestError:
+      allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: invalid_request}}}]
+    InvalidAdminTokenError:
+      allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: invalid_admin_token}}}]
+    InsufficientAdminRoleError:
+      allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: insufficient_admin_role}}}]
+    CanonicalTeamNotFoundError:
+      allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: canonical_team_not_found}}}]
+    TeamConflictError:
+      allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: team_conflict}}}]
+    TeamArchivedError:
+      allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: team_archived}}}]
+    AdminIdentityProviderUnavailableError:
+      allOf: [{$ref: "#/components/schemas/Error"}, {properties: {code: {const: admin_identity_provider_unavailable}}}]
+  responses:
+    InvalidRequest:
+      description: Closed request validation failed.
+      content: {application/json: {schema: {$ref: "#/components/schemas/InvalidRequestError"}}}
+    InvalidAdminToken:
+      description: Admin bearer is missing or invalid.
+      content: {application/json: {schema: {$ref: "#/components/schemas/InvalidAdminTokenError"}}}
+    InsufficientAdminRole:
+      description: Authenticated identity lacks the exact system-admin role.
+      content: {application/json: {schema: {$ref: "#/components/schemas/InsufficientAdminRoleError"}}}
+    CanonicalTeamNotFound:
+      description: Canonical team does not exist.
+      content: {application/json: {schema: {$ref: "#/components/schemas/CanonicalTeamNotFoundError"}}}
+    TeamConflict:
+      description: A unique mutable value conflicts.
+      content: {application/json: {schema: {$ref: "#/components/schemas/TeamConflictError"}}}
+    TeamArchived:
+      description: Every task-ingestion request, including dedupe retry, is forbidden because the canonical team is archived.
+      content: {application/json: {schema: {$ref: "#/components/schemas/TeamArchivedError"}}}
+    AdminIdentityProviderUnavailable:
+      description: Required admin JWKS refresh failed or timed out.
+      content: {application/json: {schema: {$ref: "#/components/schemas/AdminIdentityProviderUnavailableError"}}}

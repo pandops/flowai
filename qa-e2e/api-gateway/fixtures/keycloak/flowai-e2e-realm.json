@@ -1,0 +1,106 @@
+{
+  "realm": "flowai-e2e",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "roles": { "realm": [{ "name": "flowai-system-admin" }] },
+  "groups": [{ "name": "oidc-team-alpha" }, { "name": "oidc-team-beta" }],
+  "clients": [
+    {
+      "clientId": "flowai-api-gateway-e2e",
+      "name": "FlowAI API Gateway E2E",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://127.0.0.1:*/*"],
+      "webOrigins": ["http://127.0.0.1:*"],
+      "attributes": { "pkce.code.challenge.method": "S256" },
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "teams",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "teams"
+          }
+        },
+        {
+          "name": "flowai-realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "usermodel.realmRoleMapping.rolePrefix": ""
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "flowai-admin-e2e",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocol": "openid-connect",
+      "protocolMappers": [
+        {
+          "name": "flowai-admin-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "flowai-api-gateway-admin",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "flowai-admin-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "multivalued": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "usermodel.realmRoleMapping.rolePrefix": ""
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "operator-admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "operator-admin@flowai.invalid",
+      "firstName": "FlowAI",
+      "lastName": "Operator",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "flowai-e2e-password",
+          "temporary": false
+        }
+      ],
+      "groups": ["/oidc-team-alpha", "/oidc-team-beta"],
+      "realmRoles": ["flowai-system-admin"],
+      "requiredActions": []
+    }
+  ]
+}

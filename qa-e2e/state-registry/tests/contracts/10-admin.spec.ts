@@ -32,6 +32,7 @@ import {
 import {
   ingestPendingTask,
   imageReference,
+  dockerPullString,
   type ImageReference,
 } from "./_setup";
 import { uniqueExecutorId } from "../../fixtures/executor_container";
@@ -78,13 +79,16 @@ test("v0002.60 admin creates a team with REQUIRED default_image; duplicate team_
   try {
     await test.step("positive control: POST /admin/teams returns 201 with REQUIRED default_image and unique team_name", async () => {
       const resp = await adminApi.post("/admin/teams", {
-        data: { team_name: `${suffix}-a`, default_image: expectedImage },
+        data: {
+          team_name: `${suffix}-a`,
+          default_image: dockerPullString(expectedImage),
+        },
       });
       expect(resp.status(), "admin team create returns 201").toBe(201);
       const body = (await resp.json()) as {
         team_id: string;
         team_name: string;
-        default_image: ImageReference;
+        default_image: string;
       };
       teamId = body.team_id;
       expect(teamId, "admin create returns an immutable team_id").toBeTruthy();
@@ -92,19 +96,21 @@ test("v0002.60 admin creates a team with REQUIRED default_image; duplicate team_
       expect(
         body.default_image,
         "default_image is REQUIRED and persisted as ImageReference",
-      ).toEqual(expectedImage);
+      ).toEqual(dockerPullString(expectedImage));
     });
-    await test.step("negative control: duplicate team_name is rejected with 400", async () => {
+    await test.step("negative control: duplicate team_name is rejected with 409", async () => {
       const resp = await adminApi.post("/admin/teams", {
         data: {
           team_name: `${suffix}-a`,
-          default_image: imageReference(`default-${suffix}-duplicate`),
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-duplicate`),
+          ),
         },
       });
       expect(
         resp.status(),
         "duplicate team_name is rejected without replacement",
-      ).toBe(400);
+      ).toBe(409);
     });
     await test.step("negative control: missing default_image is rejected with 400", async () => {
       const resp = await adminApi.post("/admin/teams", {
@@ -117,7 +123,11 @@ test("v0002.60 admin creates a team with REQUIRED default_image; duplicate team_
     });
     await test.step("negative control: missing team_name is rejected with 400", async () => {
       const resp = await adminApi.post("/admin/teams", {
-        data: { default_image: imageReference(`default-${suffix}-noname`) },
+        data: {
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-noname`),
+          ),
+        },
       });
       expect(
         resp.status(),
@@ -134,11 +144,9 @@ test("v0002.60 admin creates a team with REQUIRED default_image; duplicate team_
     const restart = await worker.restart();
     expect(restart.restartCount).toBeGreaterThanOrEqual(1);
     const persisted = await sqlScalar(
-      `SELECT team_name || '|' || ((default_image::jsonb)->>'repository') || '|' || ((default_image::jsonb)->>'digest') FROM teams WHERE team_id = '${teamId}'`,
+      `SELECT team_name || '|' || default_image FROM teams WHERE team_id = '${teamId}'`,
     );
-    expect(persisted).toBe(
-      `${suffix}-a|${expectedImage.repository}|${expectedImage.digest}`,
-    );
+    expect(persisted).toBe(`${suffix}-a|${dockerPullString(expectedImage)}`);
   });
 });
 
@@ -156,7 +164,9 @@ test("v0002.61 admin registers a team-owned source system; globally unique liste
       const teamA = await adminApi.post("/admin/teams", {
         data: {
           team_name: `${suffix}-a`,
-          default_image: imageReference(`default-${suffix}-a`),
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-a`),
+          ),
         },
       });
       expect(teamA.status()).toBe(201);
@@ -164,7 +174,9 @@ test("v0002.61 admin registers a team-owned source system; globally unique liste
       const teamB = await adminApi.post("/admin/teams", {
         data: {
           team_name: `${suffix}-b`,
-          default_image: imageReference(`default-${suffix}-b`),
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-b`),
+          ),
         },
       });
       expect(teamB.status()).toBe(201);
@@ -265,7 +277,9 @@ test("v0002.62 admin registers a team-owned task type with REQUIRED execution_ta
       const team = await adminApi.post("/admin/teams", {
         data: {
           team_name: `${suffix}-a`,
-          default_image: imageReference(`default-${suffix}-a`),
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-a`),
+          ),
         },
       });
       expect(team.status()).toBe(201);
@@ -361,7 +375,7 @@ test("v0002.63 Executor registration never creates or updates a team; only POST 
       const resp = await adminApi.post("/admin/teams", {
         data: {
           team_name: `v0002-63-${Date.now().toString(36)}-real`,
-          default_image: imageReference("default-v0002-63"),
+          default_image: dockerPullString(imageReference("default-v0002-63")),
         },
       });
       expect(resp.status(), "admin team create returns 201").toBe(201);
@@ -450,7 +464,9 @@ test("v0002.79 admin lists configured tags with the documented exact allowlist (
       const team = await adminApi.post("/admin/teams", {
         data: {
           team_name: `${suffix}-a`,
-          default_image: imageReference(`default-${suffix}-a`),
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-a`),
+          ),
         },
       });
       expect(team.status()).toBe(201);
@@ -533,7 +549,9 @@ test("v0002.80 admin lists all tasks across teams with the documented exact 11-f
       const team = await adminApi.post("/admin/teams", {
         data: {
           team_name: `${suffix}-a`,
-          default_image: imageReference(`default-${suffix}-a`),
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-a`),
+          ),
         },
       });
       expect(team.status()).toBe(201);
@@ -618,7 +636,9 @@ test("v0002.81 admin reads enforce identity and are non-mutating; non-admin iden
       const team = await adminApi.post("/admin/teams", {
         data: {
           team_name: `${suffix}-a`,
-          default_image: imageReference(`default-${suffix}-a`),
+          default_image: dockerPullString(
+            imageReference(`default-${suffix}-a`),
+          ),
         },
       });
       expect(team.status()).toBe(201);

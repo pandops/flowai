@@ -12,7 +12,7 @@ import {
 } from "../fixtures/registry_worker";
 import { systemAdministrator } from "../fixtures/identities";
 import { snapshotDecryptOps } from "../fixtures/decrypt_observer";
-import { imageReference } from "./contracts/_setup";
+import { dockerPullString, imageReference } from "./contracts/_setup";
 
 let worker: RegistryWorker;
 
@@ -71,7 +71,9 @@ test.describe("state-registry harness smoke", () => {
       },
       body: JSON.stringify({
         team_name: "team-smoke",
-        default_image: imageReference("registry.example/team-smoke"),
+        default_image: dockerPullString(
+          imageReference("registry.example/team-smoke"),
+        ),
       }),
     });
     expect(

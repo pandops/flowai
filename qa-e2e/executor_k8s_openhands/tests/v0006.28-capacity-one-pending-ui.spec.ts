@@ -41,6 +41,7 @@ test("v0006.28 max capacity one keeps the next K8s task pending and eventless in
       executor_id: string | null;
     };
   };
+  const llmEnvironmentID = await suite.configureLLM(suite.teamA);
   const podCount = async () => {
     const pods = JSON.parse(
       await suite.kubectl(
@@ -57,9 +58,13 @@ test("v0006.28 max capacity one keeps the next K8s task pending and eventless in
     return pods.items.length;
   };
   try {
-    const first = await suite.ingestTask(suite.teamA, {
-      prompt: "FLOWAI_HOLD_CAPACITY first task",
-    });
+    const first = await suite.ingestTask(
+      suite.teamA,
+      {
+        prompt: "FLOWAI_HOLD_CAPACITY first task",
+      },
+      llmEnvironmentID,
+    );
     await expect
       .poll(async () => (await taskState(first.task_id)).current_state, {
         timeout: 30_000,
@@ -67,9 +72,13 @@ test("v0006.28 max capacity one keeps the next K8s task pending and eventless in
       .toBe("running");
     await expect.poll(podCount, { timeout: 30_000 }).toBe(1);
 
-    const second = await suite.ingestTask(suite.teamA, {
-      prompt: "second task waits for capacity",
-    });
+    const second = await suite.ingestTask(
+      suite.teamA,
+      {
+        prompt: "second task waits for capacity",
+      },
+      llmEnvironmentID,
+    );
     await new Promise((resolve) => setTimeout(resolve, 2_000));
     expect(await taskState(second.task_id)).toMatchObject({
       current_state: "pending",
@@ -90,7 +99,9 @@ test("v0006.28 max capacity one keeps the next K8s task pending and eventless in
     ).toBeVisible();
     await page.getByRole("button", { name: second.task_id }).click();
     await expect(
-      page.getByText("Ожидаем успешного claim. Событий пока нет."),
+      page.getByText(
+        "Waiting for a successful claim. There are no events yet.",
+      ),
     ).toBeVisible();
 
     await expect
@@ -107,6 +118,7 @@ test("v0006.28 max capacity one keeps the next K8s task pending and eventless in
     expect(await podCount()).toBeLessThanOrEqual(1);
   } finally {
     await proxy.close();
+    await suite.clearLLM(suite.teamA, llmEnvironmentID);
     await suite
       .kubectl(
         "delete",

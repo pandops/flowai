@@ -1,5 +1,6 @@
 import { test as base, expect } from "@playwright/test";
 import { type ChildProcess, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as os from "node:os";
@@ -124,53 +125,43 @@ async function run(
   });
 }
 
-async function importImage(clusterName: string, image: string): Promise<void> {
+async function importImage(
+  clusterName: string,
+  image: string,
+  archiveDir: string,
+): Promise<void> {
   const node = `k3d-${clusterName}-server-0`;
-  await new Promise<void>((resolve, reject) => {
-    const save = spawn("docker", ["save", image], {
-      cwd: path.resolve(__dirname, "..", "..", ".."),
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const load = spawn(
-      "docker",
-      [
-        "exec",
-        "--interactive",
-        node,
-        "ctr",
-        "--namespace",
-        "k8s.io",
-        "images",
-        "import",
-        "-",
-      ],
-      {
-        cwd: path.resolve(__dirname, "..", "..", ".."),
-        env: process.env,
-        stdio: ["pipe", "ignore", "pipe"],
-      },
-    );
-    save.stdout.pipe(load.stdin);
-    const errors: Buffer[] = [];
-    save.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
-    load.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
-    const timer = setTimeout(() => {
-      save.kill("SIGKILL");
-      load.kill("SIGKILL");
-      reject(new Error(`streaming image import timed out for ${image}`));
-    }, 600_000);
-    load.once("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else
-        reject(
-          new Error(
-            `streaming image import failed for ${image}: ${Buffer.concat(errors).toString("utf8")}`,
-          ),
-        );
-    });
-  });
+  const archiveName = `image-${randomBytes(8).toString("hex")}.tar`;
+  const hostArchive = path.join(archiveDir, archiveName);
+  const nodeArchive = `/var/lib/rancher/k3s/${archiveName}`;
+  try {
+    // k3d's streaming import traverses the rootless Podman API socket and can
+    // reset the connection for multi-gigabyte images. A FIFO in the node's
+    // bind-mounted data directory avoids both that socket stream and a second
+    // on-disk copy of the image archive.
+    await run("mkfifo", [hostArchive]);
+    await Promise.all([
+      run("docker", ["save", "--output", hostArchive, image], {
+        timeoutMs: 600_000,
+      }),
+      run(
+        "docker",
+        [
+          "exec",
+          node,
+          "ctr",
+          "--namespace",
+          "k8s.io",
+          "images",
+          "import",
+          nodeArchive,
+        ],
+        { timeoutMs: 600_000 },
+      ),
+    ]);
+  } finally {
+    await fs.rm(hostArchive, { force: true }).catch(() => undefined);
+  }
 }
 
 async function removeNodeDataDir(nodeDataDir: string): Promise<void> {
@@ -216,10 +207,7 @@ async function bootstrapTeam(
   };
   const team = await create("/admin/teams", {
     team_name: teamName,
-    default_image: {
-      repository: AGENT_IMAGE,
-      digest: `sha256:${"a".repeat(64)}`,
-    },
+    default_image: `${AGENT_IMAGE}@sha256:${"a".repeat(64)}`,
   });
   const teamID = String(team.team_id);
   const sourceSystem = await create("/admin/source-systems", {
@@ -338,7 +326,7 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
       // select a larger filesystem without changing the fixture contract.
       const nodeDataRoot = process.env.FLOWAI_K3D_DATA_ROOT
         ? path.resolve(process.env.FLOWAI_K3D_DATA_ROOT)
-        : path.resolve(__dirname, "..", "..", "..");
+        : "/var/tmp";
       const nodeDataDir = sharedCluster
         ? ""
         : await fs.mkdtemp(path.join(nodeDataRoot, ".k3d-data-"));
@@ -431,6 +419,9 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           ],
           { timeoutMs: 600_000 },
         );
+        await run("docker", ["pull", STORAGE_HELPER_IMAGE], {
+          timeoutMs: 300_000,
+        });
 
         if (!sharedCluster) {
           await run(
@@ -446,6 +437,8 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
               `${nodeDataDir}:/var/lib/rancher/k3s@server:0`,
               "--k3s-arg",
               "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:0",
+              "--k3s-arg",
+              "--kubelet-arg=eviction-hard=nodefs.available<100Mi,imagefs.available<100Mi,nodefs.inodesFree<1%,imagefs.inodesFree<1%@server:0",
               "--k3s-arg",
               "--kube-proxy-arg=conntrack-max-per-core=0@server:0",
             ],
@@ -472,10 +465,26 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           throw new Error("k3d node does not expose host.containers.internal");
         }
 
-        await importImage(clusterName, EXECUTOR_IMAGE);
-        await importImage(clusterName, AGENT_IMAGE);
-        await importImage(clusterName, REAL_AGENT_IMAGE);
-        await importImage(clusterName, STORAGE_HELPER_IMAGE);
+        const importDir = sharedCluster
+          ? process.env.FLOWAI_E2E_K3D_DATA_DIR
+          : nodeDataDir;
+        if (!importDir) {
+          throw new Error(
+            "shared k3d cluster requires FLOWAI_E2E_K3D_DATA_DIR",
+          );
+        }
+        await importImage(clusterName, EXECUTOR_IMAGE, importDir);
+        await importImage(clusterName, AGENT_IMAGE, importDir);
+        await importImage(clusterName, STORAGE_HELPER_IMAGE, importDir);
+        let realAgentImportPromise: Promise<void> | undefined;
+        const ensureRealAgentImage = async (): Promise<void> => {
+          realAgentImportPromise ??= importImage(
+            clusterName,
+            REAL_AGENT_IMAGE,
+            importDir,
+          );
+          await realAgentImportPromise;
+        };
 
         const registryURL = `http://${hostGateway}:${proxy.port}`;
         await run(
@@ -597,6 +606,9 @@ export const test = base.extend<{}, { suite: K3dExecutorSuite }>({
           environmentID?: string,
           image?: { repository: string; digest: string },
         ): Promise<{ task_id: string }> => {
+          if (image?.repository === REAL_AGENT_IMAGE) {
+            await ensureRealAgentImage();
+          }
           const response = await registryFetch("/v1/tasks", {
             method: "POST",
             headers: {

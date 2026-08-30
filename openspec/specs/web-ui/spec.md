@@ -36,24 +36,17 @@ SHALL interact only through public HTTP and WebSocket surfaces.
 
 ### Requirement: Web UI renders one selected-team operator surface
 
-The Web UI SHALL render task lists, task detail views with live log streams,
-control requests, and team-owned environment and secret configuration for
-exactly one currently selected team. It SHALL receive a list of available
-`team_id` and display-name pairs from its configured adapter, render that list
-as a selector, require one selected team whenever the list is non-empty, and
-use `team_name` only for presentation. It SHALL NOT discover memberships,
-derive teams from Keycloak groups, administer teams, register source systems
-or task types, or expose global admin projections.
+The Web UI SHALL authenticate only through API Gateway and render every canonical `{team_id, team_name, archived_at?}` entry returned by the Gateway from its service-owned OIDC membership mapping and current State Registry presentation data. It SHALL display archived teams with an explicit archived state and SHALL keep them selectable for authenticated access to existing data. It SHALL treat `team_name` and `archived_at` as presentation context, SHALL NOT derive membership from either field, and SHALL NOT accept arbitrary browser-entered team or OIDC team identifiers. When more than one team is returned, it SHALL allow the user to select one resolved active or archived team for a new one-team working token. It SHALL NOT provide team CRUD, task creation, or membership-management UI.
 
-#### Scenario: Operator opens the selected-team dashboard
+#### Scenario: Authenticated operator opens the dashboard
 
-- **WHEN** an operator opens the Web UI and the adapter supplies one or more teams
-- **THEN** the Web UI selects exactly one team, labels every view with it, and offers the supplied teams in a selector without team-administration controls
+- **WHEN** an authenticated operator's OIDC teams resolve to multiple State Registry teams
+- **THEN** the UI displays their canonical IDs, names, and archived state, permits selection only from that list, and presents no team CRUD, task-creation, or membership controls
 
-#### Scenario: Operator selects another supplied team
+#### Scenario: Operator selects an archived team
 
-- **WHEN** the operator selects another team from the supplied list
-- **THEN** the Web UI replaces the active context with that team's `team_id`, cancels or ignores stale requests and subscriptions, and reloads every team-scoped view and live subscription for the new team
+- **WHEN** Gateway returns a mapped team with non-null `archived_at` and the operator selects it
+- **THEN** Web UI marks the team archived and allows authenticated access to its existing data through the same read surfaces as for an active team
 
 ### Requirement: Configured adapter is the only browser backend
 
@@ -79,43 +72,27 @@ a creation form or CTA.
 
 ### Requirement: Operator actions carry the selected team identifier
 
-The Web UI SHALL use configured-adapter routes for operator state reads,
-team-owned environment writes, secret writes, and task intervention requests
-without implementing login or token handling in this change. Every
-team-scoped REST request SHALL carry the currently selected `team_id` in the
-documented request field, and every live subscription SHALL subscribe with
-that same `team_id`. It SHALL NOT call or expose `/admin/teams`, `/admin/source-systems`,
-`/admin/task-types`, `/admin/tags`, `/admin/tasks`, or listener task-ingestion
-routes.
+The Web UI SHALL start OIDC authentication through API Gateway, receive accessible teams only from Gateway, store the returned one-team working bearer only as client session state, and attach it to subsequent API Gateway REST requests and WebSocket upgrades. Operator actions SHALL no longer use the configured-team no-auth behavior introduced by v0006 and SHALL remain bound to the working token's one immutable `team_id`.
 
-#### Scenario: Operator cannot access system-administrator APIs
+The production browser origin SHALL be composed by a separate ingress or reverse proxy: `/` and Web UI static assets route to the Web UI service, while `/auth`, `/admin`, `/ui`, and WebSocket upgrades route to API Gateway. The Web UI and API Gateway SHALL remain separate runtime services and SHALL NOT serve or embed one another.
 
-- **WHEN** an operator inspects or uses the no-auth bootstrap Web UI
-- **THEN** no system-administrator registration or global projection control
-  is rendered and no browser request targets an `/admin/*` route
+> Historical requirement identifier retained verbatim from v0006 so this
+> MODIFIED delta can replace it. The normative paragraph above defines the
+> authenticated v0007 behavior and disables the no-auth bootstrap behavior.
 
-#### Scenario: Operator stores executor environment data
+#### Scenario: Operator authenticates
 
-- **WHEN** an operator submits executor environment or secret data from the Web UI
-- **THEN** the Web UI sends the write through the configured adapter with the currently selected `team_id`
+- **WHEN** an operator signs in through the Web UI
+- **THEN** the Web UI authenticates only through API Gateway, displays the Gateway-returned resolved teams, and uses the selected team's working bearer only on API Gateway requests
 
 ### Requirement: Web UI does not assert authentication context
 
-The Web UI SHALL NOT generate or assert an operator identity, bearer token,
-Keycloak group, membership proof, trusted internal header, or request ID. The
-selected `team_id` is an ordinary v0006 API parameter and SHALL NOT be
-described as authenticated or trusted. Browser-visible team names remain
-display-only.
+The Web UI SHALL NOT generate, persist, or rely on OIDC team claims, `X-FlowAI-Operator-ID`, `X-FlowAI-Team-ID`, `X-FlowAI-Team-Name`, `X-FlowAI-Request-ID`, or equivalent trusted downstream identity headers. It SHALL send only the OIDC provider authorization response or working bearer to API Gateway and SHALL treat every canonical `team_name` as display-only.
 
-#### Scenario: Browser request is created
+#### Scenario: Authenticated browser request is created
 
-- **WHEN** the Web UI creates a REST request or WebSocket upgrade
-- **THEN** it sends no internal identity or authentication headers and sends only the selected `team_id` in the documented API field
-
-#### Scenario: Web UI does not invent an operator
-
-- **WHEN** the operator inspects the Web UI surface and source
-- **THEN** the Web UI does not display, expose, log, or otherwise assert an operator identity
+- **WHEN** the Web UI creates an authenticated REST request or WebSocket upgrade
+- **THEN** it sends the bearer credential to API Gateway without asserting operator, team, team-name, or request-ID headers
 
 ### Requirement: Client state is non-authoritative
 

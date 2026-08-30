@@ -1,15 +1,11 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const cluster = `flowai-exec-k8s-s${process.pid}`;
 const dataDir = await mkdtemp(
-  path.join(
-    process.env.FLOWAI_K3D_DATA_ROOT ?? os.tmpdir(),
-    ".flowai-e2e-k3d-",
-  ),
+  path.join(process.env.FLOWAI_K3D_DATA_ROOT ?? "/var/tmp", ".flowai-e2e-k3d-"),
 );
 
 function run(command, args, env = process.env) {
@@ -47,6 +43,8 @@ try {
     "--k3s-arg",
     "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:0",
     "--k3s-arg",
+    "--kubelet-arg=eviction-hard=nodefs.available<100Mi,imagefs.available<100Mi,nodefs.inodesFree<1%,imagefs.inodesFree<1%@server:0",
+    "--k3s-arg",
     "--kube-proxy-arg=conntrack-max-per-core=0@server:0",
   ]);
   const kubeconfig = await new Promise((resolve, reject) => {
@@ -66,11 +64,13 @@ try {
   const env = {
     ...process.env,
     FLOWAI_E2E_K3D_CLUSTER: cluster,
+    FLOWAI_E2E_K3D_DATA_DIR: dataDir,
     FLOWAI_E2E_KUBECONFIG: kubeconfig,
     KUBECONFIG: kubeconfig,
   };
   for (const suite of [
     "state-registry",
+    "api-gateway",
     "web-ui",
     "containerized-runtime-services",
     "executor_k8s_openhands",

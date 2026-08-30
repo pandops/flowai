@@ -18,17 +18,23 @@ type ImageReference struct {
 
 // CreateTeamRequest is the closed request body for POST /admin/teams.
 type CreateTeamRequest struct {
-	TeamName     string         `json:"team_name"`
-	DefaultImage ImageReference `json:"default_image"`
+	TeamName     string `json:"team_name"`
+	DefaultImage string `json:"default_image"`
 }
 
 // Team is the canonical team resource returned after creation.
 type Team struct {
-	TeamID       string         `json:"team_id"`
-	TeamName     string         `json:"team_name"`
-	DefaultImage ImageReference `json:"default_image"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	TeamID       string     `json:"team_id"`
+	TeamName     string     `json:"team_name"`
+	DefaultImage string     `json:"default_image"`
+	IngestedAt   time.Time  `json:"ingested_at"`
+	ArchivedAt   *time.Time `json:"archived_at"`
+}
+
+// UpdateTeamRequest changes presentation metadata without changing ownership.
+type UpdateTeamRequest struct {
+	TeamName     *string `json:"team_name,omitempty"`
+	DefaultImage *string `json:"default_image,omitempty"`
 }
 
 // CreateSourceSystemRequest is the closed request body for

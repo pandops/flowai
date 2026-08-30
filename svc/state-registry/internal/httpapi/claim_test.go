@@ -163,8 +163,7 @@ func (r *claimRecordingRepo) CreateTeam(_ context.Context, req platform.CreateTe
 		TeamID:       req.TeamName,
 		TeamName:     req.TeamName,
 		DefaultImage: req.DefaultImage,
-		CreatedAt:    time.Now().UTC(),
-		UpdatedAt:    time.Now().UTC(),
+		IngestedAt:   time.Now().UTC(),
 	}, nil
 }
 

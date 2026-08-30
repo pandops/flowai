@@ -23,7 +23,7 @@ func TestAdminCreateTeam(t *testing.T) {
 
 	team, err := repo.CreateTeam(ctx, platform.CreateTeamRequest{
 		TeamName:     "Team Store",
-		DefaultImage: adminTestImage(),
+		DefaultImage: ociImage(adminTestImage()),
 	}, platform.AdminIdentity{Subject: "admin-store", RequestID: "req-store-team"})
 	if err != nil {
 		t.Fatalf("CreateTeam: %v", err)
@@ -31,19 +31,21 @@ func TestAdminCreateTeam(t *testing.T) {
 	if team.TeamID == "" || team.TeamName != "Team Store" {
 		t.Fatalf("CreateTeam returned unexpected team: %+v", team)
 	}
-	if team.CreatedAt.IsZero() || team.UpdatedAt.IsZero() {
+	if team.IngestedAt.IsZero() {
 		t.Fatalf("CreateTeam timestamps must be populated: %+v", team)
 	}
 
 	_, err = repo.CreateTeam(ctx, platform.CreateTeamRequest{
 		TeamName:     "Team Store",
-		DefaultImage: adminTestImage(),
+		DefaultImage: ociImage(adminTestImage()),
 	}, platform.AdminIdentity{Subject: "admin-store", RequestID: "req-store-team-duplicate"})
 	if !errors.Is(err, store.ErrTeamNameConflict) {
 		t.Fatalf("duplicate CreateTeam error=%v, want ErrTeamNameConflict", err)
 	}
 	assertRowCount(t, db, "teams", 1)
 }
+
+func ociImage(image platform.ImageReference) string { return image.Repository + "@" + image.Digest }
 
 func TestAdminCreateSourceSystem(t *testing.T) {
 	db := migratedDB(t)

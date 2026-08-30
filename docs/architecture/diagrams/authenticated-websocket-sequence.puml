@@ -1,0 +1,32 @@
+' diagram-type: sequence
+@startuml
+title v0007-auth - authenticated team-scoped WebSocket
+
+participant "Web UI / Browser" as web_ui
+participant "API Gateway" as api_gateway
+participant "State Registry" as state_registry
+database "API Gateway database\nauth sessions and memberships" as api_gateway_database
+
+web_ui -> api_gateway : WebSocket upgrade + one-team working bearer\n(possibly forged OIDC team values or X-FlowAI-* headers)
+activate api_gateway
+api_gateway -> api_gateway : validate algorithm, kid, signature/issuer, audience, expiry,\noperator_id, exactly one team_id
+api_gateway -> api_gateway_database : validate active derived access and mapping
+activate api_gateway_database
+api_gateway_database --> api_gateway : current accessible teams
+deactivate api_gateway_database
+alt missing, invalid, expired, unresolved, or stale context
+  api_gateway --> web_ui : reject upgrade before subscription
+else valid canonical context
+  api_gateway -> api_gateway : strip browser OIDC team values, identity headers, Authorization\ngenerate request_id
+  api_gateway -> state_registry : subscribe with canonical Operator-ID, Team-ID,\ndisplay-only Team-Name, Request-ID\n(no browser credential, OIDC identifier, or membership)
+  activate state_registry
+  state_registry -> state_registry : authorize and filter events by stable team_id
+  state_registry --> api_gateway : token-team event stream
+  deactivate state_registry
+  api_gateway --> web_ui : event frames unchanged
+  api_gateway -> api_gateway : close connection when token reaches exp
+  api_gateway --> web_ui : close 4401 working_token_expired
+end
+deactivate api_gateway
+
+@enduml

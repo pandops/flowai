@@ -6,7 +6,7 @@ import {
   startRegistryWorker,
   type RegistryWorker,
 } from "../../fixtures/registry_worker";
-import { imageReference } from "./_setup";
+import { dockerPullString, imageReference } from "./_setup";
 
 let worker: RegistryWorker;
 
@@ -49,7 +49,7 @@ test("section 3b opaque cursors advance and reject tampering, changed scope, end
   const teamResponse = await adminAPI.post("/admin/teams", {
     data: {
       team_name: `cursor-${suffix}`,
-      default_image: imageReference(`cursor-${suffix}`),
+      default_image: dockerPullString(imageReference(`cursor-${suffix}`)),
     },
   });
   expect(teamResponse.status()).toBe(201);

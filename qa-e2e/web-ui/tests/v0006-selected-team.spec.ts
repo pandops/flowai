@@ -93,7 +93,7 @@ test("v0006.3 mutations use the currently selected team id", async ({
   ).toBe(false);
 });
 
-test("v0006.4 sends selected team as API data without auth context", async ({
+test("v0006.4 v0007.7 sends selected team with bearer but without trusted auth context", async ({
   page,
 }) => {
   const headers: Record<string, string>[] = [];
@@ -104,7 +104,13 @@ test("v0006.4 sends selected team as API data without auth context", async ({
     .getByRole("combobox", { name: "Team", exact: true })
     .selectOption("team-beta");
 
-  expect(headers.some((value) => "authorization" in value)).toBe(false);
+  await expect
+    .poll(() =>
+      headers.some(
+        (value) => value.authorization === "Bearer working-team-beta",
+      ),
+    )
+    .toBe(true);
   expect(headers.some((value) => "x-flowai-operator-id" in value)).toBe(false);
   expect(headers.some((value) => "x-flowai-team-id" in value)).toBe(false);
 });

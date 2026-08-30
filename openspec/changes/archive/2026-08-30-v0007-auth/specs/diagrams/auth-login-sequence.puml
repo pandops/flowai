@@ -1,0 +1,65 @@
+' diagram-type: sequence
+@startuml
+title v0007-auth - OIDC team resolution and working-token issue
+
+participant "Web UI" as web_ui
+participant "API Gateway" as api_gateway
+participant "OIDC provider" as oidc_provider
+participant "State Registry" as state_registry
+database "API Gateway database" as api_gateway_database
+
+web_ui -> api_gateway : GET /auth/v1/login
+activate api_gateway
+api_gateway -> oidc_provider : OIDC authorization-code flow with PKCE
+activate oidc_provider
+oidc_provider --> api_gateway : ID Token / UserInfo\niss + sub + configured team claim
+deactivate oidc_provider
+api_gateway -> api_gateway : validate standard OIDC state and token\nderive operator_id from validated sub
+api_gateway -> api_gateway : resolve configured RFC 6901 claim_pointer\napply string_array or object_array adapter
+api_gateway -> api_gateway_database : create server-side session\nresolve known canonical OIDC team IDs
+activate api_gateway_database
+api_gateway_database --> api_gateway : ordered accessible teams
+deactivate api_gateway_database
+api_gateway --> web_ui : Secure HttpOnly session cookie
+deactivate api_gateway
+
+web_ui -> api_gateway : GET /auth/v1/teams
+activate api_gateway
+api_gateway -> api_gateway_database : read ordered accessible teams
+activate api_gateway_database
+api_gateway_database --> api_gateway : canonical [{team_id, team_name?}]
+deactivate api_gateway_database
+api_gateway --> web_ui : 200 canonical teams
+deactivate api_gateway
+
+alt no resolved team
+  web_ui -> api_gateway : POST /auth/v1/token
+  activate api_gateway
+  api_gateway --> web_ui : reject; no working token
+  deactivate api_gateway
+else one or more resolved teams
+  web_ui -> api_gateway : POST /auth/v1/token {team_id}
+  activate api_gateway
+  api_gateway -> oidc_provider : refresh current OIDC membership
+  activate oidc_provider
+  oidc_provider --> api_gateway : current canonical OIDC team IDs
+  deactivate oidc_provider
+  api_gateway -> api_gateway_database : fresh mapping resolution
+  activate api_gateway_database
+  api_gateway_database --> api_gateway : selected team is accessible / absent
+  deactivate api_gateway_database
+  alt selected team absent
+    api_gateway --> web_ui : reject; no working token
+  else selected team accessible
+    api_gateway -> api_gateway : issue new token with kid, iss, aud, sub, operator_id,\none team_id, optional team_name, iat, exp, unique jti
+    api_gateway --> web_ui : working bearer for API Gateway only
+  end
+  deactivate api_gateway
+end
+
+note over web_ui, api_gateway
+Browser-supplied OIDC team and platform-team values never establish authority.
+Renewing or selecting another accessible team always creates a new working token.
+end note
+
+@enduml

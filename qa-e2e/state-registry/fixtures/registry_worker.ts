@@ -232,6 +232,13 @@ export async function startRegistryWorker(
     };
     if (!opts.productionMode && !opts.serviceImage)
       env.STATE_REGISTRY_TEST_MODE = "true";
+    if (opts.productionMode) {
+      env.STATE_REGISTRY_ADMIN_ISSUER = "https://admin.fixture.invalid";
+      env.STATE_REGISTRY_ADMIN_AUDIENCE = "flowai-state-registry-admin";
+      env.STATE_REGISTRY_ADMIN_JWKS_URL = "https://admin.fixture.invalid/jwks";
+      env.STATE_REGISTRY_ADMIN_ROLE_CLAIM_POINTER = "/roles";
+      env.STATE_REGISTRY_ADMIN_ALGORITHMS = "RS256";
+    }
     if (opts.legacyTLSServerCert)
       env.STATE_REGISTRY_TLS_SERVER_CERT = opts.legacyTLSServerCert;
     if (opts.legacyTLSServerKey)

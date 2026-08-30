@@ -136,7 +136,7 @@ func (r *recordingAdminRepo) CreateTeam(_ context.Context, req platform.CreateTe
 		TeamID:       "team-rec-" + strconv.FormatInt(r.teams.Load(), 10),
 		TeamName:     req.TeamName,
 		DefaultImage: req.DefaultImage,
-		CreatedAt:    time.Unix(0, 0).UTC(),
+		IngestedAt:   time.Unix(0, 0).UTC(),
 	}, nil
 }
 
@@ -292,11 +292,11 @@ func newAdminHarness(t *testing.T) *adminHarness {
 // All fields are JSON-tagged to match the OpenAPI-aligned wire shape
 // the qa-e2e suite sends.
 type adminRequest struct {
-	TeamName         string                   `json:"team_name,omitempty"`
-	DefaultImage     *platform.ImageReference `json:"default_image,omitempty"`
-	TeamID           string                   `json:"team_id,omitempty"`
-	ListenerIdentity string                   `json:"listener_identity,omitempty"`
-	ExecutionTag     string                   `json:"execution_tag,omitempty"`
+	TeamName         string `json:"team_name,omitempty"`
+	DefaultImage     any    `json:"default_image,omitempty"`
+	TeamID           string `json:"team_id,omitempty"`
+	ListenerIdentity string `json:"listener_identity,omitempty"`
+	ExecutionTag     string `json:"execution_tag,omitempty"`
 }
 
 func (a adminRequest) marshal(t *testing.T) []byte {
@@ -353,10 +353,8 @@ func defaultImageReference(tag string) platform.ImageReference {
 
 func validTeamCreateBody(t *testing.T, suffix string) []byte {
 	t.Helper()
-	body, err := json.Marshal(adminRequest{
-		TeamName:     "Team " + suffix,
-		DefaultImage: ptrImageRef(defaultImageReference(suffix)),
-	})
+	image := defaultImageReference(suffix)
+	body, err := json.Marshal(map[string]any{"team_name": "Team " + suffix, "default_image": image.Repository + "@" + image.Digest})
 	if err != nil {
 		t.Fatalf("marshal team body: %v", err)
 	}
@@ -462,8 +460,8 @@ func TestAdminCreateTeam(t *testing.T) {
 	if team.TeamName == "" {
 		t.Errorf("response team_name is empty")
 	}
-	if team.DefaultImage.Repository == "" || team.DefaultImage.Digest == "" {
-		t.Errorf("response default_image is missing the opaque repository/digest pair")
+	if team.DefaultImage == "" {
+		t.Errorf("response default_image is missing the OCI digest reference")
 	}
 }
 
@@ -611,25 +609,19 @@ func TestAdminValidationMatchesOpenAPILengthBounds(t *testing.T) {
 			name: "image repository accepts 512 runes",
 			path: "/admin/teams",
 			body: adminRequest{
-				TeamName: "image-bound-512",
-				DefaultImage: ptrImageRef(platform.ImageReference{
-					Repository: strings.Repeat("a", 512),
-					Digest:     "sha256:" + strings.Repeat("a", 64),
-				}),
+				TeamName:     "image-bound-512",
+				DefaultImage: strings.Repeat("a", 512) + "@sha256:" + strings.Repeat("a", 64),
 			},
 			wantStatus: http.StatusCreated,
 			wantCalls:  1,
 			calls:      (*recordingAdminRepo).teamCalls,
 		},
 		{
-			name: "image repository rejects 513 runes",
+			name: "image reference rejects whitespace",
 			path: "/admin/teams",
 			body: adminRequest{
-				TeamName: "image-bound-513",
-				DefaultImage: ptrImageRef(platform.ImageReference{
-					Repository: strings.Repeat("a", 513),
-					Digest:     "sha256:" + strings.Repeat("a", 64),
-				}),
+				TeamName:     "image-invalid",
+				DefaultImage: "registry.example/bad image@sha256:" + strings.Repeat("a", 64),
 			},
 			wantStatus: http.StatusBadRequest,
 			wantCalls:  0,
@@ -729,15 +721,15 @@ func TestAdminRequiresUniqueTeamName(t *testing.T) {
 	}
 
 	// Force the second call to surface ErrTeamNameConflict so the handler
-	// returns the documented 400.
+	// returns the v0007 documented 409.
 	h.repo.setTeamErr(store.ErrTeamNameConflict)
 
 	second := doAdminRequest(t, h, http.MethodPost, "/admin/teams",
 		adminIdentityHeaders("admin-unique-2"),
 		validTeamCreateBodyWithName(t, name))
 	body := readBody(t, second)
-	if second.StatusCode != http.StatusBadRequest {
-		t.Fatalf("second POST /admin/teams (duplicate team_name) status=%d, want 400; body=%s",
+	if second.StatusCode != http.StatusConflict {
+		t.Fatalf("second POST /admin/teams (duplicate team_name) status=%d, want 409; body=%s",
 			second.StatusCode, body)
 	}
 	env := decodeErrorEnvelope(t, body)
@@ -754,10 +746,8 @@ func TestAdminRequiresUniqueTeamName(t *testing.T) {
 
 func validTeamCreateBodyWithName(t *testing.T, name string) []byte {
 	t.Helper()
-	body, err := json.Marshal(adminRequest{
-		TeamName:     name,
-		DefaultImage: ptrImageRef(defaultImageReference(name)),
-	})
+	image := defaultImageReference(name)
+	body, err := json.Marshal(map[string]any{"team_name": name, "default_image": image.Repository + "@" + image.Digest})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

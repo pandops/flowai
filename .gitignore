@@ -21,6 +21,7 @@
 openspec/.cache/
 openspec/tmp/
 openspec/temp/
+openspec/changes/.preview/
 
 # Per-diagram rendered artifacts left by `puml-verify` without `--png`.
 # Previews belong only under `.preview/` (already gitignored). The

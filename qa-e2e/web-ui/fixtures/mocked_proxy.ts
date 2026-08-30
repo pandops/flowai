@@ -6,11 +6,13 @@ import { startWebUIContainer } from "./web_ui_container";
 export type TeamOption = Readonly<{
   team_id: string;
   team_name: string;
+  archived_at?: string | null;
 }>;
 
 export type MockedProxy = Readonly<{
   baseUrl: string;
   requests: readonly string[];
+  upgradeHeaders: readonly import("node:http").IncomingHttpHeaders[];
   webUIImageID?: string;
   close: () => Promise<void>;
 }>;
@@ -23,6 +25,7 @@ export async function startMockedProxy(
   validateTeams(teams);
   const webUI = webEntry ? await startWebUIContainer() : undefined;
   const requests: string[] = [];
+  const upgradeHeaders: import("node:http").IncomingHttpHeaders[] = [];
   const sockets = new Set<WebSocket>();
   const server = createServer(async (request, response) => {
     const path = request.url ?? "/";
@@ -49,8 +52,41 @@ export async function startMockedProxy(
       response.writeHead(200).end(JSON.stringify({ status: "ok" }));
       return;
     }
+    if (request.method === "GET" && path === "/auth/v1/teams") {
+      response.writeHead(200).end(JSON.stringify({ teams }));
+      return;
+    }
     if (request.method === "GET" && path === "/ui/v1/teams") {
-      response.writeHead(200).end(JSON.stringify({ items: teams }));
+      response.writeHead(200).end(
+        JSON.stringify({
+          items: teams.map(({ team_id, team_name }) => ({
+            team_id,
+            team_name,
+          })),
+        }),
+      );
+      return;
+    }
+    if (request.method === "POST" && path === "/auth/v1/token") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request)
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const input = JSON.parse(Buffer.concat(chunks).toString()) as {
+        team_id?: string;
+      };
+      if (!teams.some((team) => team.team_id === input.team_id)) {
+        response
+          .writeHead(403)
+          .end(JSON.stringify({ code: "team_not_accessible" }));
+        return;
+      }
+      response.writeHead(200).end(
+        JSON.stringify({
+          access_token: `working-${input.team_id}`,
+          token_type: "Bearer",
+          expires_in: 300,
+        }),
+      );
       return;
     }
     if (stateRegistryOrigin && isAllowedUIRoute(path)) {
@@ -125,15 +161,20 @@ export async function startMockedProxy(
   const websocketServer = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
     const path = request.url ?? "/";
-    if (
-      !stateRegistryOrigin ||
-      !/^\/ui\/v1\/teams\/[^/]+\/stream(?:\?.*)?$/.test(path)
-    ) {
+    if (!/^\/ui\/v1\/teams\/[^/]+\/stream(?:\?.*)?$/.test(path)) {
       socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
     requests.push(path);
+    upgradeHeaders.push(request.headers);
+    if (!stateRegistryOrigin) {
+      websocketServer.handleUpgrade(request, socket, head, (browser) => {
+        sockets.add(browser);
+        browser.on("close", () => sockets.delete(browser));
+      });
+      return;
+    }
     const target = new URL(path, stateRegistryOrigin);
     target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
     const upstream = new WebSocket(target);
@@ -170,6 +211,7 @@ export async function startMockedProxy(
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     requests,
+    upgradeHeaders,
     webUIImageID: webUI?.imageID,
     close: async () => {
       for (const socket of sockets) socket.terminate();

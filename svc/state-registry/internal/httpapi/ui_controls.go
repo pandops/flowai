@@ -42,7 +42,8 @@ func (h *uiControlHandlers) cancel(w http.ResponseWriter, r *http.Request) {
 		uiError(w, http.StatusBadRequest, "invalid_request", "request_id is invalid")
 		return
 	}
-	identity := platform.GatewayIdentity{TeamID: teamID, OperatorID: "web-ui", RequestID: body.RequestID}
+	identity := uiIdentity(r, teamID)
+	identity.RequestID = body.RequestID
 	control, err := h.repo.CreateTaskControl(r.Context(), identity, taskID, platform.CreateTaskControlRequest{
 		Action: "cancel", IdempotencyKey: body.RequestID,
 	})

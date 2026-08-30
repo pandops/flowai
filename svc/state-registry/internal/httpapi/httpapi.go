@@ -72,6 +72,10 @@ func Routes(serviceName, executorID string, logger *slog.Logger, checker health.
 // paginated reads. The /v1/_test/decrypt-ops counter route is the
 // ONLY surface still gated on testMode.
 func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, checker health.ReadinessChecker, ops *DecryptOps, keyring cursorKeyring, testMode bool, adminRepositories ...store.AdminRepository) http.Handler {
+	return RoutesWithKeyringAndAdminAuth(serviceName, executorID, logger, checker, ops, keyring, testMode, nil, adminRepositories...)
+}
+
+func RoutesWithKeyringAndAdminAuth(serviceName, executorID string, logger *slog.Logger, checker health.ReadinessChecker, ops *DecryptOps, keyring cursorKeyring, testMode bool, adminAuth AdminAuthenticator, adminRepositories ...store.AdminRepository) http.Handler {
 	r := NewRouter(serviceName, logger)
 	r.Route("/v1", func(v1 chi.Router) {
 		RegisterProbes(v1, serviceName, executorID, checker)
@@ -87,7 +91,11 @@ func RoutesWithKeyring(serviceName, executorID string, logger *slog.Logger, chec
 		}
 	})
 	if len(adminRepositories) > 0 && adminRepositories[0] != nil {
-		RegisterAdmin(r, logger, adminRepositories[0])
+		if adminAuth != nil {
+			RegisterAdmin(r, logger, adminRepositories[0], adminAuth)
+		} else {
+			RegisterAdmin(r, logger, adminRepositories[0])
+		}
 		if keyring != nil {
 			if list, ok := adminRepositories[0].(store.ListRepository); ok {
 				RegisterAdminList(r, logger, list, keyring)

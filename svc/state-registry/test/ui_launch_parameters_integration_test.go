@@ -18,11 +18,11 @@ func TestUILaunchParametersScopesHistoryAndIsolation(t *testing.T) {
 	repository := store.New(db)
 	ctx := context.Background()
 	image := platform.ImageReference{Repository: "registry.example/agent", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
-	alpha, err := repository.CreateTeam(ctx, platform.CreateTeamRequest{TeamName: "Alpha", DefaultImage: image}, platform.AdminIdentity{Subject: "admin"})
+	alpha, err := repository.CreateTeam(ctx, platform.CreateTeamRequest{TeamName: "Alpha", DefaultImage: ociImage(image)}, platform.AdminIdentity{Subject: "admin"})
 	if err != nil {
 		t.Fatalf("create alpha: %v", err)
 	}
-	beta, err := repository.CreateTeam(ctx, platform.CreateTeamRequest{TeamName: "Beta", DefaultImage: image}, platform.AdminIdentity{Subject: "admin"})
+	beta, err := repository.CreateTeam(ctx, platform.CreateTeamRequest{TeamName: "Beta", DefaultImage: ociImage(image)}, platform.AdminIdentity{Subject: "admin"})
 	if err != nil {
 		t.Fatalf("create beta: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestClaimFreezesMergedLaunchParametersAndImage(t *testing.T) {
 	repository := store.NewWithScopeTokenKeyring(db, make([]byte, 32), keyring)
 	ctx := context.Background()
 	defaultImage := platform.ImageReference{Repository: "registry.example/default", Digest: "sha256:" + strings.Repeat("a", 64)}
-	team, err := repository.CreateTeam(ctx, platform.CreateTeamRequest{TeamName: "Alpha", DefaultImage: defaultImage}, platform.AdminIdentity{Subject: "admin"})
+	team, err := repository.CreateTeam(ctx, platform.CreateTeamRequest{TeamName: "Alpha", DefaultImage: ociImage(defaultImage)}, platform.AdminIdentity{Subject: "admin"})
 	if err != nil {
 		t.Fatalf("create team: %v", err)
 	}

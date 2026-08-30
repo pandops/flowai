@@ -1,0 +1,22 @@
+{
+  "name": "flowai-api-gateway-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Provider-neutral OIDC, API Gateway, State Registry, PostgreSQL, REST, and WebSocket E2E suite for v0007.",
+  "type": "module",
+  "scripts": {
+    "generate:test-control-client": "node scripts/generate-test-control-client.mjs",
+    "test": "env -u GOROOT playwright test",
+    "test:smoke": "env -u GOROOT playwright test tests/harness_smoke.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.1.1",
+    "@types/pg": "^8.15.6",
+    "@types/ws": "^8.18.1",
+    "pg": "^8.16.3",
+    "typescript": "^7.0.2",
+    "ws": "^8.21.1",
+    "yaml": "^2.8.1"
+  }
+}

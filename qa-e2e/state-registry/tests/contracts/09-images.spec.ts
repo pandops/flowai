@@ -25,6 +25,7 @@ import {
   ingestPendingTask,
   registerExecutor,
   imageReference,
+  dockerPullString,
   type ImageReference,
 } from "./_setup";
 import { uniqueExecutorId } from "../../fixtures/executor_container";
@@ -51,18 +52,21 @@ test("v0002.50 claim response resolves teams.default_image when task_types and s
   let taskTypeId = "";
   try {
     const team = await adminApi.post("/admin/teams", {
-      data: { team_name: `${suffix}-a`, default_image: defaultImage },
+      data: {
+        team_name: `${suffix}-a`,
+        default_image: dockerPullString(defaultImage),
+      },
     });
     expect(team.status()).toBe(201);
     const teamBody = (await team.json()) as {
       team_id: string;
-      default_image: ImageReference;
+      default_image: string;
     };
     teamId = teamBody.team_id;
     expect(
       teamBody.default_image,
       "admin create returns the persisted ImageReference object",
-    ).toEqual(defaultImage);
+    ).toEqual(dockerPullString(defaultImage));
     const source = await adminApi.post("/admin/source-systems", {
       data: { team_id: teamId, listener_identity: `L-${suffix}-a` },
     });
@@ -155,7 +159,7 @@ test("v0002.51 task-level image override wins over team default and is preserved
     const team = await adminApi.post("/admin/teams", {
       data: {
         team_name: `${suffix}-a`,
-        default_image: imageReference(`default-A-${suffix}`),
+        default_image: dockerPullString(imageReference(`default-A-${suffix}`)),
       },
     });
     expect(team.status()).toBe(201);
@@ -271,7 +275,7 @@ test("v0002.74 task_types.default_image wins when tasks.image is null", async ()
     const team = await adminApi.post("/admin/teams", {
       data: {
         team_name: `${suffix}-a`,
-        default_image: imageReference(`default-A-${suffix}`),
+        default_image: dockerPullString(imageReference(`default-A-${suffix}`)),
       },
     });
     expect(team.status()).toBe(201);
@@ -367,7 +371,7 @@ test("v0002.75 source_systems.default_image wins when tasks.image and task_types
     const team = await adminApi.post("/admin/teams", {
       data: {
         team_name: `${suffix}-a`,
-        default_image: imageReference(`default-A-${suffix}`),
+        default_image: dockerPullString(imageReference(`default-A-${suffix}`)),
       },
     });
     expect(team.status()).toBe(201);
@@ -460,12 +464,18 @@ test("v0002.76 equal image strings across teams grant no cross-team authority", 
   let listenerB = "";
   try {
     const teamA = await adminApi.post("/admin/teams", {
-      data: { team_name: `${suffix}-a`, default_image: sharedImage },
+      data: {
+        team_name: `${suffix}-a`,
+        default_image: dockerPullString(sharedImage),
+      },
     });
     expect(teamA.status()).toBe(201);
     teamAId = ((await teamA.json()) as { team_id: string }).team_id;
     const teamB = await adminApi.post("/admin/teams", {
-      data: { team_name: `${suffix}-b`, default_image: sharedImage },
+      data: {
+        team_name: `${suffix}-b`,
+        default_image: dockerPullString(sharedImage),
+      },
     });
     expect(teamB.status()).toBe(201);
     teamBId = ((await teamB.json()) as { team_id: string }).team_id;

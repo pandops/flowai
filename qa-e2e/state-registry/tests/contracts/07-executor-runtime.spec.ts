@@ -55,6 +55,8 @@
 import * as net from "node:net";
 import * as http from "node:http";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   test,
   expect,
@@ -248,8 +250,10 @@ async function localDockerImageReference(
 async function startRecordingDockerProxy(
   targetSocketPath: string,
 ): Promise<RecordingDockerProxy> {
-  const socketDir = fs.mkdtempSync("/tmp/opencode/flowai-docker-proxy-");
-  const socketPath = `${socketDir}/docker.sock`;
+  const socketDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "flowai-docker-proxy-"),
+  );
+  const socketPath = path.join(socketDir, "docker.sock");
   const createRequests: DockerCreateRequest[] = [];
   const connections = new Set<net.Socket>();
   const server = http.createServer((incoming, outgoing) => {

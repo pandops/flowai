@@ -18,6 +18,7 @@ test("v0006.31 real K8s OpenHands output streams reasoning and work into the ope
     path.resolve(__dirname, "../../../svc/web-ui/web/index.html"),
     suite.registryBaseURL,
   );
+  const llmEnvironmentID = await suite.configureLLM(suite.teamA);
   try {
     const task = await suite.ingestTask(
       suite.teamA,
@@ -25,7 +26,7 @@ test("v0006.31 real K8s OpenHands output streams reasoning and work into the ope
         prompt:
           "FLOWAI_HOLD_CAPACITY publish agent output, write the marker, and finish.",
       },
-      undefined,
+      llmEnvironmentID,
       suite.realAgentImage,
     );
     await expect
@@ -42,9 +43,7 @@ test("v0006.31 real K8s OpenHands output streams reasoning and work into the ope
       )
       .toBe("running");
     await page.goto(`${proxy.baseUrl}?view=task&id=${task.task_id}`);
-    await expect(
-      page.getByRole("heading", { name: "Live streaming log" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Live log" })).toBeVisible();
     await expect(
       page.getByText("Проверяю рабочее дерево перед запуском инструмента."),
     ).toHaveCount(0);
@@ -106,5 +105,6 @@ test("v0006.31 real K8s OpenHands output streams reasoning and work into the ope
     ).toHaveCount(0);
   } finally {
     await proxy.close();
+    await suite.clearLLM(suite.teamA, llmEnvironmentID);
   }
 });

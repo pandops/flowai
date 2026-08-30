@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -34,11 +35,29 @@ type AdminRepository interface {
 	TeamExists(context.Context, string) (bool, error)
 }
 
+type TeamLifecycleRepository interface {
+	GetTeam(context.Context, string) (platform.Team, error)
+	UpdateTeam(context.Context, string, platform.UpdateTeamRequest, platform.AdminIdentity) (platform.Team, error)
+	ArchiveTeam(context.Context, string, platform.AdminIdentity) (platform.Team, bool, error)
+}
+
 // Store persists State Registry resources in PostgreSQL.
 type Store struct {
 	db                *sql.DB
 	aesKey            []byte
 	scopeTokenKeyring *scopeTokenKeyring
+	barriers          TransactionBarriers
+}
+type TransactionBarriers interface{ Wait(context.Context, string) }
+
+func (s *Store) WithTransactionBarriers(barriers TransactionBarriers) *Store {
+	s.barriers = barriers
+	return s
+}
+func (s *Store) waitBarrier(ctx context.Context, name string) {
+	if s.barriers != nil {
+		s.barriers.Wait(ctx, name)
+	}
 }
 
 // New returns a PostgreSQL-backed Store.
@@ -76,12 +95,7 @@ func (s *Store) TeamExists(ctx context.Context, teamID string) (bool, error) {
 }
 
 // CreateTeam creates one immutable team in a transaction.
-func (s *Store) CreateTeam(ctx context.Context, req platform.CreateTeamRequest, _ platform.AdminIdentity) (platform.Team, error) {
-	image, err := json.Marshal(req.DefaultImage)
-	if err != nil {
-		return platform.Team{}, fmt.Errorf("marshal team default image: %w", err)
-	}
-
+func (s *Store) CreateTeam(ctx context.Context, req platform.CreateTeamRequest, ident platform.AdminIdentity) (platform.Team, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return platform.Team{}, fmt.Errorf("begin create team: %w", err)
@@ -89,21 +103,127 @@ func (s *Store) CreateTeam(ctx context.Context, req platform.CreateTeamRequest, 
 	defer func() { _ = tx.Rollback() }()
 
 	var team platform.Team
-	var storedImage []byte
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO teams (team_id, team_name, default_image)
-		VALUES ($1, $2, $3::jsonb)
-		RETURNING team_id, team_name, default_image, created_at, updated_at`,
-		uuid.NewString(), req.TeamName, image,
-	).Scan(&team.TeamID, &team.TeamName, &storedImage, &team.CreatedAt, &team.UpdatedAt)
+		VALUES ($1, $2, $3)
+		RETURNING team_id, team_name, default_image, ingested_at, archived_at`,
+		uuid.NewString(), req.TeamName, req.DefaultImage,
+	).Scan(&team.TeamID, &team.TeamName, &team.DefaultImage, &team.IngestedAt, &team.ArchivedAt)
 	if err != nil {
 		return platform.Team{}, classifyTeamError(err)
 	}
-	if err := json.Unmarshal(storedImage, &team.DefaultImage); err != nil {
-		return platform.Team{}, fmt.Errorf("decode team default image: %w", err)
+	s.waitBarrier(ctx, "team_name_write_after_constraint_before_commit")
+	if err := appendTeamAudit(ctx, tx, team, nil, "team.create", ident); err != nil {
+		return platform.Team{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return platform.Team{}, fmt.Errorf("commit create team: %w", err)
+	}
+	return team, nil
+}
+
+func (s *Store) GetTeam(ctx context.Context, teamID string) (platform.Team, error) {
+	return scanTeam(s.db.QueryRowContext(ctx, `SELECT team_id, team_name, default_image, ingested_at, archived_at FROM teams WHERE team_id=$1`, teamID))
+}
+
+func (s *Store) UpdateTeam(ctx context.Context, teamID string, req platform.UpdateTeamRequest, ident platform.AdminIdentity) (platform.Team, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platform.Team{}, fmt.Errorf("begin update team: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := scanTeam(tx.QueryRowContext(ctx, `SELECT team_id, team_name, default_image, ingested_at, archived_at FROM teams WHERE team_id=$1 FOR UPDATE`, teamID))
+	if err != nil {
+		return platform.Team{}, err
+	}
+	if req.DefaultImage != nil {
+		s.waitBarrier(ctx, "team_default_image_update_after_lock")
+	}
+	team, err := scanTeam(tx.QueryRowContext(ctx, `
+		UPDATE teams SET
+		  team_name=COALESCE($2, team_name),
+		  default_image=COALESCE($3, default_image),
+		  updated_at=now()
+		WHERE team_id=$1
+		RETURNING team_id, team_name, default_image, ingested_at, archived_at`, teamID, req.TeamName, req.DefaultImage))
+	if err != nil {
+		if errors.Is(err, ErrTeamNotFound) {
+			return platform.Team{}, err
+		}
+		return platform.Team{}, classifyTeamError(err)
+	}
+	if req.TeamName != nil {
+		s.waitBarrier(ctx, "team_name_write_after_constraint_before_commit")
+	}
+	if err := appendTeamAudit(ctx, tx, team, &current, "team.update", ident); err != nil {
+		return platform.Team{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return platform.Team{}, fmt.Errorf("commit update team: %w", err)
+	}
+	return team, nil
+}
+
+func (s *Store) ArchiveTeam(ctx context.Context, teamID string, ident platform.AdminIdentity) (platform.Team, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platform.Team{}, false, fmt.Errorf("begin archive team: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := scanTeam(tx.QueryRowContext(ctx, `SELECT team_id, team_name, default_image, ingested_at, archived_at FROM teams WHERE team_id=$1 FOR UPDATE`, teamID))
+	if err != nil {
+		return platform.Team{}, false, err
+	}
+	s.waitBarrier(ctx, "team_archive_after_lock")
+	if current.ArchivedAt != nil {
+		if err := tx.Commit(); err != nil {
+			return platform.Team{}, false, fmt.Errorf("commit archive read: %w", err)
+		}
+		return current, false, nil
+	}
+	team, err := scanTeam(tx.QueryRowContext(ctx, `UPDATE teams SET archived_at=now(), updated_at=now() WHERE team_id=$1 RETURNING team_id, team_name, default_image, ingested_at, archived_at`, teamID))
+	if err != nil {
+		return platform.Team{}, false, err
+	}
+	if err := appendTeamAudit(ctx, tx, team, &current, "team.archive", ident); err != nil {
+		return platform.Team{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return platform.Team{}, false, fmt.Errorf("commit archive team: %w", err)
+	}
+	return team, true, nil
+}
+
+func appendTeamAudit(ctx context.Context, tx *sql.Tx, team platform.Team, old *platform.Team, action string, ident platform.AdminIdentity) error {
+	actor, requestID := strings.TrimSpace(ident.Subject), strings.TrimSpace(ident.RequestID)
+	if actor == "" {
+		actor = "system-administrator"
+	}
+	if requestID == "" {
+		requestID = "request-unknown"
+	}
+	auditID := uuid.NewString()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_entries (audit_id, team_id, actor_id, actor_type, action, resource_type, resource_id, request_id, outcome) VALUES ($1,$2,$3,'system_administrator',$4,'team',$2,$5,'succeeded')`, auditID, team.TeamID, actor, action, requestID); err != nil {
+		return fmt.Errorf("append team audit: %w", err)
+	}
+	var oldName, oldImage any
+	if old != nil {
+		oldName, oldImage = old.TeamName, old.DefaultImage
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO team_audit_details (audit_id, old_team_name, new_team_name, old_default_image, new_default_image, archived_at) VALUES ($1,$2,$3,$4,$5,$6)`, auditID, oldName, team.TeamName, oldImage, team.DefaultImage, team.ArchivedAt); err != nil {
+		return fmt.Errorf("append team audit details: %w", err)
+	}
+	return nil
+}
+
+func scanTeam(row interface{ Scan(...any) error }) (platform.Team, error) {
+	var team platform.Team
+	err := row.Scan(&team.TeamID, &team.TeamName, &team.DefaultImage, &team.IngestedAt, &team.ArchivedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return platform.Team{}, ErrTeamNotFound
+	}
+	if err != nil {
+		return platform.Team{}, fmt.Errorf("read team: %w", err)
 	}
 	return team, nil
 }
@@ -217,7 +337,7 @@ func classifyTeamError(err error) error {
 	if constraintIs(err, "23505", "teams_team_name_key") {
 		return ErrTeamNameConflict
 	}
-	return fmt.Errorf("create team: %w", err)
+	return fmt.Errorf("persist team: %w", err)
 }
 
 func classifySourceSystemError(err error) error {
@@ -248,3 +368,4 @@ func sqlStateIs(err error, code string) bool {
 }
 
 var _ AdminRepository = (*Store)(nil)
+var _ TeamLifecycleRepository = (*Store)(nil)

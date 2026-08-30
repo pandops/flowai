@@ -1,0 +1,38 @@
+' diagram-type: sequence
+@startuml
+title v0007-auth - authenticated team-scoped REST request
+
+participant "Web UI / Browser" as web_ui
+participant "API Gateway" as api_gateway
+participant "OIDC provider" as oidc_provider
+participant "State Registry\nresource and platform-audit authority" as state_registry
+database "API Gateway database\nauth sessions and memberships" as api_gateway_database
+
+web_ui -> api_gateway : REST + one-team working bearer\n(possibly forged OIDC team values or X-FlowAI-* headers)
+activate api_gateway
+api_gateway -> api_gateway : validate signature/issuer, audience, expiry,\noperator_id, exactly one team_id
+api_gateway -> oidc_provider : obtain current canonical OIDC teams
+activate oidc_provider
+oidc_provider --> api_gateway : canonical OIDC team IDs / invalid identity
+deactivate oidc_provider
+api_gateway -> api_gateway_database : resolve current canonical teams
+activate api_gateway_database
+api_gateway_database --> api_gateway : current accessible teams
+deactivate api_gateway_database
+alt missing, invalid, expired, unresolved, or stale context
+  api_gateway --> web_ui : reject before proxying
+else valid canonical context
+  api_gateway -> api_gateway : strip browser OIDC team values, identity headers, Authorization\ngenerate request_id
+  api_gateway -> state_registry : child request with canonical Operator-ID, Team-ID,\ndisplay-only Team-Name, Request-ID\n(no browser credential, OIDC identifier, or membership)
+  activate state_registry
+  state_registry -> state_registry : authorize resource by stable team_id
+  opt operator mutation
+    state_registry -> state_registry : persist canonical audit using\noperator_id + team_id + request_id
+  end
+  state_registry --> api_gateway : backend response
+  deactivate state_registry
+  api_gateway --> web_ui : status, headers, and body unchanged
+end
+deactivate api_gateway
+
+@enduml

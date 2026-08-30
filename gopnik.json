@@ -1,0 +1,22 @@
+{
+  "language": "ru",
+  "//": "Every command in stage1 was run once, in this project, before being written here.",
+  "verification": {
+    "stage1": [
+      "env -u GOROOT go test ./...",
+      "./qa-e2e/scripts/test-quality-hook.sh",
+      "node qa-e2e/scripts/run-all.mjs"
+    ],
+    "stage2": ["node qa-e2e/scripts/run-all.mjs"],
+    "notes": "Stage 2 is a temporary local deployment created and removed by the root E2E orchestrator. It builds and exercises the current worktree through production service images, containers, k3d, public HTTP/WebSocket/browser surfaces, both Executors, and the K8s Executor Helm chart.",
+    "artifact_kind": "service",
+    "surfaces": [
+      "operator_web_ui_service",
+      "api_gateway_http_websocket_auth_service",
+      "state_registry_http_websocket_api",
+      "docker_openhands_executor_service",
+      "k8s_openhands_executor_service",
+      "k8s_executor_helm_chart"
+    ]
+  }
+}

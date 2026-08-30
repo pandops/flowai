@@ -19,6 +19,7 @@ test("v0006.26/.27/.32/.33 UI env and secret mutations control new K8s task Pods
   const secretKey = `FLOWAI_SECRET_${suffix}`;
   const envValue = `env-${suffix.toLowerCase()}`;
   const secretValue = `secret-${crypto.randomUUID()}`;
+  let environmentID = "";
   const proxy = await startMockedProxy(
     [
       {
@@ -104,13 +105,16 @@ test("v0006.26/.27/.32/.33 UI env and secret mutations control new K8s task Pods
     expect(projectionResponse.status).toBe(200);
     const projection = (await projectionResponse.json()) as {
       items: Array<{
+        environment_id: string;
         env: Record<string, string>;
         secrets: Array<{ name: string }>;
       }>;
     };
-    expect(projection.items.some((item) => item.env[envKey] === envValue)).toBe(
-      true,
+    const createdEnvironment = projection.items.find(
+      (item) => item.env[envKey] === envValue,
     );
+    expect(createdEnvironment).toBeDefined();
+    environmentID = createdEnvironment!.environment_id;
     expect(
       projection.items.some((item) =>
         item.secrets.some((secret) => secret.name === secretKey),
@@ -171,5 +175,12 @@ test("v0006.26/.27/.32/.33 UI env and secret mutations control new K8s task Pods
       .toBeNull();
   } finally {
     await proxy.close();
+    if (environmentID) {
+      const response = await suite.registryFetch(
+        `/ui/v1/teams/${suite.teamA.admin.team_id}/launch-parameters/${environmentID}`,
+        { method: "DELETE" },
+      );
+      expect(response.status).toBe(204);
+    }
   }
 });

@@ -29,12 +29,14 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"github.com/flowai/platform/svc/state-registry/internal/adminauth"
 	"github.com/flowai/platform/svc/state-registry/internal/config"
 	"github.com/flowai/platform/svc/state-registry/internal/health"
 	"github.com/flowai/platform/svc/state-registry/internal/httpapi"
 	"github.com/flowai/platform/svc/state-registry/internal/logging"
 	"github.com/flowai/platform/svc/state-registry/internal/migrations"
 	"github.com/flowai/platform/svc/state-registry/internal/store"
+	"github.com/flowai/platform/svc/state-registry/internal/testcontrol"
 )
 
 const serviceName = "state-registry"
@@ -50,6 +52,9 @@ func run() error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if !cfg.TestMode && cfg.AdminIssuer == "" {
+		return errors.New("load administrator JWT trust: STATE_REGISTRY_ADMIN_ISSUER and complete admin trust configuration are required")
 	}
 	cursorKeyring, err := cursorKeyringForBoot()
 	if err != nil {
@@ -87,8 +92,18 @@ func run() error {
 		return fmt.Errorf("open postgres: %w", err)
 	}
 	defer db.Close()
+	migrationURL := cfg.MigrationPostgresURL
+	if migrationURL == cfg.PostgresURL {
+		migrationURL = postgresURL
+	}
+	migrationDB, err := sql.Open("pgx", migrationURL)
+	if err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("open postgres migration connection: %w", err)
+	}
+	defer migrationDB.Close()
 	migrationCtx, cancelMigrations := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := migrations.ApplyUp(migrationCtx, db); err != nil {
+	if err := migrations.ApplyUp(migrationCtx, migrationDB); err != nil {
 		cancelMigrations()
 		_ = listener.Close()
 		return fmt.Errorf("apply postgres migrations: %w", err)
@@ -111,14 +126,37 @@ func run() error {
 		return fmt.Errorf("load scope token keyring: %w", err)
 	}
 	adminStore := store.NewWithScopeTokenKeyring(db, cfg.AESKey, scopeKeyring)
-	handler := httpapi.RoutesWithKeyring(serviceName, "", logger, checker, ops, cursorKeyring, cfg.TestMode, adminStore)
+	var coordinator *testcontrol.Coordinator
+	if cfg.TestControlEnabled {
+		coordinator = testcontrol.New(cfg.BarrierTimeout)
+		adminStore.WithTransactionBarriers(coordinator)
+		defer coordinator.Close()
+	}
+	var administratorAuth httpapi.AdminAuthenticator
+	if cfg.AdminIssuer != "" {
+		administratorAuth, err = adminauth.New(adminauth.Config{Issuer: cfg.AdminIssuer, Audience: cfg.AdminAudience, JWKSURL: cfg.AdminJWKSURL, RolePointer: cfg.AdminRolePointer, RequiredRole: "flowai-system-admin", Algorithms: cfg.AdminAlgorithms, ClockSkew: cfg.AdminClockSkew, TokenMaxAge: cfg.AdminTokenMaxAge, HTTPTimeout: cfg.AdminJWKSTimeout})
+		if err != nil {
+			return fmt.Errorf("load administrator JWT trust: %w", err)
+		}
+	}
+	handler := httpapi.RoutesWithKeyringAndAdminAuth(serviceName, "", logger, checker, ops, cursorKeyring, cfg.TestMode, administratorAuth, adminStore)
 
 	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	var controlServer *http.Server
+	var controlListener net.Listener
+	if coordinator != nil {
+		controlListener, err = net.Listen("tcp", cfg.TestControlAddress)
+		if err != nil {
+			return fmt.Errorf("bind test control: %w", err)
+		}
+		defer controlListener.Close()
+		controlServer = &http.Server{Handler: testcontrol.Handler(coordinator, cfg.TestControlToken), ReadHeaderTimeout: 5 * time.Second}
+	}
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("state-registry listening", "bind", cfg.BindAddress())
 		err := httpServer.Serve(listener)
@@ -128,6 +166,16 @@ func run() error {
 		}
 		errCh <- nil
 	}()
+	if controlServer != nil {
+		go func() {
+			err := controlServer.Serve(controlListener)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("test control server: %w", err)
+				return
+			}
+			errCh <- nil
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -142,6 +190,11 @@ func run() error {
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
+	}
+	if controlServer != nil {
+		if err := controlServer.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("test control shutdown: %w", err)
+		}
 	}
 	logger.Info("state-registry stopped")
 	return nil

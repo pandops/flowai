@@ -59,8 +59,8 @@ func TestMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read goose current version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("goose current version = %d, want 2 (v0006 schema applied)", version)
+	if version != 3 {
+		t.Fatalf("goose current version = %d, want 3 (v0007 schema applied)", version)
 	}
 
 	for _, table := range domainTables {
@@ -359,8 +359,8 @@ func TestRequiredTeamDefaultImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read goose current version after re-up: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("goose version after re-up = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("goose version after re-up = %d, want 3", version)
 	}
 
 	if !tableExists(t, db, "teams") {
