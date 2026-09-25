@@ -1,0 +1,4 @@
+interface:
+  display_name: "FlowAI Requirements"
+  short_description: "Trace FlowAI requirements and project skills"
+  default_prompt: "Use $requirments to trace this FlowAI change to current and planned requirements."

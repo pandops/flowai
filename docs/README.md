@@ -2,6 +2,10 @@
 
 [Project README](../README.md) · [Contributing](../CONTRIBUTING.md) · [MIT License](../LICENSE)
 
+The [project skill inventory](../.agents/skills/requirments/references/project-skills.md)
+lists the skills linked into this workspace and identifies the tracked
+`requirments` skill.
+
 ## Current documentation
 
 | Topic                           | Entry point                                                                                                 |
